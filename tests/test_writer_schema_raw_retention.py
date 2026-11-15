@@ -80,6 +80,15 @@ def _case(tmp_path, monkeypatch, *, grouped=False, failed_role="expert", style="
     physical_fn = verify.validate_excerpts_against_diff
 
     def transport(prompt, *args, **kwargs):
+        if "FROZEN_SOURCE_DATA" in prompt:
+            # A bounded correction re-asks with the frozen source. Its reply is
+            # parsed by the correction lane, not by validate_reviewer_json, so it
+            # is not a pass attempt and must not be counted as one.
+            return '{"findings": [], "code_excerpts": []}', {
+                "prompt_tokens": 2,
+                "completion_tokens": 3,
+                "_forge_finish_reason": "stop",
+            }
         role_text = prompt.rsplit("You are a ", 1)[-1]
         role = (
             "qodo" if "structural" in role_text else "expert" if "senior" in role_text else "adversarial"

@@ -57,7 +57,8 @@ RUNTIME_LIFECYCLE_QUESTION = (
     "this diff? If so: can that subsystem block, drop, or interfere with this "
     "change's network/file/process operations? Enumerate the flags that gate this "
     "function and ALL their possible values at call time.\n\n"
-    "Return your answer as JSON with exactly these keys:\n"
+    "Return your answer as JSON with exactly these keys. JSON only, no fences, "
+    "no prose before or after:\n"
     '{"surfaces": ["surface1", "surface2"], '
     '"findings": [{"file": "path/to/file", "line": 1, '
     '"surface": "surface_name", "description": "what could break and why"}]}\n\n'

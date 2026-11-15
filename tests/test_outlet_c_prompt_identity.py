@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 59.1: Outlet C off-path prompts stay byte-identical to the 609aa51 base.
+"""Outlet C off-path prompts stay byte-identical to their recorded base.
 
-Oracle: tests/fixtures/outlet_c_prompt_digests_pre_lens.json, written once on the
-base by scripts/capture_outlet_c_digests.py --write. This module only reads it
+Oracle: tests/fixtures/outlet_c_prompt_digests_pre_lens.json. The base moved
+from 609aa51 to 2238ea66 when the post-image annotation prefix became part of
+the prompt text; the digests were recomputed there and the reason recorded. This module only reads it
 and never imports the script's write path.
 """
 
@@ -23,7 +24,7 @@ _BYTES_AT_IMPORT = FIXTURE.read_bytes()
 _MTIME_AT_IMPORT = os.stat(FIXTURE).st_mtime_ns
 ORACLE = json.loads(_BYTES_AT_IMPORT)
 
-BASE = "609aa5133076d77b4e17c77b2e82063418e8518e"
+BASE = "2238ea6659e12832e40beb3f726559c560c66594"
 PASSES = ("qodo", "expert", "adversarial")
 
 # Same inputs as scripts/capture_l1_digests.py, verbatim.
@@ -44,14 +45,14 @@ MANIFEST = "## Environment\npython 3.14"
 
 LITERALS = {
     "C_full": {
-        "qodo": "b9475fffa9d167aa2863214eb2f21255d782b9b1aecadece8f00822d4e9f2493",
-        "expert": "1776b05b1591a3fa45eee3fa7762d4bb99c8e60fff70fcccef3f4a89ea6ba999",
-        "adversarial": "7a2b8ece4a31134e64546bf1758e591aae971ae912e6a7180ec9753d0cafe313",
+        "qodo": "9b94797c9ef5633369ba2c902c8f247db8b18165f4f19beb579edeff0c2c270b",
+        "expert": "999671748027386676ba1be47bdb6cfefb25a49e5589212b6f1c951416314349",
+        "adversarial": "9f230c689a68a6451558935afbd3befdd17627bf7b2f81bd22638fa3fe974bcd",
     },
     "C_minimal": {
-        "qodo": "fc8434ef780c4c81449e6b5378707864e730cc5cf95d17c37b0a89e807c301e5",
-        "expert": "f779ba53c4248127e8da647fa0ff255c502da4e53ba5680b0348ab27e6d63000",
-        "adversarial": "f4ed580192082f6998b0ad396dff7157d1dd55b4415ebe95dbaf7bba89318293",
+        "qodo": "64edb47fd1d8abc4cee2532337732226a227fedac76cf917ca474be2cc1a82d9",
+        "expert": "a27585ae98529767757c268c8873caaa3cc061f7a63f5771d2c9da0548894197",
+        "adversarial": "9018591eeec8b921d2279788ab4196caa7bf7497215a39c33e4f251cbc334c75",
     },
 }
 

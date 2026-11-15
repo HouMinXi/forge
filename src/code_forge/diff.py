@@ -771,5 +771,7 @@ def annotated_diff_prompt_block(diff_text: str) -> str:
         "line number and cannot be cited\n"
         "The bracket is not part of the source. Excerpt content must "
         "reproduce the code to the right of it, without the bracket and "
-        "without the leading +/- marker.\n\n" + annotated
+        "without the leading +/- marker. Copy it exactly, preserving every "
+        "leading space and tab: never dedent, re-indent, or strip a block's "
+        "common indentation.\n\n" + annotated
     )

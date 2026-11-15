@@ -716,6 +716,14 @@ diff --git a/m.py b/m.py
         assert "\n+++ b/y.py\n" in result, result
         assert "[+   2] +b" in result and "[+   2] +d" in result, result
 
+    def test_prompt_block_forbids_dedenting_the_quoted_block(self):
+        """Models drop a block's common indentation when re-emitting it."""
+        from code_forge.diff import annotated_diff_prompt_block
+
+        diff = "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -1 +1 @@\n-old\n+new\n"
+        block = annotated_diff_prompt_block(diff)
+        assert "never dedent" in block, block[:400]
+
     def test_prompt_block_omits_the_legend_for_a_binary_only_diff(self):
         """No bracket column is produced, so no legend should promise one."""
         from code_forge.diff import annotated_diff_prompt_block

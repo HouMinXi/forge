@@ -63,6 +63,15 @@ def test_continuation_cannot_replace_original_risk(api, tmp_path):
     assert request.call_count == 3
 
 
+def test_prompt_requires_bare_json_without_fence():
+    """The axis rejects fenced replies, so the prompt must forbid fences."""
+    from code_forge.runtime import RUNTIME_LIFECYCLE_QUESTION
+
+    lowered = RUNTIME_LIFECYCLE_QUESTION.lower()
+    assert "no fences" in lowered
+    assert "no prose" in lowered
+
+
 @pytest.mark.parametrize("text", [EMPTY + " explanation", "```json\n" + EMPTY + "\n```"])
 def test_non_root_text_is_not_silently_extracted(api, tmp_path, text):
     runner, request = api
