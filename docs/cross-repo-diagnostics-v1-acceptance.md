@@ -2,6 +2,57 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-15 owner decisions: limited G12 evidence and remaining G02 limits
+
+Decision source: the owner in the Forge project chat explicitly accepted the
+two stated recommendations on 2026-11-15. The executor read the original question
+and affirmative reply together. There is no public decision permalink; this
+record does not invent one or expose private message identifiers.
+
+Applicable product/source and prior document:
+`f7e2cffbc7379962b62e3be7169643c70ea7ab02`, including the
+[#515 evidence record](https://github.com/HouMinXi/forge/pull/515).
+The 1390-test run recorded below remains bound to
+`1fca1f370f4505788fa65de547af4eb15021efc8`; accepting that evidence does not
+relabel it as a run on the later source or this documentation revision.
+
+**G12 limited decision:** accept the existing result assertions and the
+same-revision review recorded by #515 for this finite slice. T06's dedicated
+cap-removal/extra-hop mutations and T16's per-validator independent negative
+controls remain incomplete, are not PASS and receive no corresponding R3
+credit. Original78 recovery/equivalence is not claimed. This is not blanket
+completion of every G12 obligation or approval of unlisted support domains.
+
+**G02 limited decision:** accept these existing implementation limits:
+- Captured/history single strings: at most 4096 characters **and** 4096 strict
+  UTF-8 bytes.
+- One active-cache error view: at most 258 items, each at most 4096 characters,
+  with at most 65536 strict UTF-8 bytes in total. The per-item limit here is
+  characters, not a separate 4096-byte cap.
+- Excluded temporary roots: at most 256.
+- Storage source paths: at most 64 parts including the absolute root anchor,
+  4095 UTF-8 bytes overall and 255 bytes per component.
+- The metadata proposal quoted fdinfo at 4096 bytes and mountinfo at 1 MiB.
+  Source-review qualification: these are the implementation's accepted payload
+  thresholds. `_bounded_proc` requests `cap + 1` bytes to detect and reject
+  overflow. The earlier proposal's wording as a literal read ceiling was
+  imprecise; the extra-byte probe interpretation remains to be clarified with
+  the owner. This record does not infer approval of a larger physical-read cap.
+
+The non-metadata limits match the fixed-source
+[capture checks](https://github.com/HouMinXi/forge/blob/f7e2cffbc7379962b62e3be7169643c70ea7ab02/src/code_forge/_cross_repo_diagnostics.py#L311-L317),
+[cache view checks](https://github.com/HouMinXi/forge/blob/f7e2cffbc7379962b62e3be7169643c70ea7ab02/src/code_forge/cross_repo_impact.py#L605-L615)
+and existing bounded storage contract. The decision promises neither a global
+memory/disk budget nor independent negative-control qualification of every
+boundary. It adds no implementation change or new execution evidence.
+
+This dated decision supersedes only the pending-decision wording for these
+specific G12/G02 recommendations in the earlier sections below. Historical
+evidence, unexecuted controls and other exclusions retain their stated status.
+G13 final maintainer acceptance is still pending; permission to perform its
+review is not that acceptance. #443/#444 historical disposition is separate
+and remains unapproved. Related to #33 and #441; both remain open.
+
 ## 2026-11-15 same-revision R4 evidence, pending acceptance
 
 Fixed product/test/prior-document commit:
