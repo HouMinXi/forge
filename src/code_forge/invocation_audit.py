@@ -264,6 +264,65 @@ _PHASES = frozenset(
 # own end.
 _SETTLEMENT_PHASES = frozenset(("finish", "finalize", "freeze"))
 
+# A descriptor this process could not confirm released keeps its root occupied for
+# the rest of the process: the descriptor belongs to the process, so a recorder
+# created afterwards on the same root inherits the refusal instead of starting from
+# a clean slate while the leak is still open.
+_UNRESOLVED_ROOTS: dict[tuple, bool] = {}
+# lock and owner pid together, so a forked child replaces the pair in one step
+_UNRESOLVED_GUARD = {"lock": threading.Lock(), "pid": os.getpid()}
+
+
+def _unresolved_lock():
+    """The map's lock, fresh in a forked child.
+
+    A child that inherited the lock while another thread held it would wait
+    forever on an owner that does not exist there. The map itself is inherited
+    as-is: a recorder in a child refuses for other reasons, so its contents
+    cannot mislead a caller.
+    """
+    if os.getpid() != _UNRESOLVED_GUARD["pid"]:
+        _UNRESOLVED_GUARD["lock"] = threading.Lock()
+        _UNRESOLVED_GUARD["pid"] = os.getpid()
+    return _UNRESOLVED_GUARD["lock"]
+
+
+def _unresolved_key(root):
+    """Identity of the directory, so another spelling or a rebuilt path is another root.
+
+    A path string would treat ``//var/tmp/x`` as a second root and a recreated
+    directory as the poisoned one; the inode answers both.
+    """
+    try:
+        value = os.stat(root, follow_symlinks=False)
+    except Exception:  # noqa: BLE001 - a root that cannot be read has no identity
+        try:
+            return ("path", str(root))
+        except Exception:  # noqa: BLE001 - a root whose name cannot be read has no identity
+            return ("path", "")
+    return ("inode", value.st_dev, value.st_ino)
+
+
+def _arm_unresolved(root, capability=None) -> None:
+    # The action already held this root under a capability; re-reading the path could
+    # describe a different directory than the one whose release failed. A recorder that
+    # never stored a capability has none to prefer, so it falls back to reading the path
+    # and latches whatever is there now — the one case where the stop can land on a
+    # replacement directory.
+    key = _capability_key(capability) if capability is not None else _unresolved_key(root)
+    with _unresolved_lock():
+        _UNRESOLVED_ROOTS[key] = True
+
+
+def _capability_key(capability):
+    return ("inode", capability.root_device, capability.root_inode)
+
+
+def _root_unresolved(root) -> bool:
+    key = _unresolved_key(root)
+    with _unresolved_lock():
+        return _UNRESOLVED_ROOTS.get(key, False)
+
 
 class _Rejected(Exception):
     def __init__(self, code, *, preserve=False):
@@ -3073,7 +3132,6 @@ class AttemptRecorder:
         self._input_manifest = None
         self._audit_schema_version = audit_schema_version
         self._scoped_fault_domain = scoped_fault_domain
-        self._cleanup_unresolved = False
         # State files (run directory, input manifest, freeze marker, raw body) made
         # visible ahead of the journal event that commits them.
         self._staged = 0
@@ -3201,6 +3259,87 @@ class AttemptRecorder:
                 self._complete = False
         return AuditAcknowledgement(False, fault)
 
+    def _journal_latch(self, phase, attempt_id):
+        """Record an unconfirmed release in the journal, best effort.
+
+        The handle whose release failed is not trusted for another write, so this
+        opens the root afresh and takes the same root lock a normal write takes.
+        Nothing here may replace the caller's error: every failure leaves the run
+        marked incomplete, which it already was. Returns whether a record reached
+        the journal, which the caller reports as publication uncertainty.
+        """
+        try:
+            if not self._opened or self._closed or self._append_uncertain:
+                return False
+            if any(event["event"] == "audit_fault" for event in self._events):
+                # A run carries one fault marker: the marker file is published once and
+                # a second write leaves the temp file behind as torn state. So a run that
+                # already recorded another code keeps that one; this refusal still reaches
+                # the caller and the run still reads incomplete.
+                return False
+            if any(event["event"] == "run_final" for event in self._events):
+                # The terminal event is the run's last word: a fault appended after it
+                # sits outside the sequence the reader folds, and the publish leaves its
+                # temp file behind. The refusal still reaches the caller and the root
+                # stays latched, so nothing further can be recorded truthfully.
+                return False
+            handle = _prepare_audit_root(self.root, create=False)
+            if not isinstance(handle, _RootHandle):
+                return False
+            # A replaced root is an identity refusal on the normal path; it is not
+            # something to write a fault about.
+            if self._capability is not None and handle.capability != self._capability:
+                handle.close()
+                return False
+            try:
+                with _root_lock(handle, deadline=time.monotonic() + 1.0):
+                    with _run_dir(handle, self._context["run_id"]) as fd:
+                        # Same precondition as the denial writer: a marker already on
+                        # disk means this run has spoken, and a second one would leave
+                        # a torn temp file behind.
+                        if "fault" in _entries(fd):
+                            return False
+                        prior = b"".join(_frame(value) for value in self._events)
+                        self._journal_history(handle, fd, ((prior, self._events),))
+                        event = self._event(
+                            "audit_fault",
+                            code="cleanup_unresolved",
+                            phase=phase,
+                            attempt_id=attempt_id,
+                        )
+                        marker_ = _marker(event, self._owner)
+                        _space(
+                            fd,
+                            self._context["run_id"],
+                            marker_delta=len(_frame(event)) + 2 * len(marker_),
+                        )
+                        self._append_event(handle, fd, event)
+                        _publish(
+                            fd,
+                            "fault",
+                            marker_,
+                            **(
+                                {"_slot_events": self._events} if self._audit_schema_version == 2 else {}
+                            ),
+                        )
+            finally:
+                try:
+                    handle.close()
+                except BaseException:  # noqa: BLE001, S110 - the caller's interrupt outranks this release
+                    # The root is already latched by the release that failed, so a
+                    # second unconfirmed release changes nothing this call can act on.
+                    pass
+            fault = AuditFault("cleanup_unresolved", phase, attempt_id)
+            if fault not in self._faults:
+                self._faults.append(fault)
+            self._state = "incomplete"
+            return True
+        except Exception:  # noqa: BLE001 - a best-effort record never replaces the caller error
+            # Only failures are absorbed here: an interrupt raised inside the write
+            # belongs to whoever sent it, exactly as on the normal denial path.
+            self._complete = False
+            return False
+
     def _guard(
         self,
         phase,
@@ -3220,14 +3359,27 @@ class AttemptRecorder:
         if os.getpid() != self._pid:
             # A forked mutex may be locked by a thread that no longer exists.
             return AuditAcknowledgement(False, AuditFault("identity_conflict", phase, safe_attempt))
-        if self._cleanup_unresolved and phase not in _SETTLEMENT_PHASES:
-            # A descriptor this recorder could not confirm released may still hold the
-            # root, so allocation stops until the process starts a new recorder. Only the
-            # scoped path arms this latch, which is why the unscoped path keeps allocating:
-            # it publishes no such promise. Termination still has to reach the journal,
-            # because refusing finalize would leave a run that reads as active for a
-            # recorder that already knows it is not clean.
-            return AuditAcknowledgement(False, AuditFault("cleanup_unresolved", phase, safe_attempt))
+        if _root_unresolved(self.root) and phase not in _SETTLEMENT_PHASES:
+            # A descriptor this process could not confirm released may still hold the
+            # root, so allocation stops there for the life of the process: a recorder
+            # created afterwards is refused, and so is one built without the switch,
+            # because the leaked descriptor belongs to the process and not to a scope.
+            # Only the scoped path arms the latch and so publishes the promise, but a
+            # root already latched by another recorder is closed to every caller.
+            # Termination still has to reach the journal, because refusing finalize would
+            # leave a run that reads as active for a recorder that already knows it is not
+            # clean.
+            # A refusal is still this recorder's verdict: the run cannot claim
+            # completeness, and its summary has to agree with the latch that stopped it.
+            # The dedup is check-then-act on a list two threads can share, so it runs
+            # under the same mutex every other write to the recorder takes.
+            fault = AuditFault("cleanup_unresolved", phase, safe_attempt)
+            with nullcontext() if _mutex_held else self._mutex:
+                self._complete = False
+                self._state = "incomplete"
+                if fault not in self._faults:
+                    self._faults.append(fault)
+            return AuditAcknowledgement(False, fault)
         with nullcontext() if _mutex_held else self._mutex:
             if self._construction_fault:
                 return self._denied(self._construction_fault, phase, safe_attempt)
@@ -3288,15 +3440,26 @@ class AttemptRecorder:
                     # for every kind. Only an OSError becomes this call's verdict: an
                     # interrupt must still reach its caller with the latch already set.
                     if self._scoped_fault_domain:
-                        self._cleanup_unresolved = True
-                        # Nothing is journaled on this path, so the only way the run can
-                        # avoid claiming completeness is this flag.
+                        # The store first, the syscalls after: a second signal during
+                        # arming must not leave a run that still claims completeness.
                         self._complete = False
+                        try:
+                            _arm_unresolved(self.root, capability=self._capability)
+                        except BaseException:  # noqa: BLE001, S110 - the caller's interrupt outranks the latch
+                            # A root whose identity cannot be read is not latched, but the
+                            # run already reads incomplete and the caller still gets the error.
+                            pass
+                        # One record for one failed release, whichever way it ended: the
+                        # run has to say why it stopped, and only the verdict differs.
+                        recorded = self._journal_latch(phase, safe_attempt)
                     if not isinstance(close_error, OSError):
                         raise
                     # An unconfirmed release outranks the operation's own outcome: without
                     # it the scoped domain cannot promise that a later allocation is clean.
                     if self._scoped_fault_domain:
+                        # The action may have written nothing while the latch record did,
+                        # so the flag carries what this call put on disk either way.
+                        mutated = mutated or recorded
                         result = deny("cleanup_unresolved")
                     else:
                         result = deny("persistence_error")
