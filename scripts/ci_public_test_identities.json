@@ -7158,6 +7158,7 @@
     "tests/test_conventions_resolver.py::TestSourceResolver::test_path_re_special_chars",
     "tests/test_conventions_resolver.py::TestSourceResolver::test_pyproject_toml_path_dep",
     "tests/test_conventions_resolver.py::test_bad_utf8_package_json_is_skipped",
+    "tests/test_correction_http_bounds.py::test_capture_read_is_metered_before_it_buffers",
     "tests/test_correction_http_bounds.py::test_capture_wrapper_cannot_overshoot_the_budget_with_one_block",
     "tests/test_correction_http_bounds.py::test_capture_wrapper_refuses_an_unterminated_line_at_the_budget",
     "tests/test_correction_http_bounds.py::test_huge_body_is_refused_while_reading",
