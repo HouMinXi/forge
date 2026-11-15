@@ -2,6 +2,79 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-15 same-revision R4 evidence, pending acceptance
+
+Fixed product/test/prior-document commit:
+`1fca1f370f4505788fa65de547af4eb15021efc8` ([#513](https://github.com/HouMinXi/forge/pull/513));
+tree `37adb1ef66a3a7b38496aad2741ad70afb958000`. All 1574 tracked
+Git blobs, including symlink contents, matched the remote tree before and after
+this run. This supplement is a subsequent documentation-only revision; it does
+not retroactively make its own text part of the executed source tree.
+
+Cloud Linux source-tree environment: Python 3.14.0, SQLite 3.50.4, pytest 9.2.0,
+pytest-asyncio 1.5.0, MCP 1.30.0, AnyIO 4.16.0 and Ruff 0.17.3.
+
+```sh
+PYTHONPATH=src python -m pytest -q \
+  tests/test_cross_repo*.py tests/test_diagnostic*.py tests/test_scope_history*.py \
+  tests/test_json_diagnostic_contract.py tests/test_mcp_diagnostic_history.py \
+  tests/test_mcp_scope_history.py tests/test_native_diagnostics.py \
+  tests/test_public_diagnostic_summary.py tests/test_publication_contention.py \
+  tests/test_query_scope_receipt.py tests/test_scope_receipt_host.py \
+  tests/test_advisory_diagnostics.py
+```
+
+Result: **1390 passed in 44.87s**, 32 selected modules, no tracked-source changes.
+Retained local log SHA256:
+`d6b97aaf8a3a8753222918bca0dcdfccf4d633b9ee0954c6f2d505151a0e0d4d`.
+The log is retained by the executor, not a published downloadable artifact;
+this digest identifies it but does not independently provide its contents.
+Ruff check and format-check passed for
+`tests/test_cross_repo_persistent_diagnostic.py`,
+`tests/test_mcp_diagnostic_history.py` and `tests/test_mcp_scope_history.py`.
+This is source-tree regression evidence, not a new installed-wheel run or a
+replay of every historical negative control.
+
+An independent read-only review checked the exact-tree acceptance/contract,
+cross-repository and capture implementation, persistent test and CI identity
+manifest. It consumed the completed run log and found no new production repair
+blocking this limited slice. It did not grant G12/G13 or blanket source approval.
+
+The #513 control adds only the window after successful active capture creation
+at the primary machine constructor entry, before the original constructor body
+runs: RuntimeError,
+KeyboardInterrupt and SystemExit preserve the original exception and establish
+capture closing/inactivation, no observation/delivery and worker/cwd cleanup.
+Its earlier targeted close-omission RED remains evidence at its original
+test-only revision, not a new mutation executed in this run. Constructor-internal
+partial side effects, capture-construction failure, real failed-close leak
+freedom and every lifecycle timing are not established.
+
+### Remaining decisions, not another experiment inventory
+
+- **G12/R3:** the same-revision selected regression is now available. T06's
+  dedicated cap-removal/extra-hop omissions and T16's per-validator independent
+  discrimination are not thereby PASS. Recommend deciding whether existing
+  result-based controls suffice for the finite slice, with those unexecuted
+  controls retained as limitations; no such acceptance or waiver is made here.
+- **G13/A08:** after consuming this record, the maintainer must explicitly decide
+  finite acceptance. Independent review, CI and PR delivery do not substitute
+  for that decision. Existing scope exclusions remain unchanged.
+- **G02:** unlisted active-cache, individual string, excluded-root/path and
+  metadata-read limits in the subsequent limited G01/G02 freeze section below still require explicit
+  disposition. Their implemented values do not themselves grant contract
+  approval or complete numerical-boundary qualification.
+- **#443/#444:** #444's identical test blob is already in #443; the necessary
+  constructor-entry cleanup assertion identified in the candidate review is now
+  delivered by #513. Recommend historical/superseded treatment rather than
+  wholesale candidate integration. This is not authority to change either PR's
+  state and is not a claim of complete original-candidate equivalence.
+
+The accepted T12/T14/T19/T20 dispositions and original78 UNKNOWN boundary remain;
+they are not newly reopened implementation tasks. Related to #33 and #441, both
+remaining open. No parent-roadmap completion, support-domain expansion or
+G12/G13 approval is recorded.
+
 ## 2026-11-14 owner decisions (limited scope)
 
 Decision-maker: the owner/user in the Forge project chat. The owner replied
