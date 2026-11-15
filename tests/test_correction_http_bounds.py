@@ -271,3 +271,75 @@ def test_timed_out_reader_closes_the_response_when_asked():
 
     assert caught.value.is_timeout is True
     assert closed == [True]
+
+
+def test_timeout_is_not_delayed_by_a_blocking_close():
+    """Closing the response must not run on the thread delivering the timeout.
+
+    A response whose close() waits on the reader's buffer lock would otherwise
+    turn a 0.05 s deadline into however long the server holds the body open.
+    """
+    import io
+
+    release = threading.Event()
+
+    class BlockingRaw(io.RawIOBase):
+        def readable(self):
+            return True
+
+        def readinto(self, buffer):
+            release.wait(5)
+            return 0
+
+    class Resp:
+        fp = object()
+
+        def __init__(self):
+            self._reader = io.BufferedReader(BlockingRaw())
+
+        def read(self, n=-1):
+            return self._reader.read(n)
+
+        def close(self):
+            release.wait(5)
+
+    response = Resp()
+    started = time.monotonic()
+    try:
+        with pytest.raises(invoke.LLMInvokeError) as caught:
+            invoke._read_with_deadline(
+                response,
+                started + 0.05,
+                "blocking-close",
+                read=lambda: response.read(1),
+                close_on_timeout=True,
+            )
+        elapsed = time.monotonic() - started
+        assert caught.value.is_timeout is True
+        assert elapsed < 1.0, elapsed
+    finally:
+        release.set()
+
+
+def test_capture_wrapper_cannot_overshoot_the_budget_with_one_block():
+    """A block larger than the remaining budget must not be swallowed whole.
+
+    The pending check runs before the next extend, so a 64 KiB block arriving on
+    a nearly-full buffer would otherwise be committed and handed out in full.
+    """
+    from code_forge.invocation_tail_drain import _Lines, _TailLimit
+
+    class Capture:
+        def chunks(self, source):
+            return iter([b"x" * 2047, b"x" * 65536 + b"\n"])
+
+    class Resp:
+        def read(self, n=-1):
+            return b""
+
+    lines = _Lines(Resp(), Capture(), None, line_limit=2048)
+    try:
+        line = next(lines)
+    except _TailLimit:
+        return
+    raise AssertionError(f"overshoot returned {len(line)} bytes")

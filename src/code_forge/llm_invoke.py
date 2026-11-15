@@ -511,6 +511,53 @@ def _open_url(req, timeout_s):
     return urllib.request.urlopen(req, timeout=timeout_s)  # noqa: S310 - scheme allowlist enforced by callers
 
 
+def _correction_request_payload(body) -> bytes:
+    """Serialize a request body under the correction wire budget.
+
+    The decoded reply has its own limit; this one bounds what we send, because a
+    legal envelope can still expand past the budget once JSON escaping is
+    applied and the request has already cost a slot by then.
+    """
+    payload = json.dumps(body).encode("utf-8")
+    if _CORRECTION_READ_POLICY.get() is not None and len(payload) > _EXCERPT_WIRE_LIMIT:
+        raise LLMInvokeError(
+            "correction request exceeded %d bytes" % _EXCERPT_WIRE_LIMIT,
+            retryable=False,
+            kind="request_body",
+        )
+    return payload
+
+
+def _read_error_body(exc, deadline, backend_name) -> bytes:
+    """Read a bounded error body without letting a drip outlast the deadline.
+
+    The byte cap stops an unbounded body; it does nothing about a server that
+    sends a few bytes at a time. Under a correction the policy reader also
+    carries the wire budget.
+    """
+    policy = _CORRECTION_READ_POLICY.get()
+    if policy is not None:
+        read = policy.reader(exc)
+    elif deadline is not None:
+        read = lambda: exc.read(_ERROR_BODY_LIMIT)  # noqa: E731 - fixed-size read
+    else:
+        return exc.read(_ERROR_BODY_LIMIT)
+    raw = _read_with_deadline(exc, deadline, backend_name, read=read)
+    return raw if isinstance(raw, (bytes, bytearray)) else bytes(raw, "utf-8", "replace")
+
+
+def _quiet_close(response) -> None:
+    """Close a response from a thread that must not block on it.
+
+    Used only when the reader could not be joined: closing there can wait on a
+    buffer lock held by the very thread we stopped waiting for.
+    """
+    try:
+        response.close()
+    except Exception:  # noqa: BLE001, S110 - cleanup runs last; nothing left to report
+        pass
+
+
 def _read_with_deadline(response, deadline, backend_name, *, read=None, close_on_timeout=False):
     """Read response body, enforcing a total-wall deadline.
 
@@ -563,6 +610,27 @@ def _read_with_deadline(response, deadline, backend_name, *, read=None, close_on
     # Capture the raw socket before starting the read.  shutdown()
     # wakes the blocked recv immediately without freeing the fd number
     # (no fd-reuse race, no double-close).
+    policy = _CORRECTION_READ_POLICY.get()
+    if policy is not None and read is not None:
+        # The capture path supplies its own reader, so the policy reader never
+        # installs. Check what it hands back: a response assembled before the
+        # budget is consulted cannot be accepted as a legal reply.
+        _inner_read = read
+
+        def _bounded_read():
+            data = _inner_read()
+            if isinstance(data, (bytes, bytearray)):
+                policy.consumed = len(data)
+                if len(data) > policy.limit:
+                    raise LLMInvokeError(
+                        "correction response exceeded %d bytes" % policy.limit,
+                        retryable=False,
+                        kind="sse_body",
+                    )
+            return data
+
+        read = _bounded_read
+
     sock = None
     try:
         sock = response.fp.raw._sock
@@ -616,14 +684,18 @@ def _read_with_deadline(response, deadline, backend_name, *, read=None, close_on
         # A custom iterator that is not an HTTP response has no fd of ours to
         # sever, and closing it can be unsafe (generators refuse while a reader
         # thread is inside them). Only a real response is closed on timeout.
-        if read is None or sock is not None or (close_on_timeout and hasattr(response, "fp")):
+        if read is None or sock is not None:
             try:
                 response.close()
             except (OSError, ValueError):
-                # A generator being consumed by the reader thread refuses
-                # close() with "generator already executing"; the original
-                # cleanup rule then applies and the caller owns it.
                 pass
+        elif close_on_timeout and hasattr(response, "fp"):
+            # Closing inline would wait on the reader's own buffer lock, which is
+            # exactly the thread we just failed to join -- the timeout would be
+            # delivered late. Hand the close to its own thread and return now.
+            threading.Thread(
+                target=_quiet_close, args=(response,), name="forge-close", daemon=True
+            ).start()
         raise LLMInvokeError(
             "%s backend exceeded total read deadline" % backend_name,
             is_timeout=True,
@@ -2480,6 +2552,9 @@ _EXCERPT_CORRECTION_FORMATS = frozenset({"openai", "anthropic", "vertex"})
 _EXCERPT_CORRECTION_SLOTS = 8
 _EXCERPT_RAW_LIMIT = 131072
 _EXCERPT_CORRECTION_TIMEOUT_CAP = 120
+# A correction returns the same envelope as the pass it repairs, so its output
+# need is bounded by that envelope, not by the pass's own ceiling.
+_EXCERPT_CORRECTION_OUTPUT_CAP = 8192
 _EXCERPT_WIRE_LIMIT = 1048576
 # Error bodies are only quoted for the first 200 characters, so the read is
 # capped well above that and well below the correction wire limit.
@@ -2783,8 +2858,16 @@ def _accepted_correction(previous: dict, candidate, indexes: tuple[int, ...], re
     except Exception:  # noqa: BLE001 - cannot revalidate without the frozen source
         return None
     for excerpt in after:
-        assessment = assess_excerpt_evidence(excerpt, hunk_map, post_image, exempt_files)
+        # The validator repairs a truncated tail in place, so hand it a copy:
+        # a repaired tail is the host's text, not the model's, and publishing it
+        # would put characters in the evidence that the raw reply never carried.
+        from copy import deepcopy
+
+        probe = deepcopy(excerpt)
+        assessment = assess_excerpt_evidence(probe, hunk_map, post_image, exempt_files)
         if assessment.status is not ExcerptStatus.VALID:
+            return None
+        if probe != excerpt:
             return None
     return candidate
 
@@ -2825,6 +2908,23 @@ def _maybe_correct_literal_excerpts(
     if not owner.reserve():
         return result
     budget = int(min(_EXCERPT_CORRECTION_TIMEOUT_CAP, remaining))
+    # The shared backend carries the pass's own timeout and output ceiling, and
+    # `effective_invoke_timeout_s` prefers the backend value over the caller's
+    # argument. Hand the correction a copy whose bounds are the ones this
+    # request was actually granted, rather than a timeout argument it cannot win.
+    _ceiling = (backend.output_ceiling or backend.max_tokens) if backend is not None else 0
+    correction_backend = (
+        dataclasses.replace(
+            backend,
+            timeout_s=max(1, budget),
+            output_ceiling=min(_ceiling, _EXCERPT_CORRECTION_OUTPUT_CAP),
+            max_completion_tokens=min(
+                backend.max_completion_tokens or _ceiling, _EXCERPT_CORRECTION_OUTPUT_CAP
+            ),
+        )
+        if backend is not None
+        else None
+    )
 
     started = time.monotonic()
     correction_raw = None
@@ -2839,7 +2939,7 @@ def _maybe_correct_literal_excerpts(
     try:
         correction = llm_invoke(
             _correction_prompt(result.content, indexes, review_diff),
-            backend=backend,
+            backend=correction_backend,
             timeout_s=max(1, budget),
             max_attempts=1,
             initial_delay_s=0.0,
@@ -2853,6 +2953,13 @@ def _maybe_correct_literal_excerpts(
             _audit_cause="excerpt_repair",
             **({"_audit_scope": audit_scope} if audit_scope is not None else {}),
         )
+    except (MemoryError, KeyboardInterrupt, SystemExit):
+        raise
+    except (AuditPersistenceError, SendDeadlineError):
+        # These carry control, not just failure: an audit that could not be
+        # persisted and a send that overran its own deadline must stop the run,
+        # not be folded into "keep the original reply".
+        raise
     except Exception as exc:  # noqa: BLE001 - a failed correction keeps the original
         failure = exc
     finally:
@@ -4511,7 +4618,7 @@ def _invoke_openai_impl(
 
     try:
         req = urllib.request.Request(  # noqa: S310 - scheme allowlist enforced above
-            url, data=json.dumps(body).encode("utf-8"), headers=headers
+            url, data=_correction_request_payload(body), headers=headers
         )
         deadline = time.monotonic() + timeout_s
         opened = (
@@ -4547,7 +4654,7 @@ def _invoke_openai_impl(
                 # Only the head is ever shown in the error message; a bare
                 # read() would let a correction-time error body stream without
                 # bound, past both the wire limit and the deadline.
-                body_bytes = exc.read(_ERROR_BODY_LIMIT)
+                body_bytes = _read_error_body(exc, deadline, backend.name)
             else:
                 try:
                     body_bytes = _read_with_deadline(exc, deadline, backend.name)
@@ -4725,14 +4832,14 @@ def _invoke_anthropic(
 
     try:
         req = urllib.request.Request(  # noqa: S310 - scheme allowlist enforced above
-            url, data=json.dumps(body).encode("utf-8"), headers=headers
+            url, data=_correction_request_payload(body), headers=headers
         )
         deadline = time.monotonic() + timeout_s
         with _open_url(req, timeout_s) as response:  # noqa: S310 - scheme allowlist enforced above
             raw = _read_with_deadline(response, deadline, backend.name)
             resp_data = _parse_response_body(raw, backend.name)
     except urllib.error.HTTPError as exc:
-        body_bytes = exc.read(_ERROR_BODY_LIMIT)
+        body_bytes = _read_error_body(exc, deadline, backend.name)
         body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
         retry_after = _parse_retry_after(exc.headers)
         retryable = exc.code in RETRYABLE_HTTP_STATUSES
@@ -4947,14 +5054,16 @@ def _invoke_vertex(
 
     try:
         req = urllib.request.Request(  # noqa: S310 - scheme allowlist enforced above
-            url, data=json.dumps(body).encode("utf-8"), headers=headers
+            url, data=_correction_request_payload(body), headers=headers
         )
         deadline = time.monotonic() + timeout_s
         with _open_url(req, timeout_s) as response:  # noqa: S310 - scheme allowlist enforced above
             raw = _read_with_deadline(response, deadline, backend.name)
             resp_data = _parse_response_body(raw, backend.name)
     except urllib.error.HTTPError as exc:
-        body_excerpt = exc.read(_ERROR_BODY_LIMIT).decode("utf-8", errors="replace")[:200]
+        body_excerpt = _read_error_body(exc, deadline, backend.name).decode("utf-8", errors="replace")[
+            :200
+        ]
         raise LLMInvokeError(
             "HTTP %d from vertex backend: %s" % (exc.code, body_excerpt),
             exit_code=exc.code,

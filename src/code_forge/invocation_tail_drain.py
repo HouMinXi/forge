@@ -92,6 +92,13 @@ class _Lines:
             if self.remaining <= 0:
                 raise _TailLimit
             n = min(n, self.remaining)
+        if self.line_limit is not None:
+            # Refusing only after the line completes would still let one block
+            # overshoot the budget by its own size. Ask for at most one byte
+            # past what remains so the refusal happens near the bound.
+            n = min(n, self.line_limit - len(self.pending) + 1)
+            if n <= 0:
+                raise _TailLimit
         block = self.read(n)
         if self.remaining is not None:
             self.remaining -= len(block)
@@ -116,6 +123,15 @@ class _Lines:
                 line = bytes(self.pending)
                 self.pending.clear()
                 return line
+            if self.line_limit is not None:
+                # A block can arrive with the newline already inside it, so check
+                # the completed line against the budget before handing it out.
+                complete = self.pending.find(b"\n")
+                if complete < 0:
+                    if len(self.pending) >= self.line_limit:
+                        raise _TailLimit
+                elif complete >= self.line_limit:
+                    raise _TailLimit
         line = bytes(self.pending[: end + 1])
         del self.pending[: end + 1]
         return line

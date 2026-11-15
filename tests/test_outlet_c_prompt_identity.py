@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Outlet C off-path prompts stay byte-identical to their recorded base.
+"""Outlet C off-path prompts stay byte-identical to their recorded baseline.
 
-Oracle: tests/fixtures/outlet_c_prompt_digests_pre_lens.json. The base moved
-from 609aa51 to 2238ea66 when the post-image annotation prefix became part of
-the prompt text; the digests were recomputed there and the reason recorded. This module only reads it
+Oracle: tests/fixtures/outlet_c_prompt_digests_pre_lens.json.
+
+The digests in that file were produced by the working tree of the commit that
+introduced the post-image annotation note, not by the parent commit it names as
+`source_tree`. The parent's digests are kept in `superseded_digests` so the size
+of the intended change stays auditable. This test therefore pins the current
+strings against the recorded snapshot; it no longer proves "unchanged since
+609aa51". A change to prompt text must update this fixture and say so. This module only reads it
 and never imports the script's write path.
 """
 
