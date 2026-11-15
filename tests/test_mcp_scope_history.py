@@ -207,12 +207,18 @@ async def test_real_stdio_restart_and_job_independence(sample):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
+    # The SDK default may retain another test's import-time capsys stream.
+    # Pass the current descriptor-backed stderr without suppressing server errors.
+
     env = {**os.environ, **sample[-1], "PYTHONPATH": _SOURCE}
     for _ in range(2):
         params = StdioServerParameters(
             command=sys.executable, args=["-m", "code_forge.mcp_server"], env=env
         )
-        async with stdio_client(params) as (reader, writer), ClientSession(reader, writer) as session:
+        async with (
+            stdio_client(params, errlog=sys.stderr) as (reader, writer),
+            ClientSession(reader, writer) as session,
+        ):
             await session.initialize()
             result = await session.call_tool("forge_scope_history", {"ticket": sample[-2].name})
             assert not result.isError
@@ -311,10 +317,16 @@ async def test_real_stdio_default_off(sample):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
+    # The SDK default may retain another test's import-time capsys stream.
+    # Pass the current descriptor-backed stderr without suppressing server errors.
+
     env = {k: v for k, v in os.environ.items() if k not in sample[-1]}
     env["PYTHONPATH"] = _SOURCE
     params = StdioServerParameters(command=sys.executable, args=["-m", "code_forge.mcp_server"], env=env)
-    async with stdio_client(params) as (reader, writer), ClientSession(reader, writer) as session:
+    async with (
+        stdio_client(params, errlog=sys.stderr) as (reader, writer),
+        ClientSession(reader, writer) as session,
+    ):
         await session.initialize()
         result = await session.call_tool("forge_scope_history", {"ticket": sample[-2].name})
         assert result.isError
