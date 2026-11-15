@@ -23,6 +23,7 @@ from tests import test_cross_repo_immediate_diagnostic as immediate
 
 DIFF, MESSAGE, edit_graph = immediate.DIFF, immediate.MESSAGE, immediate.edit_graph
 graphs = immediate.graphs
+worker_completion = immediate.worker_completion
 
 pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="durable diagnostics qualify Linux local filesystems"
@@ -411,6 +412,56 @@ def test_pre_axis_failure_has_no_fabricated_observation(persistent_cli, monkeypa
     assert closed[0].delivery_status == "not_attempted"
     assert closed[0].records == []
     assert not closed[0]._active
+    assert not (persistent_cli.primary / ".code-forge/code-forge.lock").exists()
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt, SystemExit])
+def test_machine_construction_failure_closes_created_capture_before_run(
+    persistent_cli, worker_completion, monkeypatch, error_type
+):
+    from code_forge.machine import StateMachine
+    from code_forge._cross_repo_diagnostics import DiagnosticCapture
+
+    captures, closed = [], []
+    original_capture_init = DiagnosticCapture.__init__
+    original_close = DiagnosticCapture.close
+    original_machine_init = StateMachine.__init__
+    fault = error_type("primary machine construction failed")
+    cause = ValueError("existing cause")
+    fault.__cause__ = cause
+    fault.__suppress_context__ = True
+
+    def capture_init(capture, **kwargs):
+        original_capture_init(capture, **kwargs)
+        captures.append(capture)
+
+    def close(capture):
+        original_close(capture)
+        closed.append(capture)
+
+    def machine_init(machine, *args, **kwargs):
+        if kwargs.get("baseline_spec_repr") == "primary":
+            assert len(captures) == 1 and captures[0]._active
+            raise fault
+        original_machine_init(machine, *args, **kwargs)
+
+    monkeypatch.setattr(DiagnosticCapture, "__init__", capture_init)
+    monkeypatch.setattr(DiagnosticCapture, "close", close)
+    monkeypatch.setattr(StateMachine, "__init__", machine_init)
+    with pytest.raises(error_type) as caught:
+        persistent_cli.run(output=lambda message: None)
+    assert caught.value is fault
+    assert caught.value.__cause__ is cause
+    assert caught.value.__suppress_context__ is True
+    assert len(captures) == 1 and closed == captures
+    capture = captures[0]
+    assert not capture._active
+    assert capture.records == [] and capture.scope_records == []
+    assert capture.delivery_status == "not_attempted"
+    assert _records(persistent_cli.primary) == []
+    assert set(worker_completion.exited) == {"primary", "consumer"}
+    assert all(event.is_set() for event in worker_completion.exit_events.values())
+    immediate.assert_workers_cleaned(worker_completion, {"consumer"})
     assert not (persistent_cli.primary / ".code-forge/code-forge.lock").exists()
 
 
