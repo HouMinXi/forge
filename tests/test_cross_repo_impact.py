@@ -1045,3 +1045,83 @@ def test_discovery_unresolvable_sibling_is_infrastructure_skip(discovery_state, 
         findings, errors = discovery_run(primary)
     assert findings == []
     assert errors and "registry" in errors[0].lower()
+
+
+def test_direct_caller_chain_excludes_second_hop(tmp_path, primary_repo, monkeypatch):
+    """A <- B <- C: only B is a direct caller of changed A."""
+    sibling = tmp_path / "chain"
+    sibling.mkdir()
+    graph = sibling / ".code-review-graph"
+    graph.mkdir()
+    _make_db(
+        graph / "graph.db",
+        [
+            (1, "function", "direct", "consumer::direct", "src/lib/direct.py", 1, 1),
+            (2, "function", "indirect", "outer::indirect", "src/lib/indirect.py", 1, 1),
+        ],
+        [
+            ("CALLS", "consumer::direct", "process_request"),
+            ("IMPORTS_FROM", "consumer::direct", "handler"),
+            ("CALLS", "outer::indirect", "direct"),
+            # Keep module disambiguation independently eligible; C must be
+            # excluded because its CALLS edge targets B, not because of imports.
+            ("IMPORTS_FROM", "outer::indirect", "handler"),
+            ("IMPORTS_FROM", "outer::indirect", "consumer"),
+        ],
+    )
+    for name in ("direct", "indirect"):
+        path = sibling / "src/lib" / (name + ".py")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def " + name + "(): pass\n", encoding="utf-8")
+    registry = _make_registry(
+        tmp_path / "registry.json",
+        [{"path": str(primary_repo), "alias": "primary"}, {"path": str(sibling), "alias": "chain"}],
+    )
+    monkeypatch.setenv("CRG_REGISTRY_PATH", str(registry))
+    runner = CrossRepoImpactRunner()
+    findings = runner.run(_sample_diff(), primary_repo)
+    assert runner.infra_errors == []
+    assert [(item.file, item.line_range) for item in findings] == [
+        ("chain:src/lib/direct.py", (1, 1)),
+    ]
+
+
+def test_top_n_selects_nearer_identities_without_tie_order(tmp_path, primary_repo, monkeypatch):
+    """Select 6 nearest + 4 intermediate callers, excluding 5 farther ones."""
+    sibling = tmp_path / "ranked"
+    sibling.mkdir()
+    graph = sibling / ".code-review-graph"
+    graph.mkdir()
+    # Insert farther rows first. The expected sets below do not call the
+    # production scoring helper or constrain ordering within an equal-rank set.
+    paths = (
+        ["remote/far%d.py" % i for i in range(5)]
+        + ["src/other/mid%d.py" % i for i in range(4)]
+        + ["src/lib/near%d.py" % i for i in range(6)]
+    )
+    nodes, edges = [], []
+    for i, relative in enumerate(paths):
+        name = "caller%d" % i
+        qualified = "calls::" + name
+        nodes.append((i + 1, "function", name, qualified, relative, 1, 1))
+        edges.extend(
+            [
+                ("CALLS", qualified, "process_request"),
+                ("IMPORTS_FROM", qualified, "handler"),
+            ]
+        )
+        path = sibling / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def " + name + "(): pass\n", encoding="utf-8")
+    _make_db(graph / "graph.db", nodes, edges)
+    registry = _make_registry(
+        tmp_path / "registry.json",
+        [{"path": str(primary_repo), "alias": "primary"}, {"path": str(sibling), "alias": "ranked"}],
+    )
+    monkeypatch.setenv("CRG_REGISTRY_PATH", str(registry))
+    runner = CrossRepoImpactRunner()
+    findings = runner.run(_sample_diff(), primary_repo)
+    assert runner.infra_errors == []
+    assert len(findings) == 10
+    assert {item.file for item in findings[:6]} == {"ranked:src/lib/near%d.py" % i for i in range(6)}
+    assert {item.file for item in findings[6:]} == {"ranked:src/other/mid%d.py" % i for i in range(4)}
