@@ -343,3 +343,51 @@ def test_capture_wrapper_cannot_overshoot_the_budget_with_one_block():
     except _TailLimit:
         return
     raise AssertionError(f"overshoot returned {len(line)} bytes")
+
+
+def test_capture_read_is_metered_before_it_buffers():
+    """The wire budget must stop the read, not the assembled result.
+
+    A capture wrapper assembles its own buffer, so checking its return value
+    bounds the result while peak memory stays unbounded. Charging at read()
+    keeps the served byte count at the budget plus one block.
+    """
+    limit = invoke._EXCERPT_WIRE_LIMIT
+    served = []
+
+    class Resp:
+        def __init__(self):
+            self.remaining = limit * 3
+
+        def read(self, n=-1):
+            if self.remaining <= 0:
+                return b""
+            size = min(n if n and n > 0 else 65536, self.remaining)
+            self.remaining -= size
+            served.append(size)
+            return b"x" * size
+
+    class Capture:
+        def chunks(self, source, preserve_primary=False):
+            while True:
+                block = source.read(65536)
+                if not block:
+                    return
+                yield block
+
+        def report_incomplete(self, code):
+            pass
+
+        def seal(self, interrupted):
+            pass
+
+    policy = invoke._CorrectionReadPolicy()
+    token = invoke._CORRECTION_READ_POLICY.set(policy)
+    try:
+        with pytest.raises(invoke.LLMInvokeError) as caught:
+            invoke._read_captured_body(Resp(), time.monotonic() + 30, "metered", Capture())
+        assert caught.value.kind == "sse_body"
+    finally:
+        invoke._CORRECTION_READ_POLICY.reset(token)
+
+    assert sum(served) <= limit + 65536, sum(served)

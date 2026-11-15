@@ -232,7 +232,13 @@ class OpenAiSendTransport:
     def open(self, request, *, deadline):
         self._deadline = deadline
         return open_with_redirects(
-            request, deadline=deadline, capture_hop=self._capture_hop, opener=_SendOpener(self)
+            request,
+            deadline=deadline,
+            capture_hop=self._capture_hop,
+            opener=_SendOpener(self),
+            # A correction is a bounded re-ask: following a redirect would spend
+            # another physical send that the allowance never granted.
+            max_hops=0 if self.cause in ("correction", "excerpt_repair") else 10,
         )
 
     def response_capture(self, response):

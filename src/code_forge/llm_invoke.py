@@ -511,6 +511,42 @@ def _open_url(req, timeout_s):
     return urllib.request.urlopen(req, timeout=timeout_s)  # noqa: S310 - scheme allowlist enforced by callers
 
 
+def _metered_for_capture(response):
+    """Count bytes where they enter, so the capture buffer itself stays bounded.
+
+    Checking what `capture.chunks` hands back bounds the result but not peak
+    memory: the capture layer assembles its own buffer first. Charging at
+    read()/read1() stops the read that would cross the budget.
+    """
+    policy = _CORRECTION_READ_POLICY.get()
+    if policy is None:
+        return response
+
+    def _charge(block):
+        if isinstance(block, (bytes, bytearray)) and block:
+            policy.consumed += len(block)
+            if policy.consumed > policy.limit:
+                raise LLMInvokeError(
+                    "correction response exceeded %d bytes" % policy.limit,
+                    retryable=False,
+                    kind="sse_body",
+                )
+        return block
+
+    class _Metered:
+        def __getattr__(self, name):
+            return getattr(response, name)
+
+        def read(self, n=-1):
+            return _charge(response.read(n))
+
+        def read1(self, n=-1):
+            inner = getattr(response, "read1", None)
+            return _charge(inner(n) if inner is not None else response.read(n))
+
+    return _Metered()
+
+
 def _correction_request_payload(body) -> bytes:
     """Serialize a request body under the correction wire budget.
 
@@ -724,12 +760,15 @@ def _read_captured_body(response, deadline, backend_name, wire_capture, *, prese
 
     interrupted = True
     primary = None
+    # Resolve the policy on this thread: the reader below runs in a plain
+    # Thread, which does not inherit context variables.
+    metered = _metered_for_capture(response)
     try:
         raw = _read_with_deadline(
             response,
             deadline,
             backend_name,
-            read=lambda: b"".join(wire_capture.chunks(response, preserve_primary=preserve_primary)),
+            read=lambda: b"".join(wire_capture.chunks(metered, preserve_primary=preserve_primary)),
         )
         interrupted = False
         return raw
