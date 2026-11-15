@@ -174,6 +174,8 @@ Planned production files:
 
 The initial review prompt and `REVIEW_JSON_CONTRACT` stay byte-identical. Do not recapture the L1 prompt oracle for this slice. Pin the correction prompt in separate tests.
 
+Deviation (recorded after implementation): the post-image block gained one sentence telling the reviewer that a `N: ` prefix is an annotation rather than source. The L1 oracle `l1_prompt_digests_pre_p59.json` is untouched; the separate Outlet C off-path oracle was recaptured and its old digests kept in `superseded_digests`.
+
 ## Acceptance
 
 A predicted rejection is a test expectation, not an execution error. Timeout, collection error or zero selected tests cannot satisfy a row.
