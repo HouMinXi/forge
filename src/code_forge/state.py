@@ -218,6 +218,7 @@ def record_provider_failure(
             "empty",
             "no_json",
             "protocol",
+            "refusal",
             "send_deadline",
             "sse_body",
             "truncated",
