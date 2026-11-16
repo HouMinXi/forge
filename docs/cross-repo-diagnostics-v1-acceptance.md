@@ -2,6 +2,49 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-16 post-#519 selected regression and coverage boundary
+
+Fixed product/test/prior-document revision:
+`5d21ad778db31bb65050e3f4a0a9339277ff5bd7` ([#519](https://github.com/HouMinXi/forge/pull/519));
+tree `5eaf169b74c56853437cb040d6ee911a6ada2666`. All 1575 tracked
+blobs, including symlink contents, matched that Git tree before and after the
+completed run. This later documentation supplement is not part of the executed
+tree and does not reassign earlier evidence to the new revision.
+
+The same 32-module command listed in the 2026-11-15 R4 record below completed
+with **1390 passed, no skips, in 35.88s** (exit 0), without a filesystem-profile
+substitute. Cloud Linux environment: CPython 3.14.10, SQLite 3.53.1,
+code-review-graph 2.4.0, pytest 9.2.0, pytest-asyncio 1.5.0, MCP 1.30.0,
+AnyIO 4.16.0 and Ruff 0.17.3. Dependency consistency checking passed.
+The initial environment lacked the optional graph provider and produced
+1330 passes plus two module skips; that incomplete run is not the final result.
+Installing the provider while retaining MCP 1.30.0 allowed the complete selection.
+Ruff check/format-check passed for the same three files named in the earlier R4
+record. Retained executor log SHA256:
+`edae2a092d76a613769c134448b8aadfe17df25f77ea9042ac274ce646db0703`.
+The log is not a published downloadable artifact; its digest identifies retained
+evidence, not independent access to its contents.
+
+**G08/G11 boundary:** #519 repairs the invocation-audit recorder's failed-release
+identity retention using bounded directory references. Its 64-slot, loss-of-trust,
+settlement and fork behavior is documented in
+[configuration](configuration.md#forge_scoped_fault_domain).
+The diagnostic storage path instead uses `StorageBinding` and publication/reading
+in `_advisory_diagnostics.py`, consumed by `_cross_repo_diagnostics.py`.
+The audit pin registry is not a replacement for that storage implementation.
+Consequently this repair grants no new T15/T18d generation-continuity or filesystem
+qualification, no complete T17 host concurrency, and no blanket T18f/T19 cleanup,
+real-close-failure leak-freedom or interruption guarantee. Existing support and
+exclusions remain unchanged. Audit-specific tests and CI retain their own scope.
+
+**G12/G13 boundary:** the new result supplies current-revision selected source-tree
+regression evidence, not installed-wheel evidence, new omission RED credit,
+original78 equivalence, or acceptance of every retained obligation. The earlier
+limited G12 decision remains limited. T06/T16 outstanding controls, metadata
+cap-plus-one clarification, historical candidate disposition and explicit final
+maintainer acceptance are not resolved by this run or by merging #519.
+No G/T row is promoted to PASS by this supplement; #33 and #441 remain open.
+
 ## 2026-11-15 owner decisions: limited G12 evidence and remaining G02 limits
 
 Decision source: the owner in the Forge project chat explicitly accepted the
