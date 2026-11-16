@@ -2,6 +2,59 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-16 T16 three selector-specific negative controls
+
+Executed revision remains `f21f2cef6c0907778e843a2289cff9ddfcc0b0e4`,
+tree `389afe7c10c28ca65c2f1715777024c0ae18e08b`. Each experiment used a
+separate exact archive copy and the existing test, with CPython 3.14.10,
+pytest 9.2.0 and no added plugin or filesystem-profile substitute. Each phase ran
+`PYTHONPATH=src python -m pytest -q <node>` in a fresh process.
+
+- **Version exact-int:**
+  `tests/test_advisory_diagnostics.py::test_schema_wrong_types_versions_enums_combinations[schema_version-True]`.
+  Only remove `type(data["schema_version"]) is not int or` from the decoder;
+  retain version-value and axis checks. JSON `true` then passes the remaining
+  `!= 1` comparison. This tests boolean rejection, not every version/type input.
+- **Fixed axis:**
+  `tests/test_advisory_diagnostics.py::test_schema_wrong_types_versions_enums_combinations[axis-other]`.
+  Only remove `or data["axis"] != _AXIS`; retain both version checks. The
+  independent literal `"other"` is then accepted by the decoder. This covers
+  that fixed-value omission, not all axis encodings or other fields.
+- **Repository closed keys:**
+  `tests/test_advisory_diagnostics.py::test_extra_fields_rejected_at_each_object_level[repository]`.
+  Only remove `or binding.keys() != {"kind", "id"}`; retain binding type,
+  kind and id/context checks. The existing fixture adds only `future=None`.
+  This tests rejection of an extra key, not missing keys or binding type/kind.
+
+For each: baseline **1 PASS / exit 0**, mutant **1 semantic failure / exit 1**
+(`DID NOT RAISE DiagnosticError` at the existing rejection assertion), and
+byte-restored **1 PASS / exit 0**. No tests or fixtures changed. Actual mutant
+source, diff and hashes were saved before each mutant run; each 1573-regular-file
+manifest identified only `_advisory_diagnostics.py` as changed. Independent
+review verified the logs and restored contents of all 1575 Git blobs, including
+the two symlink targets, against the fixed revision. Symlinks were checked at
+restoration, not independently snapshotted during each mutation.
+
+Retained log SHA256 values, in baseline / mutant / restored order:
+
+- Version exact-int: `fa8e3e1f0a4b084326a7027307e5cc3a94f799f9733ea598c3b878fa3c70f37c` /
+  `29f22e80ba78543212104379bf6bd06dfcc33170cf39536d3c5fe8ab3c5d9529` /
+  `99a24796443a1d07f66a424f8116a06a2079063af758e7d3c87801c191ad2ecd`.
+
+- Fixed axis: `76af71df60bb5f93ea635e8763126ecf98e837672c9980e80aefde989b203765` /
+  `fc6049d5eb18d615437ed23b4ffa3648f0e589ef11710cf5d22de38ac7b4392b` /
+  `e8c2ebdecc6c68bd31c948de0b0c1dd4c57dd47d093194a6c1d241c65727824d`.
+
+- Repository closed keys: `fa8e3e1f0a4b084326a7027307e5cc3a94f799f9733ea598c3b878fa3c70f37c` /
+  `60692175e3fe24a0bd6387ff75705c8643c345addf3bbf174c08b860886f276c` /
+  `e8c2ebdecc6c68bd31c948de0b0c1dd4c57dd47d093194a6c1d241c65727824d`.
+
+The hashes identify retained evidence, not public downloadable artifacts. These
+three specific omissions are no longer NOT_RUN at this revision; earlier dated
+statuses remain historical. Other validators and input variants retain their
+separate status. No exhaustive T16 qualification, original78 equivalence, new
+support domain, G12/G13 acceptance or issue closure follows.
+
 ## 2026-11-16 T06 two bounded negative controls
 
 Executed product/test revision: `f21f2cef6c0907778e843a2289cff9ddfcc0b0e4`,
