@@ -83,3 +83,22 @@ legacy report fallback; they do not reinterpret the new subtype as a trusted
 status. No report schema version or clean-credit policy is changed. The existing
 `fields.source` slot was already supported; old blocks with a null source remain
 readable.
+
+## Reviewer response rejection diagnostics
+
+An ordinary L1 factory validation refusal prints one stderr line with its
+host-owned pass name and rejection kind: `schema`, `missing-excerpts`, or
+`evidence`. Without invocation auditing, the line includes the first validation
+cause, escaped to printable ASCII and limited to 500 characters before an
+explicit truncation marker. With invocation auditing, only the kind and a fixed
+generic explanation are printed; private exception text is never formatted.
+These diagnostics do not change receipt acceptance or clean credit. Refusals
+at the later frozen-diff content check retain their existing writer diagnostics.
+
+A finding uses `line` and its own verbatim `excerpt`. The review envelope's
+separate `code_excerpts` use `start_line`, `end_line`, and `content` to support
+coverage verification. A finding anchor alone does not establish that coverage.
+When investigating a rejected attempt, retain the entire attempted artifact and
+its matching stderr output; a cropped `payload.findings` entry cannot establish
+why the envelope was refused. Historical artifacts do not contain this new
+stderr diagnostic retroactively.
