@@ -2,6 +2,71 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+
+## 2026-11-16 scope-live evidence and limited owner acceptance for #526
+
+Related: [#526](https://github.com/HouMinXi/forge/issues/526), parent #33 and
+shared evidence #441. This reviews existing behavior and records its limited acceptance; it is not
+implementation, support-domain expansion or final acceptance of #33 or #441.
+
+The recorded scope-live decision remains bound to product/test
+`2b2ac9fc18285f78acf5503ded830d256b3a99ff` and [#507](https://github.com/HouMinXi/forge/pull/507).
+Direct Git blob comparison with `d8810a212c79c62f6bce9c1b7e404e33696be8f1`
+found identical bytes for `src/code_forge/cross_repo_impact.py`,
+`src/code_forge/_advisory_diagnostics.py`, `src/code_forge/_query_scope_receipt.py`,
+the four test modules below and `docs/cross-repo-query-scope-v1.md`.
+This is scoped source identity, not whole-repository or environment equivalence.
+
+At that exact later revision, [Linux run 43906002270](https://github.com/HouMinXi/forge/actions/runs/43906002270)
+completed successfully. Its published execution receipts were directly read,
+not inferred from collection or aggregate green. Public IDs were resolved using
+that revision's `scripts/ci_public_test_identities.json` blob
+`4d72c843bf1bc5cbd3a0c57abacb8ad149cdbc02` and the actual
+`ci_private_transport.py::_identities` mapping:
+
+- `tests/test_cross_repo_query_summary.py`: 39 nodes, shard 0,
+  artifact `14246711664` (`linux-shard-0-evidence`).
+- `tests/test_scope_receipt_host.py`: 43 nodes, shard 1,
+  artifact `14246941253` (`linux-shard-1-evidence`).
+- `tests/test_cross_repo_scope_snapshot.py`: 35 nodes, and
+  `tests/test_query_scope_receipt.py`: 51 nodes, shard 2,
+  artifact `14245553883` (`linux-shard-2-evidence`).
+
+All 168 manifest nodes in these four modules appeared in collected identities and had passed setup,
+call and teardown reports, with no missing target node, target skip, xfail or error.
+Each receipt named the exact revision above and exit status 0. This includes all
+four `test_actual_cli_mcp_child_transports_query_summary` parameterizations
+(PASS/FAIL × immediate/background), and all four
+`test_named_target_summary_preserves_natural_gate_and_receipt_bytes`
+parameterizations (False/True × PASS/FAIL). These eight are included in the 39,
+not additional tests. This review consumed existing CI; it did not rerun tests.
+
+This supports the existing bounded distinctions: registration occurrences including
+duplicates, unknown/not-reached versus established empty, successful zero-caller
+queries, partial failures, independent scope receipt consumption and the tested
+text/CLI-child transports. Completed queries are not overall analysis success or
+complete impact coverage. Missing registry retains existing empty-scope discovery
+semantics; absence of a receipt remains unknown. Historical retrieval, whole live
+SDK/provider recovery, graph freshness, multi-hop impact and final G12/G13
+acceptance are not established by these 168 controls. Earlier execution and
+negative-control records retain their original revisions.
+
+The execution-evidence gap for this selected slice at the fixed reviewed revision
+is resolved.
+On 2026-11-16, the owner explicitly accepted the existing registered-scope live
+summary and counts after the stated limits were presented in the Forge project
+chat. Counts include repeated registrations; unknown is not zero, and completed
+queries do not establish whole-repository coverage or overall analysis success.
+This acceptance excludes multi-hop impact and all-real-SDK/provider qualification.
+The reviewed product/test revision remains the exact revision above; this later
+decision record does not reassign execution evidence to a new source revision.
+There is no public decision permalink; no private message identifier is exposed.
+
+This records the limited acceptance decision for this selected #526 slice, not the
+parent roadmap or G13 final acceptance. #33 and #441 remain open. No automatic
+issue closure, broader support, metadata cap-plus-one approval, or disposition
+of historical #443/#444 candidates is authorized by this decision.
+
 ## 2026-11-16 T16 three selector-specific negative controls
 
 Executed revision remains `f21f2cef6c0907778e843a2289cff9ddfcc0b0e4`,
