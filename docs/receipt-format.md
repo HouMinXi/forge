@@ -129,3 +129,25 @@ the same configured provider. Both initial and replacement raw responses remain
 in the private `correction/` lane with the host-selected strategy and outcome.
 That lane confers no completion authority. Observed initial and follow-up token
 usage is summed once, including failed attempts; unknown usage stays unknown.
+
+## Provider refusal statistics at strict audit boundaries
+
+Explicit provider refusal metadata stops the affected API acquisition without
+JSON, continuation, or headroom retries. Ordinary syntax-correction,
+continuation, and headroom refusal paths retain their already-observed recovery
+response usage and report elapsed time from the API entry.
+
+Raw API strict-audit failures and pre-network send-deadline controls preserve
+the existing primary exception's fields, arguments, and cause before any such
+statistical enrichment. Its usage or duration can therefore describe only the
+primary observation, or remain unavailable; preceding responses in the same API
+call are not folded into those fields. Complete-call statistics after these raw
+strict/control exits remain incomplete. Missing observations are not inferred
+as zero, and no extra request is made to obtain them.
+
+The separate count/literal outer recovery retains its existing accounting
+contract: it can combine an already-returned initial response with follow-up
+failure observations while preserving the exception's identity and cause.
+That outer aggregation and raw API field preservation are distinct boundaries;
+the raw API rule is not a claim of global field immutability across the outer
+recovery layer. Evidence acceptance and clean-credit rules remain unchanged.

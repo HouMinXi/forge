@@ -4011,6 +4011,8 @@ def _continue_truncated(
                 # otherwise fold it into a budgeted failure.
                 raise
             except ProviderRefusalError as exc:
+                if _strict_send_audit_failed(_audit_scope):
+                    raise
                 exc._add_prior_usage(observed)
                 raise
             except _TruncatedResponse as exc:
@@ -4475,9 +4477,10 @@ def _invoke_api(
                     retryable=retry_timeout,
                 ) from exc
         except LLMInvokeError as exc:
-            # Cost belongs to both acquired responses even when strict audit
-            # or a send deadline must escape before ordinary failure routing.
-            # Aggregate once, retaining the original exception and its chain.
+            if isinstance(exc, SendDeadlineError) or _strict_send_audit_failed(_audit_scope):
+                raise
+            # Ordinary syntax-correction failures include the first response
+            # once. Strict/control exits above retain the raw primary fields.
             if correction_active and initial_syntax_usage is not None:
                 correction_usage = exc.observed_usage
                 if isinstance(exc, _TruncatedResponse):
@@ -4494,8 +4497,6 @@ def _invoke_api(
                 )
             if isinstance(exc, ProviderRefusalError):
                 exc.duration_s = time.monotonic() - start
-            if isinstance(exc, SendDeadlineError) or _strict_send_audit_failed(_audit_scope):
-                raise
             if correction_active:
                 exc.retryable = False
                 raise
@@ -4528,6 +4529,8 @@ def _invoke_api(
                 except TruncationBreakerError:
                     raise
                 except ProviderRefusalError as refused:
+                    if _strict_send_audit_failed(_audit_scope):
+                        raise
                     refused.duration_s = time.monotonic() - start
                     raise
                 except (AuditPersistenceError, SendDeadlineError):
@@ -4584,6 +4587,8 @@ def _invoke_api(
                             **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
                         )
                     except ProviderRefusalError as refused:
+                        if _strict_send_audit_failed(_audit_scope):
+                            raise
                         prior = (
                             spent_error.observed_usage
                             if spent_error is not None

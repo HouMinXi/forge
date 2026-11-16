@@ -85,6 +85,16 @@ def install_wire(
     return backend, requests, refusals, raw
 
 
+def snapshot_primary(primary):
+    return dict(vars(primary)), primary.args, primary.__cause__, primary.usage, primary.observed_usage
+
+
+def assert_primary_unchanged(primary, before):
+    fields, args, cause, usage, observed = before
+    assert vars(primary) == fields and primary.args == args and primary.__cause__ is cause
+    assert primary.usage is usage and primary.observed_usage is observed
+
+
 def assert_private(capsys, caplog, errors, diagnostics=()):
     output = capsys.readouterr()
     public = output.out + output.err + caplog.text + json.dumps(diagnostics)
@@ -236,7 +246,7 @@ def test_nonrefusal_truncation_keeps_observed_cost_and_does_not_continue(monkeyp
 
 
 @pytest.mark.parametrize("disabled", [False, True], ids=["ordinary-fallback", "strict-stop"])
-def test_strict_audit_refusal_control_preserves_primary_and_exact_cost_once(monkeypatch, disabled):
+def test_count_outer_control_keeps_baseline_aggregate_and_primary_identity(monkeypatch, disabled):
     backend = _backend(monkeypatch)
     primary = invoke.ProviderRefusalError(backend, FOLLOWUP_USAGE)
     cause = RuntimeError("synthetic audit cause")
@@ -282,7 +292,7 @@ def test_strict_audit_refusal_control_preserves_primary_and_exact_cost_once(monk
 
 @pytest.mark.parametrize("strict_stop", [False, True], ids=["ordinary", "strict-stop"])
 @pytest.mark.parametrize("kind", ["refusal", "ordinary", "audit", "send-deadline", "truncation"])
-def test_json_correction_failure_preserves_initial_cost_before_strict_escape(
+def test_core_control_preserves_full_primary_while_ordinary_syntax_failure_sums_cost(
     monkeypatch, strict_stop, kind
 ):
     backend = _backend(monkeypatch)
@@ -304,6 +314,7 @@ def test_json_correction_failure_preserves_initial_cost_before_strict_escape(
         )
     cause = RuntimeError("synthetic original cause")
     primary.__cause__ = cause
+    before = snapshot_primary(primary)
     scope = SimpleNamespace(strict=True, disabled=False)
     calls = []
 
@@ -326,14 +337,18 @@ def test_json_correction_failure_preserves_initial_cost_before_strict_escape(
             _audit_scope=scope,
         )
     assert len(calls) == 2 and caught.value is primary and caught.value.__cause__ is cause
-    assert (primary.observed_usage.input_tokens, primary.observed_usage.output_tokens) == (7, 10)
-    assert primary.usage is primary.observed_usage
+    if strict_stop or kind == "send-deadline":
+        assert_primary_unchanged(primary, before)
+    else:
+        assert (primary.observed_usage.input_tokens, primary.observed_usage.output_tokens) == (7, 10)
+        assert primary.usage is primary.observed_usage
 
 
 @pytest.mark.parametrize("strict_stop", [False, True], ids=["ordinary", "strict-stop"])
-def test_json_correction_refusal_with_unknown_cost_does_not_invent_usage(monkeypatch, strict_stop):
+def test_core_unknown_refusal_keeps_strict_primary_or_ordinary_partial_cost(monkeypatch, strict_stop):
     backend = _backend(monkeypatch)
     primary = invoke.ProviderRefusalError(backend, None)
+    before = snapshot_primary(primary)
     scope = SimpleNamespace(strict=True, disabled=False)
     calls = []
 
@@ -356,13 +371,18 @@ def test_json_correction_refusal_with_unknown_cost_does_not_invent_usage(monkeyp
             _audit_scope=scope,
         )
     assert len(calls) == 2 and caught.value is primary
-    assert (primary.observed_usage.input_tokens, primary.observed_usage.output_tokens) == (2, 3)
-    assert primary.observed_usage.known_fields == frozenset() and primary.usage is None
+    if strict_stop:
+        assert_primary_unchanged(primary, before)
+    else:
+        assert (primary.observed_usage.input_tokens, primary.observed_usage.output_tokens) == (2, 3)
+        assert primary.observed_usage.known_fields == frozenset() and primary.usage is None
 
 
 @pytest.mark.parametrize("strict_stop", [False, True], ids=["ordinary", "strict-stop"])
 @pytest.mark.parametrize("stage", ["initial", "syntax", "continuation", "headroom"])
-def test_escaping_refusal_duration_is_entire_api_entry_elapsed(monkeypatch, strict_stop, stage):
+def test_core_refusal_keeps_strict_primary_or_records_ordinary_entry_elapsed(
+    monkeypatch, strict_stop, stage
+):
     backend = dataclasses.replace(
         _backend(monkeypatch),
         max_tokens=10,
@@ -379,6 +399,7 @@ def test_escaping_refusal_duration_is_entire_api_entry_elapsed(monkeypatch, stri
     )
     cause = RuntimeError("synthetic duration cause")
     primary.__cause__ = cause
+    before = snapshot_primary(primary)
     calls = []
     final_call = {"initial": 1, "syntax": 2, "continuation": 2, "headroom": 4}[stage]
 
@@ -419,17 +440,20 @@ def test_escaping_refusal_duration_is_entire_api_entry_elapsed(monkeypatch, stri
             _audit_scope=scope,
         )
     assert len(calls) == final_call and caught.value is primary and primary.__cause__ is cause
-    assert primary.duration_s == pytest.approx(clock[0] - 10.0)
-    expected = {"initial": (2, 3), "syntax": (7, 10), "continuation": (7, 10), "headroom": (13, 18)}[
-        stage
-    ]
-    assert (primary.observed_usage.input_tokens, primary.observed_usage.output_tokens) == expected
+    if strict_stop:
+        assert_primary_unchanged(primary, before)
+    else:
+        assert primary.duration_s == pytest.approx(clock[0] - 10.0)
+        expected = {"initial": (2, 3), "syntax": (7, 10), "continuation": (7, 10), "headroom": (13, 18)}[
+            stage
+        ]
+        assert (primary.observed_usage.input_tokens, primary.observed_usage.output_tokens) == expected
     if stage == "headroom":
         assert calls == [10, 10, 10, 20]
 
 
 @pytest.mark.parametrize("strict_stop", [False, True], ids=["ordinary-fallback", "strict-stop"])
-def test_count_refusal_duration_includes_each_request_once(monkeypatch, strict_stop):
+def test_count_outer_refusal_duration_keeps_baseline_aggregate_once(monkeypatch, strict_stop):
     clock = [10.0]
     monkeypatch.setattr(invoke.time, "monotonic", lambda: clock[0])
     backend = _backend(monkeypatch)
