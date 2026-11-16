@@ -21,6 +21,7 @@ from functools import partial
 from pathlib import Path
 from typing import Callable
 
+from . import _env_flags
 from .autofix import AutoFixer, FixOutcome, NoChangeAutoFixer
 from .baseline import ResolvedReview
 from .disposition import Disposition
@@ -475,12 +476,7 @@ def _serial_passes_requested() -> bool:
     Explicit opt-in only: an unset or unrecognised value keeps the default
     parallel dispatch, so no existing caller changes behaviour.
     """
-    return os.environ.get("FORGE_L1_SERIAL", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    return _env_flags.requested(os.environ, "FORGE_L1_SERIAL")
 
 
 def _evidence_only_diff(resolved, reviewed_repositories, backend) -> str | None:

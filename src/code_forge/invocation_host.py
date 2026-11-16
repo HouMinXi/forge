@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 
+from . import _env_flags as env_flags
 from .invocation_audit import (
     BackendObservation,
     InvocationContext,
@@ -265,6 +266,18 @@ def _controller(method):
     return invoke
 
 
+_SCOPED_DOMAIN_ENV = "FORGE_SCOPED_FAULT_DOMAIN"
+
+
+def _scoped_domain_requested(environ) -> bool:
+    """Whether the operator asked for the refinement vocabulary.
+
+    Absent, empty or unrecognised keeps the single generic notice every shipped
+    path already emits, so the default output stays what it always was.
+    """
+    return env_flags.requested(environ, _SCOPED_DOMAIN_ENV)
+
+
 class HostAuditSession:
     """One lazy review lifecycle; scope() creates small explicit send views.
 
@@ -343,8 +356,14 @@ class HostAuditSession:
         A bad path disables this session, never selects another writable root.
         Native filesystem/OS admission remains the recorder's responsibility.
         """
+        environ = os.environ if environ is None else environ
         try:
-            root, legacy = _user_state_roots(os.environ if environ is None else environ)
+            # Read inside the same guard as the roots, so a mapping that answers with a
+            # type or value error degrades this host as the roots already did. Anything
+            # else a mapping raises still propagates, as it does above.
+            if "scoped_fault_domain" not in options:
+                options["scoped_fault_domain"] = _scoped_domain_requested(environ)
+            root, legacy = _user_state_roots(environ)
         except (TypeError, ValueError):
             host = cls(artifact_root=None, context=context, manifest=manifest, **options)
             host._failure()

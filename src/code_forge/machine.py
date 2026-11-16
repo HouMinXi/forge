@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 import logging
 from datetime import UTC
 
-from . import progress
+from . import _env_flags, progress
 from .autofix import AutoFixer, FixOutcome
 from .baseline import ResolvedReview
 from .claim import derive_claim_type
@@ -5319,8 +5319,7 @@ class StateMachine:
         from .ledger import iter_rows
 
         # Layer 1: Environment variable kill-switch
-        env_val = os.environ.get("CODE_FORGE_DISABLE_LEDGER", "").strip().lower()
-        if env_val in ("1", "true", "yes", "on"):
+        if _env_flags.requested(os.environ, "CODE_FORGE_DISABLE_LEDGER"):
             return 0
 
         # Layer 2: gate.yaml kill-switch (tolerant raw YAML load, fail-open on parse error)
