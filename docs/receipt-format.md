@@ -83,3 +83,49 @@ legacy report fallback; they do not reinterpret the new subtype as a trusted
 status. No report schema version or clean-credit policy is changed. The existing
 `fields.source` slot was already supported; old blocks with a null source remain
 readable.
+
+## Bounded count-evidence regeneration
+
+Ordinary single-repository API L1 calls can ask once for a new complete response
+when a canonical root excerpt has a line-count error beyond the existing
+one-line tolerance. The original quote must be an exact prefix of the same
+frozen source starting at the declared coordinate. Its full declared range,
+and any extra quoted tail, must be known within one hunk. Unknown source,
+internal omissions, different literals, displaced or repeated matches, malformed
+fields, and other invalid root evidence do not qualify. Already-valid one-line
+count differences stay unchanged and never trigger this added request alone.
+
+The declaration remains the target: only the affected `content` strings may
+change. Findings, coordinates, excerpt order/count, and all other fields must
+remain identical. The selected response is the model's entire new JSON object;
+the host does not assemble snippets from two responses or add source characters.
+Every selected excerpt must be VALID against the frozen diff without host tail
+repair. A regenerated target must also match its granted frozen lines exactly,
+with only an optional final LF terminator; ordinary count tolerance cannot
+extend that target. The original factory, receipt, coverage, and terminal checks
+still apply. A failed or ineligible regeneration leaves the original refusal intact.
+This is a recovery strategy, not evidence that a historical rejection was wrong.
+
+Count and literal corrections use one mutually exclusive decision per call,
+share the existing allowance, and each spend at most one extra physical request.
+There is no continuation, redirect, JSON-correction retry, or recursive recovery
+on that request. Existing allowance lifetimes remain unchanged: ordinary
+providers allocate eight slots per invocation, while grouped providers share a
+root allowance across that provider instance's calls. No exhausted slot is
+refunded and no new allowance is created for count recovery.
+
+Correction send admission and body reads share an absolute deadline no later
+than the initial call's entry deadline, capped at 120 seconds, with at most 8192
+output tokens. Prompt and opener construction consume that original window;
+expired preparation sends nothing. Synchronous urllib DNS and response-header
+acquisition retain their existing per-socket timeout behavior; this does not
+promise a universal wall-clock bound for those phases. Encoded request/response bodies are capped at 1 MiB and retained raw
+responses at 128 KiB. Additional conservative eligibility and prompt bounds can
+skip recovery rather than spend a request on oversized evidence.
+
+Feedback uses host-computed indexes and declared/actual counts, never exception
+strings. Source context comes only from the original frozen scope and goes to
+the same configured provider. Both initial and replacement raw responses remain
+in the private `correction/` lane with the host-selected strategy and outcome.
+That lane confers no completion authority. Observed initial and follow-up token
+usage is summed once, including failed attempts; unknown usage stays unknown.
