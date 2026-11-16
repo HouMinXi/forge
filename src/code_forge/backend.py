@@ -1091,6 +1091,11 @@ def _classify_live_failure(exc: "LLMInvokeError") -> Tuple[str, str]:
             "truncated-output",
             "The backend could not finish a bounded probe reply; check its output limits.",
         )
+    if exc.kind == "refusal":
+        return (
+            "provider-refusal",
+            "The provider declined the request; check its request requirements and policy.",
+        )
     if exc.exit_code >= 400 and not exc.kind:
         return (
             "http-error",

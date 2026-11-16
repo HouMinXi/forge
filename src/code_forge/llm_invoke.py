@@ -103,13 +103,33 @@ class LLMInvokeError(Exception):
         self.observed_usage = observed_usage if observed_usage is not None else usage
         # Machine-readable failure class for dispatch decisions.
         # The api dispatch sets one of: "truncated",
-        # "empty", "stub_model", "no_json", "conn", "credentials",
+        # "empty", "refusal", "stub_model", "no_json", "conn", "credentials",
         # "sse_body", "bad_body". Note "empty" covers a response
         # that carried no usable text, whatever the wording of the message.
         # Matching on kind (not message text) keeps the MCP
         # fallback routing immune to message rewording and to model output
         # that happens to contain a keyword.
         self.kind = kind
+
+
+class ProviderRefusalError(LLMInvokeError):
+    """Explicit provider refusal metadata, without its potentially private text."""
+
+    def __init__(self, backend: BackendConfig, usage_data):
+        observed = _observed_usage(usage_data, backend.format)
+        super().__init__(
+            "%s backend refused the request (format=%s)" % (backend.name, backend.format),
+            exit_code=0,
+            retryable=False,
+            kind="refusal",
+            usage=_response_error_usage(usage_data, backend.format),
+            observed_usage=observed,
+        )
+
+    def _add_prior_usage(self, prior: Usage) -> None:
+        observed = _sum_usage(prior, self.observed_usage)
+        self.observed_usage = observed
+        self.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
 
 
 class AuditPersistenceError(LLMInvokeError):
@@ -902,6 +922,7 @@ def _assemble_sse(response, deadline=None, backend_name="", *, _on_done=None, po
     half a document reported as kind=no_json.
     """
     content_parts: list[str] = []
+    refusal_seen = False
     model = ""
     finish_reason = ""
     usage: dict = {}
@@ -978,6 +999,8 @@ def _assemble_sse(response, deadline=None, backend_name="", *, _on_done=None, po
             usage = chunk["usage"]
         for choice in chunk.get("choices", []):
             delta = choice.get("delta", {})
+            if isinstance(delta.get("refusal"), str) and delta["refusal"]:
+                refusal_seen = True
             if delta.get("content"):
                 if not first_emitted:
                     first_emitted = True
@@ -1031,6 +1054,9 @@ def _assemble_sse(response, deadline=None, backend_name="", *, _on_done=None, po
                 "message": {
                     "role": "assistant",
                     "content": "".join(content_parts),
+                    # Keep only the populated signal; continue reading to retain
+                    # final usage without retaining the provider's refusal text.
+                    **({"refusal": "provider refusal"} if refusal_seen else {}),
                 },
                 "finish_reason": finish_reason,
             }
@@ -2542,6 +2568,7 @@ def _retry_cause(exc: BaseException, *, audited: bool = False) -> str:
                 "credentials": "provider credentials unavailable",
                 "truncated": "provider response truncated",
                 "empty": "provider response empty",
+                "refusal": "provider refused the request",
                 "no_json": "provider response invalid JSON",
                 "bad_body": "provider response invalid body",
                 "sse_body": "provider response unexpected stream",
@@ -3004,7 +3031,7 @@ def _maybe_correct_literal_excerpts(
     finally:
         _CORRECTION_READ_POLICY.reset(read_token)
     if failure is not None:
-        reason = "correction_failed"
+        reason = "provider_refusal" if isinstance(failure, ProviderRefusalError) else "correction_failed"
         observed = getattr(failure, "observed_usage", None) or getattr(failure, "usage", None)
         if isinstance(observed, Usage):
             extra_usage = observed
@@ -3904,6 +3931,9 @@ def _continue_truncated(
                 # propagate: the broad invoke-error clause below would
                 # otherwise fold it into a budgeted failure.
                 raise
+            except ProviderRefusalError as exc:
+                exc._add_prior_usage(observed)
+                raise
             except _TruncatedResponse as exc:
                 if _strict_send_audit_failed(_audit_scope):
                     raise
@@ -3956,7 +3986,7 @@ def _continue_truncated(
         exc.observed_usage = observed
         exc.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
         raise
-    except (AuditPersistenceError, SendDeadlineError):
+    except (ProviderRefusalError, AuditPersistenceError, SendDeadlineError):
         raise
     except LLMInvokeError as exc:
         if _strict_send_audit_failed(_audit_scope):
@@ -4098,6 +4128,8 @@ def _retry_with_more_headroom(
         if isinstance(exc, (AuditPersistenceError, SendDeadlineError)) or _strict_send_audit_failed(
             _audit_scope
         ):
+            raise
+        if isinstance(exc, ProviderRefusalError):
             raise
         if on_failure_usage is not None:
             observed = (
@@ -4414,7 +4446,7 @@ def _invoke_api(
                     )
                 except TruncationBreakerError:
                     raise
-                except (AuditPersistenceError, SendDeadlineError):
+                except (ProviderRefusalError, AuditPersistenceError, SendDeadlineError):
                     raise
                 except LLMInvokeError as spent:
                     if _strict_send_audit_failed(_audit_scope):
@@ -4455,17 +4487,28 @@ def _invoke_api(
 
                 wider = None
                 if partial.strip() and "{" in partial:
-                    wider = _retry_with_more_headroom(
-                        prompt,
-                        backend,
-                        api_key,
-                        timeout_s,
-                        expected_keys,
-                        reply_keys=reply_keys,
-                        strict_response=strict_response,
-                        on_failure_usage=retain_wider_failure_usage,
-                        **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
-                    )
+                    try:
+                        wider = _retry_with_more_headroom(
+                            prompt,
+                            backend,
+                            api_key,
+                            timeout_s,
+                            expected_keys,
+                            reply_keys=reply_keys,
+                            strict_response=strict_response,
+                            on_failure_usage=retain_wider_failure_usage,
+                            **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
+                        )
+                    except ProviderRefusalError as refused:
+                        prior = (
+                            spent_error.observed_usage
+                            if spent_error is not None
+                            else _observed_usage(exc.usage_data, backend.format)
+                        )
+                        refused._add_prior_usage(
+                            prior if prior is not None else Usage(known_fields=frozenset())
+                        )
+                        raise
                 if wider is not None:
                     parsed, usage = wider
                     if spent_error is not None and spent_error.observed_usage is not None:
@@ -4746,12 +4789,25 @@ def _invoke_openai_impl(
     # Extract content and usage from OpenAI response structure
     try:
         choice = resp_data["choices"][0]
-        content = choice["message"]["content"]
         # .get's default fires only on a missing key; a gateway can emit
         # "usage": null, and the truncation branch below then reads the
         # token counts from {} instead of crashing on None.
         raw_usage = resp_data.get("usage")
         usage_data = raw_usage if isinstance(raw_usage, dict) else {}
+        message = choice["message"]
+        finish = choice.get("finish_reason", "")
+        if finish == "error":
+            # Preserve the existing stream-error priority over partial metadata.
+            raise LLMInvokeError(
+                f"{backend.name} backend stream ended with finish_reason=error; partial response discarded",
+                exit_code=0,
+                retryable=True,
+            )
+        if isinstance(message, dict) and isinstance(message.get("refusal"), str) and message["refusal"]:
+            # Forge fails closed even if a contradictory response also carries
+            # content or a length signal. This is not a JSON syntax failure.
+            raise ProviderRefusalError(backend, usage_data)
+        content = message["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
             "unexpected response structure from %s backend" % backend.name,
@@ -4763,17 +4819,6 @@ def _invoke_openai_impl(
     # pattern as the anthropic path (stop_reason == "max_tokens") and
     # the sampling path (stopReason == "maxTokens") -- all three raise
     # kind="truncated" so callers route them uniformly.
-    finish = choice.get("finish_reason", "")
-    if finish == "error":
-        # Stream ended on finish_reason=error without any error payload:
-        # the assembled content is a partial response the provider
-        # abandoned. Treat as transient so the retry loop re-issues the
-        # request instead of parsing half a document.
-        raise LLMInvokeError(
-            f"{backend.name} backend stream ended with finish_reason=error; partial response discarded",
-            exit_code=0,
-            retryable=True,
-        )
     if finish == "length":
         in_tok = usage_data.get("prompt_tokens", "?")
         out_tok = usage_data.get("completion_tokens", "?")
@@ -4910,6 +4955,9 @@ def _invoke_anthropic(
             retryable=True,
             kind="conn",
         ) from exc
+
+    if isinstance(resp_data, dict) and resp_data.get("stop_reason") == "refusal":
+        raise ProviderRefusalError(backend, resp_data.get("usage"))
 
     # Truncation detection must precede text-block extraction: a thinking
     # model that spends the whole output budget on reasoning returns
@@ -5127,6 +5175,9 @@ def _invoke_vertex(
             retryable=True,
             kind="conn",
         ) from exc
+
+    if isinstance(resp_data, dict) and resp_data.get("stop_reason") == "refusal":
+        raise ProviderRefusalError(backend, resp_data.get("usage"))
 
     # Same ordering rule as the anthropic path: decide truncation before
     # text-block extraction, or a thinking model that exhausts the budget
