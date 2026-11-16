@@ -1038,7 +1038,7 @@ def test_a_signal_while_arming_still_leaves_the_run_incomplete(tmp_path, monkeyp
     class _Signal(BaseException):
         """A signal stand-in: the branch only asks whether it is an OSError."""
 
-    def raiser(root):
+    def raiser(root, **kwargs):
         raise _Signal("signal while arming")
 
     with pytest.MonkeyPatch.context() as patch:
@@ -1049,6 +1049,8 @@ def test_a_signal_while_arming_still_leaves_the_run_incomplete(tmp_path, monkeyp
         with pytest.raises(RuntimeError):
             _publish(rec)
     assert rec._complete is False
+    assert audit._PIN_UNCERTAIN is True
+    assert audit._root_unresolved(tmp_path / "another-root") is True
 
 
 def test_a_root_whose_identity_cannot_be_read_is_not_an_error(tmp_path):
@@ -1242,17 +1244,392 @@ def test_the_latch_record_publishes_the_fault_marker(tmp_path):
 
 def test_the_latch_belongs_to_the_directory_it_armed_not_the_path(tmp_path):
     """The capability branch keys the inode that failed, not whatever sits there now."""
+    from code_forge import invocation_audit as audit
     from code_forge.invocation_audit import _arm_unresolved, _root_unresolved
 
     original = tmp_path / "audit"
     recorder = _opened_recorder(original, scoped=True)
     capability = recorder._capability
     assert capability is not None
+    pin_handle = _pin_unit_handle(original)
+    pin = audit._pin_acquire(pin_handle)
+    audit.os.close(pin_handle.fd)
     moved = tmp_path / "audit-moved"
     original.rename(moved)
     original.mkdir()
-    _arm_unresolved(original, capability=capability)
+    _arm_unresolved(original, capability=capability, pin=pin)
     # The replacement directory was never touched by this process: it is not latched.
     assert _root_unresolved(original) is False
     # The directory whose release failed is, and it is recognised by identity.
     assert _root_unresolved(moved) is True
+
+
+@pytest.fixture(autouse=True)
+def isolated_root_pins(monkeypatch):
+    """Separate registry unit tests; never reset a live production worker's state."""
+    from code_forge import invocation_audit as audit
+
+    monkeypatch.setattr(audit, "_ROOT_PINS", {})
+    monkeypatch.setattr(audit, "_UNRESOLVED_ROOTS", {})
+    monkeypatch.setattr(audit, "_PIN_UNCERTAIN", False)
+    close = audit.os.close
+    yield audit
+    for entry in audit._ROOT_PINS.values():
+        if entry["fd"] >= 0:
+            close(entry["fd"])
+            entry["fd"] = -1
+
+
+def _pin_unit_handle(root):
+    """Real directory descriptors; no filesystem qualification claim."""
+    import os
+    from types import SimpleNamespace
+
+    root.mkdir(exist_ok=True)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    value = os.fstat(fd)
+    return SimpleNamespace(
+        fd=fd,
+        capability=SimpleNamespace(root_device=value.st_dev, root_inode=value.st_ino),
+    )
+
+
+def test_root_pin_prevents_rebuilt_inode_confusion(tmp_path, isolated_root_pins):
+    audit = isolated_root_pins
+    root = tmp_path / "root"
+    handle = _pin_unit_handle(root)
+    pin = audit._pin_acquire(handle)
+    audit._arm_unresolved(root, pin=pin)
+    audit.os.close(handle.fd)
+    root.rmdir()
+    root.mkdir()
+    assert audit._root_unresolved(root) is False
+    assert audit.os.fstat(pin[1]["fd"]).st_nlink == 0
+    audit._pin_release(pin)
+    assert pin[1]["fd"] >= 0
+
+
+def test_root_pin_aliases_share_capacity_and_release(tmp_path, isolated_root_pins):
+    audit = isolated_root_pins
+    first = _pin_unit_handle(tmp_path / "root")
+    second = _pin_unit_handle(tmp_path / "root")
+    try:
+        a = audit._pin_acquire(first)
+        b = audit._pin_acquire(second)
+        assert a[1] is b[1]
+        assert len(audit._ROOT_PINS) == 1
+        assert audit.os.get_inheritable(a[1]["fd"]) is False
+        audit._pin_release(a)
+        assert b[1]["leases"] == 1
+        audit._pin_release(b)
+        assert audit._ROOT_PINS == {}
+    finally:
+        audit.os.close(first.fd)
+        audit.os.close(second.fd)
+
+
+def test_root_pin_capacity_preserves_existing_roots(tmp_path, isolated_root_pins):
+    audit = isolated_root_pins
+    pins = []
+    for i in range(64):
+        handle = _pin_unit_handle(tmp_path / str(i))
+        try:
+            pins.append(audit._pin_acquire(handle))
+        finally:
+            audit.os.close(handle.fd)
+    extra = _pin_unit_handle(tmp_path / "extra")
+    existing = _pin_unit_handle(tmp_path / "0")
+    try:
+        with pytest.raises(audit._Rejected, match="quota_refused"):
+            audit._pin_acquire(extra)
+        again = audit._pin_acquire(existing)
+        assert again[1] is pins[0][1]
+        audit._pin_release(again)
+        assert len(audit._ROOT_PINS) == 64
+    finally:
+        audit.os.close(extra.fd)
+        audit.os.close(existing.fd)
+        for pin in pins:
+            audit._pin_release(pin)
+    assert audit._ROOT_PINS == {}
+
+
+def test_root_pin_close_uncertainty_stops_new_allocation(tmp_path, isolated_root_pins):
+    audit = isolated_root_pins
+    handle = _pin_unit_handle(tmp_path / "root")
+    pin = audit._pin_acquire(handle)
+    audit.os.close(handle.fd)
+    real_close = audit.os.close
+
+    def spent_close(fd):
+        real_close(fd)
+        raise OSError("close result unknown")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(audit.os, "close", spent_close)
+        with pytest.raises(OSError):
+            audit._pin_release(pin)
+    assert audit._PIN_UNCERTAIN
+    assert pin[1]["fd"] == -1
+    fresh = _pin_unit_handle(tmp_path / "fresh")
+    try:
+        with pytest.raises(audit._Rejected, match="cleanup_unresolved"):
+            audit._pin_acquire(fresh)
+    finally:
+        real_close(fresh.fd)
+
+
+def test_root_pin_fallback_settles_only_trusted_reference(tmp_path, isolated_root_pins):
+    audit = isolated_root_pins
+    held = _pin_unit_handle(tmp_path / "held")
+    other = _pin_unit_handle(tmp_path / "other")
+    pin = audit._pin_acquire(held)
+    try:
+        audit._arm_unresolved(tmp_path / "unknown")
+        with pytest.raises(audit._Rejected, match="cleanup_unresolved"):
+            audit._pin_acquire(held)
+        settlement = audit._pin_acquire(held, settlement=True)
+        audit._pin_release(settlement)
+        with pytest.raises(audit._Rejected, match="cleanup_unresolved"):
+            audit._pin_acquire(other, settlement=True)
+    finally:
+        audit._pin_release(pin)
+        audit.os.close(held.fd)
+        audit.os.close(other.fd)
+
+
+def test_root_pin_fork_check_precedes_registry_lock(tmp_path, isolated_root_pins, monkeypatch):
+    audit = isolated_root_pins
+    handle = _pin_unit_handle(tmp_path / "root")
+    monkeypatch.setattr(audit, "_PIN_PID", -1)
+
+    def must_not_lock():
+        pytest.fail("child touched inherited mutex")
+
+    monkeypatch.setattr(audit, "_unresolved_lock", must_not_lock)
+    try:
+        with pytest.raises(audit._Rejected, match="cleanup_unresolved"):
+            audit._pin_acquire(handle)
+    finally:
+        audit.os.close(handle.fd)
+
+
+def test_root_pin_reservation_rechecks_process_stop(tmp_path, isolated_root_pins, monkeypatch):
+    audit = isolated_root_pins
+    handle = _pin_unit_handle(tmp_path / "root")
+    real_dup = audit.os.dup
+    duplicated = []
+
+    def stop_during_dup(fd):
+        new = real_dup(fd)
+        duplicated.append(new)
+        audit._PIN_UNCERTAIN = True
+        return new
+
+    monkeypatch.setattr(audit.os, "dup", stop_during_dup)
+    try:
+        with pytest.raises(audit._Rejected, match="cleanup_unresolved"):
+            audit._pin_acquire(handle)
+        assert audit._ROOT_PINS == {}
+        with pytest.raises(OSError):
+            audit.os.fstat(duplicated[0])
+    finally:
+        audit.os.close(handle.fd)
+
+
+def test_root_pin_initializing_alias_refuses_without_waiting(tmp_path, isolated_root_pins):
+    import threading
+
+    audit = isolated_root_pins
+    handle = _pin_unit_handle(tmp_path / "root")
+    entered, release = threading.Event(), threading.Event()
+    results = []
+    real_dup = audit.os.dup
+
+    def paused_dup(fd):
+        entered.set()
+        assert release.wait(2)
+        return real_dup(fd)
+
+    def acquire():
+        try:
+            results.append(audit._pin_acquire(handle))
+        except BaseException as error:  # noqa: BLE001 - transport worker failure to test thread
+            results.append(error)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(audit.os, "dup", paused_dup)
+        worker = threading.Thread(target=acquire)
+        worker.start()
+        try:
+            assert entered.wait(2)
+            with pytest.raises(audit._Rejected, match="quota_refused"):
+                audit._pin_acquire(handle)
+            assert len(audit._ROOT_PINS) == 1
+        finally:
+            release.set()
+            worker.join(3)
+            audit.os.close(handle.fd)
+    assert not worker.is_alive()
+    assert len(results) == 1 and not isinstance(results[0], BaseException)
+    audit._pin_release(results[0])
+    assert audit._ROOT_PINS == {}
+
+
+def test_root_pin_close_failure_is_not_hidden_by_callers_except(
+    tmp_path, isolated_root_pins, monkeypatch
+):
+    from contextlib import nullcontext
+
+    audit = isolated_root_pins
+    handle = _pin_unit_handle(tmp_path / "root")
+    # Only this unit control bypasses mount-profile preparation; fd ownership is real.
+    native = audit._RootHandle(tmp_path / "root", handle.fd, handle.capability)
+    context = audit.InvocationContext(
+        str(uuid.uuid4()), None, None, None, None, None, None, "review", None
+    )
+    rec = audit.AttemptRecorder(
+        tmp_path / "root",
+        context=context,
+        scoped_fault_domain=True,
+        monotonic=lambda: 1.0,
+        utc_now=lambda: "2026-11-12T00:00:00Z",
+    )
+    monkeypatch.setattr(audit, "_prepare_audit_root", lambda *a, **kw: native)
+    monkeypatch.setattr(audit, "_root_lock", lambda *a, **kw: nullcontext())
+    real_dup, real_close = audit.os.dup, audit.os.close
+    duplicate = []
+
+    def dup(fd):
+        duplicate.append(real_dup(fd))
+        return duplicate[-1]
+
+    def close(fd):
+        real_close(fd)
+        if duplicate and fd == duplicate[-1]:
+            raise OSError("pin close uncertain")
+
+    monkeypatch.setattr(audit.os, "dup", dup)
+    monkeypatch.setattr(audit.os, "close", close)
+    try:
+        raise ValueError("caller's already handled exception")
+    except ValueError:
+        ack = rec._guard("start", lambda held: audit.AuditAcknowledgement(True))
+    assert not ack.admitted
+    assert ack.fault.code == "cleanup_unresolved"
+    assert audit._PIN_UNCERTAIN
+
+
+def test_root_pin_closing_alias_refuses_without_waiting(tmp_path, isolated_root_pins):
+    import threading
+
+    audit = isolated_root_pins
+    handle = _pin_unit_handle(tmp_path / "root")
+    pin = audit._pin_acquire(handle)
+    entered, release = threading.Event(), threading.Event()
+    failures = []
+    real_close = audit.os.close
+
+    def paused_close(fd):
+        if fd == pin[1]["fd"]:
+            pytest.fail("pin fd must be spent before the close syscall")
+        entered.set()
+        assert release.wait(2)
+        real_close(fd)
+
+    def retire():
+        try:
+            audit._pin_release(pin)
+        except BaseException as error:  # noqa: BLE001 - transport worker failure
+            failures.append(error)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(audit.os, "close", paused_close)
+        worker = threading.Thread(target=retire)
+        worker.start()
+        try:
+            assert entered.wait(2)
+            with pytest.raises(audit._Rejected, match="quota_refused"):
+                audit._pin_acquire(handle)
+        finally:
+            release.set()
+            worker.join(3)
+    real_close(handle.fd)
+    assert not worker.is_alive() and failures == []
+    assert audit._ROOT_PINS == {}
+
+
+def test_root_pin_real_fork_refuses_with_parent_lock_held(tmp_path, isolated_root_pins):
+    import os
+    import select
+
+    audit = isolated_root_pins
+    handle = _pin_unit_handle(tmp_path / "root")
+    pin = audit._pin_acquire(handle)
+    lock = audit._unresolved_lock()
+    reader, writer = os.pipe()
+    lock.acquire()
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - bounded child reports via pipe
+        try:
+            os.close(reader)
+            # Even inherited cleanup paths must avoid the parent-held mutex.
+            audit._pin_release(pin)
+            audit._stop_allocations(pin)
+            assert pin[1]["leases"] == 1 and not pin[1]["poisoned"]
+            try:
+                audit._pin_acquire(handle)
+            except audit._Rejected as error:
+                os.write(writer, error.code.encode("ascii"))
+        finally:
+            os._exit(0)
+    lock.release()
+    os.close(writer)
+    try:
+        if not select.select([reader], [], [], 2)[0]:
+            os.kill(pid, 9)
+            pytest.fail("child waited on inherited registry lock")
+        assert os.read(reader, 64) == b"cleanup_unresolved"
+    finally:
+        os.close(reader)
+        os.waitpid(pid, 0)
+    assert not audit._PIN_UNCERTAIN
+    second = audit._pin_acquire(handle)
+    audit._pin_release(second)
+    audit._pin_release(pin)
+    os.close(handle.fd)
+
+
+def test_root_pin_journal_mismatch_cleanup_arming_failure_stops_process(
+    tmp_path, isolated_root_pins, monkeypatch
+):
+    audit = isolated_root_pins
+    handle = _pin_unit_handle(tmp_path / "root")
+    native = audit._RootHandle(tmp_path / "root", handle.fd, handle.capability)
+    context = audit.InvocationContext(
+        str(uuid.uuid4()), None, None, None, None, None, None, "review", None
+    )
+    rec = audit.AttemptRecorder(
+        tmp_path / "root",
+        context=context,
+        scoped_fault_domain=True,
+        monotonic=lambda: 1.0,
+        utc_now=lambda: "2026-11-12T00:00:00Z",
+    )
+    rec._opened = True
+    rec._capability = object()  # deliberately different from the opened directory
+    monkeypatch.setattr(audit, "_prepare_audit_root", lambda *a, **kw: native)
+    real_close = audit.os.close
+
+    def close(fd):
+        real_close(fd)
+        raise OSError("release uncertain")
+
+    def arm(*a, **kw):
+        raise RuntimeError("registry publication interrupted")
+
+    monkeypatch.setattr(audit.os, "close", close)
+    monkeypatch.setattr(audit, "_arm_unresolved", arm)
+    assert rec._journal_latch("finish", None) is False
+    assert audit._PIN_UNCERTAIN
+    assert audit._root_unresolved(tmp_path / "other")

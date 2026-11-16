@@ -146,11 +146,31 @@ The same switch governs the audit recorder's own release failure. With it on, a
 release the process cannot confirm reaches the caller as `cleanup_unresolved` and
 stops further audit work on that directory until the process exits: new runs on it
 are refused, and so are the capture calls of a recorder that was already running —
-its settlement calls still go through, so a run stopped this way can still end and
-say why. The stop
-belongs to the directory, not to the path string, so a directory rebuilt at the same
-path is a new one. With the switch off, the same failure stays `persistence_error`,
+its settlement calls can still attempt to end the run and say why, subject to the
+trusted-reference and failure conditions below. The stop
+belongs to the directory, not to the path string. A verified directory descriptor
+is retained after the failed release, keeping that directory's identity alive;
+a directory rebuilt at the same path cannot reuse that pinned identity. With the
+switch off, the same failure stays `persistence_error`,
 keeps its old code and latches nothing, which is what the shipped default does.
+
+The process reserves at most 64 root-reference slots, counting in-progress
+reservations and retained failed roots. Aliases of a pinned directory share a
+slot. Capacity exhaustion refuses work needing a new slot with `quota_refused`;
+it does not evict an old stop or stop a different already-admitted healthy root.
+An alias whose slot is still initializing or closing is also refused with
+`quota_refused` rather than waiting. Successful temporary references are released. This limit does not bound all
+file descriptors or memory used by the process, and OS descriptor allocation
+can fail before the slot limit is reached.
+
+If release handling loses its last trustworthy directory reference, new audit
+allocation stops across the process until it exits. Settlement is only attempted
+with a trustworthy retained reference and still may fail; this is not a promise
+that a stopped run can finalize successfully. A forked child refuses new audit
+allocation before accessing an inherited registry lock; the parent's state is
+unchanged. Inherited pin references are left untouched in the child until exit.
+Close-on-exec references do not make fork an independently supported
+audit lifecycle. Work already admitted before a stop is not retroactively cancelled.
 
 The run's journal carries `cleanup_unresolved` when the failure lands on a phase
 that can still write, and a run records one fault marker, so a run that already

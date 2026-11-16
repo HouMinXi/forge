@@ -264,23 +264,18 @@ _PHASES = frozenset(
 # own end.
 _SETTLEMENT_PHASES = frozenset(("finish", "finalize", "freeze"))
 
-# A descriptor this process could not confirm released keeps its root occupied for
-# the rest of the process: the descriptor belongs to the process, so a recorder
-# created afterwards on the same root inherits the refusal instead of starting from
-# a clean slate while the leak is still open.
+# Process-local root references. A retained descriptor, not an inode number alone,
+# keeps an unlinked directory's identity alive until this process exits.
+_PIN_LIMIT = 64
+_PIN_PID = os.getpid()
+_PIN_UNCERTAIN = False
 _UNRESOLVED_ROOTS: dict[tuple, bool] = {}
-# lock and owner pid together, so a forked child replaces the pair in one step
 _UNRESOLVED_GUARD = {"lock": threading.Lock(), "pid": os.getpid()}
+_ROOT_PINS: dict[tuple, dict] = {}
 
 
 def _unresolved_lock():
-    """The map's lock, fresh in a forked child.
-
-    A child that inherited the lock while another thread held it would wait
-    forever on an owner that does not exist there. The map itself is inherited
-    as-is: a recorder in a child refuses for other reasons, so its contents
-    cannot mislead a caller.
-    """
+    # Compatibility for observations; allocation rejects a fork before using this.
     if os.getpid() != _UNRESOLVED_GUARD["pid"]:
         _UNRESOLVED_GUARD["lock"] = threading.Lock()
         _UNRESOLVED_GUARD["pid"] = os.getpid()
@@ -288,30 +283,14 @@ def _unresolved_lock():
 
 
 def _unresolved_key(root):
-    """Identity of the directory, so another spelling or a rebuilt path is another root.
-
-    A path string would treat ``//var/tmp/x`` as a second root and a recreated
-    directory as the poisoned one; the inode answers both.
-    """
     try:
         value = os.stat(root, follow_symlinks=False)
-    except Exception:  # noqa: BLE001 - a root that cannot be read has no identity
+    except Exception:  # noqa: BLE001 - no trustworthy directory identity
         try:
             return ("path", str(root))
-        except Exception:  # noqa: BLE001 - a root whose name cannot be read has no identity
+        except Exception:  # noqa: BLE001
             return ("path", "")
     return ("inode", value.st_dev, value.st_ino)
-
-
-def _arm_unresolved(root, capability=None) -> None:
-    # The action already held this root under a capability; re-reading the path could
-    # describe a different directory than the one whose release failed. A recorder that
-    # never stored a capability has none to prefer, so it falls back to reading the path
-    # and latches whatever is there now — the one case where the stop can land on a
-    # replacement directory.
-    key = _capability_key(capability) if capability is not None else _unresolved_key(root)
-    with _unresolved_lock():
-        _UNRESOLVED_ROOTS[key] = True
 
 
 def _capability_key(capability):
@@ -319,9 +298,126 @@ def _capability_key(capability):
 
 
 def _root_unresolved(root) -> bool:
+    if os.getpid() != _PIN_PID:
+        return True
     key = _unresolved_key(root)
     with _unresolved_lock():
-        return _UNRESOLVED_ROOTS.get(key, False)
+        return _PIN_UNCERTAIN or _UNRESOLVED_ROOTS.get(key, False)
+
+
+def _pin_acquire(handle, *, settlement=False):
+    """Reserve before duplication; aliases share one verified directory reference.
+
+    An initializing/closing slot refuses rather than waiting on another thread.
+    No registry mutex is held over descriptor I/O. Granting a lease is admission:
+    a later poison does not retroactively cancel already admitted work.
+    """
+    global _PIN_UNCERTAIN  # noqa: PLW0603 - process-wide sticky safety state
+    if os.getpid() != _PIN_PID:
+        raise _Rejected("cleanup_unresolved")
+    key = _capability_key(handle.capability)
+    entry = None
+    reserved = False
+    fd = -1
+    try:
+        with _unresolved_lock():
+            entry = _ROOT_PINS.get(key)
+            if _PIN_UNCERTAIN and not (settlement and entry and entry["fd"] >= 0):
+                raise _Rejected("cleanup_unresolved")
+            if entry is not None:
+                if not entry["ready"].is_set():
+                    raise _Rejected("quota_refused")
+                if entry["fd"] < 0 or (entry["poisoned"] and not settlement):
+                    raise _Rejected("cleanup_unresolved")
+                entry["leases"] += 1
+                return key, entry
+            if len(_ROOT_PINS) >= _PIN_LIMIT:
+                raise _Rejected("quota_refused")
+            entry = dict(fd=-1, leases=0, poisoned=False, ready=threading.Event())
+            reserved = True
+            _ROOT_PINS[key] = entry
+        fd = os.dup(handle.fd)
+        os.set_inheritable(fd, False)
+        value = os.fstat(fd)
+        _require((value.st_dev, value.st_ino) == key[1:], "identity_conflict")
+        with _unresolved_lock():
+            # A different root may have lost its last pin during the syscalls.
+            _require(not _PIN_UNCERTAIN, "cleanup_unresolved")
+            entry["fd"] = fd
+            entry["leases"] = 1
+            entry["ready"].set()
+        return key, entry
+    except BaseException:
+        if not reserved:
+            raise
+        uncertain = False
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except BaseException:  # noqa: BLE001 - never retry an uncertain fd number
+                uncertain = True
+        with _unresolved_lock():
+            entry["fd"] = -1
+            if uncertain:
+                _PIN_UNCERTAIN = True
+                entry["poisoned"] = True
+            elif _ROOT_PINS.get(key) is entry:
+                _ROOT_PINS.pop(key)
+            entry["ready"].set()
+        raise
+
+
+def _stop_allocations(pin=None):
+    global _PIN_UNCERTAIN  # noqa: PLW0603 - sticky before any further fallible operation
+    _PIN_UNCERTAIN = True
+    if os.getpid() != _PIN_PID:
+        return
+    if pin is not None:
+        with _unresolved_lock():
+            pin[1]["poisoned"] = True
+
+
+def _arm_unresolved(root, capability=None, *, pin=None) -> None:
+    global _PIN_UNCERTAIN  # noqa: PLW0603 - process-wide sticky safety state
+    if os.getpid() != _PIN_PID:
+        return
+    with _unresolved_lock():
+        if pin is None or pin[1]["fd"] < 0:
+            # An unpinned identity cannot survive inode reuse. Do not reconstruct it
+            # by reopening a path after a failed close.
+            _PIN_UNCERTAIN = True
+            return
+        key, entry = pin
+        entry["poisoned"] = True
+        _UNRESOLVED_ROOTS[key] = True
+
+
+def _pin_release(pin):
+    global _PIN_UNCERTAIN  # noqa: PLW0603 - process-wide sticky safety state
+    if pin is None or os.getpid() != _PIN_PID:
+        # The child does not manage inherited pin lifetimes or acquire their locks.
+        return
+    key, entry = pin
+    fd = -1
+    try:
+        with _unresolved_lock():
+            entry["leases"] -= 1
+            if entry["leases"] or entry["poisoned"]:
+                return
+            entry["ready"].clear()
+            fd, entry["fd"] = entry["fd"], -1
+        os.close(fd)
+        with _unresolved_lock():
+            _ROOT_PINS.pop(key, None)
+            entry["ready"].set()
+    except BaseException:
+        with _unresolved_lock():
+            _PIN_UNCERTAIN = True
+            entry["poisoned"] = True
+            if fd >= 0:
+                entry["fd"] = -1
+            entry["ready"].set()
+        raise
 
 
 class _Rejected(Exception):
@@ -3269,6 +3365,8 @@ class AttemptRecorder:
         the journal, which the caller reports as publication uncertainty.
         """
         try:
+            if os.getpid() != _PIN_PID:
+                return False
             if not self._opened or self._closed or self._append_uncertain:
                 return False
             if any(event["event"] == "audit_fault" for event in self._events):
@@ -3286,12 +3384,13 @@ class AttemptRecorder:
             handle = _prepare_audit_root(self.root, create=False)
             if not isinstance(handle, _RootHandle):
                 return False
-            # A replaced root is an identity refusal on the normal path; it is not
-            # something to write a fault about.
-            if self._capability is not None and handle.capability != self._capability:
-                handle.close()
-                return False
+            journal_pin = None
             try:
+                # Lease the verified object throughout the write, not just a prior
+                # observation of a pin that another thread could release.
+                if self._capability is not None and handle.capability != self._capability:
+                    return False
+                journal_pin = _pin_acquire(handle, settlement=True)
                 with _root_lock(handle, deadline=time.monotonic() + 1.0):
                     with _run_dir(handle, self._context["run_id"]) as fd:
                         # Same precondition as the denial writer: a marker already on
@@ -3326,9 +3425,15 @@ class AttemptRecorder:
                 try:
                     handle.close()
                 except BaseException:  # noqa: BLE001, S110 - the caller's interrupt outranks this release
-                    # The root is already latched by the release that failed, so a
-                    # second unconfirmed release changes nothing this call can act on.
-                    pass
+                    try:
+                        _arm_unresolved(self.root, pin=journal_pin)
+                    except BaseException:  # noqa: BLE001 - preserve the original release error
+                        _stop_allocations(journal_pin)
+                finally:
+                    try:
+                        _pin_release(journal_pin)
+                    except BaseException:  # noqa: BLE001, S110 - sticky fallback already recorded
+                        pass
             fault = AuditFault("cleanup_unresolved", phase, attempt_id)
             if fault not in self._faults:
                 self._faults.append(fault)
@@ -3356,7 +3461,7 @@ class AttemptRecorder:
             safe_attempt = _uuid(attempt_id, True)
         except _Rejected:
             safe_attempt = None
-        if os.getpid() != self._pid:
+        if os.getpid() != self._pid or os.getpid() != _PIN_PID:
             # A forked mutex may be locked by a thread that no longer exists.
             return AuditAcknowledgement(False, AuditFault("identity_conflict", phase, safe_attempt))
         if _root_unresolved(self.root) and phase not in _SETTLEMENT_PHASES:
@@ -3408,6 +3513,8 @@ class AttemptRecorder:
                 )
                 return _replace(ack, publication_uncertain=mutated)
 
+            pin = None
+            escaping_error = False
             try:
                 if self._capability is not None:
                     # A replaced root is an identity refusal, not a post-verification
@@ -3417,6 +3524,10 @@ class AttemptRecorder:
                         handle.capability == self._capability,
                         "identity_conflict" if self._scoped_fault_domain else "integrity_error",
                     )
+                if self._scoped_fault_domain or _PIN_UNCERTAIN:
+                    pin = _pin_acquire(handle, settlement=phase in _SETTLEMENT_PHASES)
+                elif _root_unresolved(self.root) and phase not in _SETTLEMENT_PHASES:
+                    raise _Rejected("cleanup_unresolved")
                 with _root_lock(handle, deadline=deadline, monotonic=self._monotonic, create=create):
                     try:
                         result = measured(handle)
@@ -3432,37 +3543,58 @@ class AttemptRecorder:
                 result = deny("persistence_error")
             except (TypeError, ValueError, OverflowError):
                 result = deny("invalid_input")
+            except BaseException:
+                escaping_error = True
+                raise
             finally:
                 try:
-                    handle.close()
-                except BaseException as close_error:
-                    # Any exception leaves the release unconfirmed, so the scoped latch arms
-                    # for every kind. Only an OSError becomes this call's verdict: an
-                    # interrupt must still reach its caller with the latch already set.
-                    if self._scoped_fault_domain:
-                        # The store first, the syscalls after: a second signal during
-                        # arming must not leave a run that still claims completeness.
+                    try:
+                        handle.close()
+                    except BaseException as close_error:
+                        # Any exception leaves the release unconfirmed, so the scoped latch arms
+                        # for every kind. Only an OSError becomes this call's verdict: an
+                        # interrupt must still reach its caller with the latch already set.
+                        if self._scoped_fault_domain:
+                            # The store first, the syscalls after: a second signal during
+                            # arming must not leave a run that still claims completeness.
+                            self._complete = False
+                            try:
+                                _arm_unresolved(self.root, capability=self._capability, pin=pin)
+                            except BaseException:  # noqa: BLE001, S110 - the caller's interrupt outranks the latch
+                                # Lost registry trust must not free the only surviving pin
+                                # and permit another recorder to allocate on an unknown root.
+                                _stop_allocations(pin)
+                            # One record for one failed release, whichever way it ended: the
+                            # run has to say why it stopped, and only the verdict differs.
+                            recorded = bool(
+                                pin is not None
+                                and pin[1]["fd"] >= 0
+                                and self._journal_latch(phase, safe_attempt)
+                            )
+                        if not isinstance(close_error, OSError):
+                            raise
+                        # An unconfirmed release outranks the operation's own outcome: without
+                        # it the scoped domain cannot promise that a later allocation is clean.
+                        if self._scoped_fault_domain:
+                            # The action may have written nothing while the latch record did,
+                            # so the flag carries what this call put on disk either way.
+                            mutated = mutated or recorded
+                            result = deny("cleanup_unresolved")
+                        else:
+                            result = deny("persistence_error")
+                except BaseException:
+                    escaping_error = True
+                    raise
+                finally:
+                    try:
+                        _pin_release(pin)
+                    except BaseException as pin_error:
                         self._complete = False
-                        try:
-                            _arm_unresolved(self.root, capability=self._capability)
-                        except BaseException:  # noqa: BLE001, S110 - the caller's interrupt outranks the latch
-                            # A root whose identity cannot be read is not latched, but the
-                            # run already reads incomplete and the caller still gets the error.
-                            pass
-                        # One record for one failed release, whichever way it ended: the
-                        # run has to say why it stopped, and only the verdict differs.
-                        recorded = self._journal_latch(phase, safe_attempt)
-                    if not isinstance(close_error, OSError):
-                        raise
-                    # An unconfirmed release outranks the operation's own outcome: without
-                    # it the scoped domain cannot promise that a later allocation is clean.
-                    if self._scoped_fault_domain:
-                        # The action may have written nothing while the latch record did,
-                        # so the flag carries what this call put on disk either way.
-                        mutated = mutated or recorded
-                        result = deny("cleanup_unresolved")
-                    else:
-                        result = deny("persistence_error")
+                        if not escaping_error:
+                            if isinstance(pin_error, OSError):
+                                result = deny("cleanup_unresolved")
+                            else:
+                                raise
             return result
 
     def _journal_mark(self):
