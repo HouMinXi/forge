@@ -2,6 +2,107 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-16 T16 three selector-specific negative controls
+
+Executed revision remains `f21f2cef6c0907778e843a2289cff9ddfcc0b0e4`,
+tree `389afe7c10c28ca65c2f1715777024c0ae18e08b`. Each experiment used a
+separate exact archive copy and the existing test, with CPython 3.14.10,
+pytest 9.2.0 and no added plugin or filesystem-profile substitute. Each phase ran
+`PYTHONPATH=src python -m pytest -q <node>` in a fresh process.
+
+- **Version exact-int:**
+  `tests/test_advisory_diagnostics.py::test_schema_wrong_types_versions_enums_combinations[schema_version-True]`.
+  Only remove `type(data["schema_version"]) is not int or` from the decoder;
+  retain version-value and axis checks. JSON `true` then passes the remaining
+  `!= 1` comparison. This tests boolean rejection, not every version/type input.
+- **Fixed axis:**
+  `tests/test_advisory_diagnostics.py::test_schema_wrong_types_versions_enums_combinations[axis-other]`.
+  Only remove `or data["axis"] != _AXIS`; retain both version checks. The
+  independent literal `"other"` is then accepted by the decoder. This covers
+  that fixed-value omission, not all axis encodings or other fields.
+- **Repository closed keys:**
+  `tests/test_advisory_diagnostics.py::test_extra_fields_rejected_at_each_object_level[repository]`.
+  Only remove `or binding.keys() != {"kind", "id"}`; retain binding type,
+  kind and id/context checks. The existing fixture adds only `future=None`.
+  This tests rejection of an extra key, not missing keys or binding type/kind.
+
+For each: baseline **1 PASS / exit 0**, mutant **1 semantic failure / exit 1**
+(`DID NOT RAISE DiagnosticError` at the existing rejection assertion), and
+byte-restored **1 PASS / exit 0**. No tests or fixtures changed. Actual mutant
+source, diff and hashes were saved before each mutant run; each 1573-regular-file
+manifest identified only `_advisory_diagnostics.py` as changed. Independent
+review verified the logs and restored contents of all 1575 Git blobs, including
+the two symlink targets, against the fixed revision. Symlinks were checked at
+restoration, not independently snapshotted during each mutation.
+
+Retained log SHA256 values, in baseline / mutant / restored order:
+
+- Version exact-int: `fa8e3e1f0a4b084326a7027307e5cc3a94f799f9733ea598c3b878fa3c70f37c` /
+  `29f22e80ba78543212104379bf6bd06dfcc33170cf39536d3c5fe8ab3c5d9529` /
+  `99a24796443a1d07f66a424f8116a06a2079063af758e7d3c87801c191ad2ecd`.
+
+- Fixed axis: `76af71df60bb5f93ea635e8763126ecf98e837672c9980e80aefde989b203765` /
+  `fc6049d5eb18d615437ed23b4ffa3648f0e589ef11710cf5d22de38ac7b4392b` /
+  `e8c2ebdecc6c68bd31c948de0b0c1dd4c57dd47d093194a6c1d241c65727824d`.
+
+- Repository closed keys: `fa8e3e1f0a4b084326a7027307e5cc3a94f799f9733ea598c3b878fa3c70f37c` /
+  `60692175e3fe24a0bd6387ff75705c8643c345addf3bbf174c08b860886f276c` /
+  `e8c2ebdecc6c68bd31c948de0b0c1dd4c57dd47d093194a6c1d241c65727824d`.
+
+The hashes identify retained evidence, not public downloadable artifacts. These
+three specific omissions are no longer NOT_RUN at this revision; earlier dated
+statuses remain historical. Other validators and input variants retain their
+separate status. No exhaustive T16 qualification, original78 equivalence, new
+support domain, G12/G13 acceptance or issue closure follows.
+
+## 2026-11-16 T06 two bounded negative controls
+
+Executed product/test revision: `f21f2cef6c0907778e843a2289cff9ddfcc0b0e4`,
+tree `389afe7c10c28ca65c2f1715777024c0ae18e08b`. These isolated source-tree
+experiments reuse existing tests, not new tests or a replacement catalogue.
+Environment: cloud Linux, CPython 3.14.10, SQLite 3.53.1, pytest 9.2.0;
+no filesystem-profile substitute. Each phase used a fresh pytest process:
+`PYTHONPATH=src python -m pytest -q <node>`.
+
+- **Final output cap removal:** node
+  `tests/test_cross_repo_impact.py::TestTopNCap::test_cap_at_top_n`.
+  The fixture creates 15 real SQLite callers. The sole mutation changes
+  `enumerate(hits[:_TOP_N])` to `enumerate(hits)` in `cross_repo_impact.py`.
+  Independent replay: baseline 1 PASS, mutant assertion RED (`15 != 10`),
+  byte-restored 1 PASS; exit codes 0/1/0. This discriminates removal of the final
+  output slice, not every cap implementation or distance-selection property.
+- **One extra caller hop:** node
+  `tests/test_cross_repo_impact.py::test_direct_caller_chain_excludes_second_hop`.
+  After the original caller query, the sole inserted block traverses the fixed
+  `tuple(live)` of direct callers once more through unchanged `_live_callers`
+  and source resolution. In this fixture, `consumer::direct` supplies
+  module/name `consumer`/`direct`; the real query returns indirect caller C.
+  SQL filters, fixtures and test assertions remain unchanged. Baseline 1 PASS,
+  mutant assertion RED (extra `chain:src/lib/indirect.py` at `(1, 1)` after
+  `infra_errors == []` succeeds), byte-restored 1 PASS; exit codes 0/1/0.
+  This is one extra traversal, not recursive expansion or arbitrary name grammar.
+
+Actual mutant snapshots, diffs and hashes were saved before execution. The hop
+experiment's phase manifests cover 1573 regular files and identify only the
+product source change; the two symlinks were checked separately after restoration.
+Independent review verified restored contents of all 1575 Git blobs, including
+symlink targets, against the executed revision. Neither test was modified.
+
+Retained log SHA256 values, in baseline / mutant / restored order:
+
+- Cap: `3be6ffcaecf85b5bd3eef3693ab214b0e7c9eb4e36d117fcf1825652de5eb298` /
+  `4b88cba931e069da5d6ba626f4b808a88474cac49cd76f8945b84f895b2f160d` /
+  `e8c2ebdecc6c68bd31c948de0b0c1dd4c57dd47d093194a6c1d241c65727824d`.
+- Hop: `3be6ffcaecf85b5bd3eef3693ab214b0e7c9eb4e36d117fcf1825652de5eb298` /
+  `2a57e922d72d5d8b6ebe238e96809d9f60096a4e97d7993cd87e56a4a81570ad` /
+  `e8c2ebdecc6c68bd31c948de0b0c1dd4c57dd47d093194a6c1d241c65727824d`.
+
+These are retained local logs, not published downloadable artifacts. The two
+specific controls are no longer NOT_RUN at this revision; earlier dated statuses
+remain historical. This supplies no exhaustive mutation score, T16 validator
+coverage, original78 equivalence, installed-wheel qualification, broader support
+or final G12/G13 acceptance. No whole G/T gate or issue status changes.
+
 ## 2026-11-16 post-#519 selected regression and coverage boundary
 
 Fixed product/test/prior-document revision:
