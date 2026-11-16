@@ -928,6 +928,27 @@ def build_l1_provider(
                     exc, MissingExcerptEvidenceError
                 ) and not _requires_l1_excerpts(diff_text, reviewed_repositories=reviewed_repositories)
                 if not missing_exempt:
+                    # The machine reports a generic attempted-evidence gate;
+                    # retain the first validation cause in stderr. Keep this
+                    # diagnostic out of all evidence and clean-credit lanes.
+                    rejection_kind = (
+                        "missing-excerpts"
+                        if isinstance(exc, MissingExcerptEvidenceError)
+                        else "evidence"
+                        if isinstance(exc, ExcerptEvidenceError)
+                        else "schema"
+                    )
+                    detail = "invalid reviewer response"
+                    if audit_round is None:
+                        raw_detail = str(exc)
+                        detail = ascii(raw_detail[:500])[1:-1]
+                        if len(raw_detail) > 500 or len(detail) > 500:
+                            detail = detail[:500] + " [truncated]"
+                    print(
+                        f"code-forge: L1 pass '{pass_name}' reviewer response rejected "
+                        f"({rejection_kind}): {detail}",
+                        file=sys.stderr,
+                    )
                     if raw_data is not None:
                         attempted = dict(raw_data)
                         attempted["pass_name"] = pass_name
