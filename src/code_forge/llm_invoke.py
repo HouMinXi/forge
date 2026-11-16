@@ -504,10 +504,17 @@ def _open_url(req, timeout_s):
     bypass the per-response bound and the send budget both. Ordinary calls keep
     urllib's default redirect behavior untouched.
     """
-    if _CORRECTION_READ_POLICY.get() is not None:
+    policy = _CORRECTION_READ_POLICY.get()
+    if policy is not None:
         from .invocation_redirect import _NoRedirect
 
-        return urllib.request.build_opener(_NoRedirect()).open(req, timeout=timeout_s)
+        opener = urllib.request.build_opener(_NoRedirect())
+        if policy.deadline is not None:
+            remaining = policy.deadline - time.monotonic()
+            if remaining <= 0:
+                raise SendDeadlineError()
+            timeout_s = min(timeout_s, remaining)
+        return opener.open(req, timeout=timeout_s)
     return urllib.request.urlopen(req, timeout=timeout_s)  # noqa: S310 - scheme allowlist enforced by callers
 
 
@@ -611,6 +618,9 @@ def _read_with_deadline(response, deadline, backend_name, *, read=None, close_on
     """
     import socket as _socket
 
+    policy = _CORRECTION_READ_POLICY.get()
+    if policy is not None and policy.deadline is not None:
+        deadline = min(deadline, policy.deadline)
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise LLMInvokeError(
@@ -2610,11 +2620,12 @@ class _CorrectionReadPolicy:
     an unlimited tail.
     """
 
-    __slots__ = ("limit", "consumed")
+    __slots__ = ("limit", "consumed", "deadline")
 
-    def __init__(self, limit: int = _EXCERPT_WIRE_LIMIT) -> None:
+    def __init__(self, limit: int = _EXCERPT_WIRE_LIMIT, *, deadline: float | None = None) -> None:
         self.limit = int(limit)
         self.consumed = 0
+        self.deadline = deadline
 
     def reader(self, response):
         def _read():
@@ -2665,6 +2676,15 @@ class _ExcerptCorrectionAllowance:
                 return False
             self._slots -= 1
             return True
+
+
+def _correction_transport_deadline(timeout_s: float) -> float:
+    """Keep every correction send/read inside its original absolute window."""
+    deadline = time.monotonic() + timeout_s
+    policy = _CORRECTION_READ_POLICY.get()
+    if policy is not None and policy.deadline is not None:
+        deadline = min(deadline, policy.deadline)
+    return deadline
 
 
 def _canonical_json(value) -> str:
@@ -2924,13 +2944,19 @@ def _maybe_correct_literal_excerpts(
     audit_scope,
     timeout_s: int,
 ) -> LLMResult:
-    """Spend at most one added request on a strictly literal transcription error.
+    """Spend at most one added request on a literal or source-proven count error.
 
     Returns the original result untouched whenever the reply is not eligible,
     the budget is gone, the deadline is spent, or the replacement cannot be
     proven identical outside the permitted quote indexes.
     """
     indexes = _literal_excerpt_indexes(result.content, result.raw_response, reply_keys, review_diff)
+    correction_kind = "literal-excerpt-correction"
+    if not indexes:
+        from .excerpt_count_recovery import count_excerpt_indexes
+
+        indexes = count_excerpt_indexes(result.content, result.raw_response, reply_keys, review_diff)
+        correction_kind = "count-excerpt-correction"
     if not indexes:
         return result
     initial_raw = result.raw_response
@@ -2941,6 +2967,20 @@ def _maybe_correct_literal_excerpts(
     owner = allowance if allowance is not None else _ExcerptCorrectionAllowance(1)
     # Check the clock before spending a slot: an expired window must not consume
     # global budget that a later pass could still use.
+    remaining = entry_deadline - time.monotonic()
+    if remaining < 1:
+        return result
+    try:
+        if correction_kind == "count-excerpt-correction":
+            from .excerpt_count_recovery import count_correction_prompt
+
+            correction_prompt = count_correction_prompt(result.content, indexes, review_diff)
+        else:
+            correction_prompt = _correction_prompt(result.content, indexes, review_diff)
+    except (TypeError, ValueError, RecursionError):
+        return result
+    # Prompt construction is part of the original window, not a reason to
+    # start a fresh timeout. An expired prompt must not spend a paid slot.
     remaining = entry_deadline - time.monotonic()
     if remaining < 1:
         return result
@@ -2972,12 +3012,34 @@ def _maybe_correct_literal_excerpts(
     extra_usage = Usage(known_fields=frozenset())
     # Bound every body read on this one request, and refuse redirects, without
     # threading a parameter through nine call sites and three format functions.
-    read_token = _CORRECTION_READ_POLICY.set(_CorrectionReadPolicy())
+    read_token = _CORRECTION_READ_POLICY.set(
+        _CorrectionReadPolicy(deadline=min(entry_deadline, started + budget))
+    )
     correction = None
     failure = None
+
+    def failed_usage(error):
+        observed = getattr(error, "observed_usage", None) or getattr(error, "usage", None)
+        if observed is None and isinstance(error, _TruncatedResponse):
+            observed = _observed_usage(error.usage_data, backend.format if backend else "openai")
+        if isinstance(observed, Usage):
+            return observed
+        if isinstance(observed, dict):
+            return _usage_from_payload(observed)
+        return Usage(known_fields=frozenset())
+
+    def retain_control_cost(error):
+        # Control failures escape by identity; the successful initial call
+        # still contributes its observed cost exactly once.
+        if isinstance(error, LLMInvokeError):
+            total = _sum_usage(result.usage, failed_usage(error))
+            error.observed_usage = total
+            error.usage = total if {"input_tokens", "output_tokens"} <= total.known_fields else None
+            error.duration_s = result.duration_s + max(error.duration_s, time.monotonic() - started)
+
     try:
         correction = llm_invoke(
-            _correction_prompt(result.content, indexes, review_diff),
+            correction_prompt,
             backend=correction_backend,
             timeout_s=max(1, budget),
             max_attempts=1,
@@ -2994,24 +3056,30 @@ def _maybe_correct_literal_excerpts(
         )
     except (MemoryError, KeyboardInterrupt, SystemExit):
         raise
-    except (AuditPersistenceError, SendDeadlineError):
+    except (AuditPersistenceError, SendDeadlineError) as control:
         # These carry control, not just failure: an audit that could not be
         # persisted and a send that overran its own deadline must stop the run,
         # not be folded into "keep the original reply".
+        retain_control_cost(control)
         raise
     except Exception as exc:  # noqa: BLE001 - a failed correction keeps the original
+        if _strict_send_audit_failed(audit_scope):
+            retain_control_cost(exc)
+            raise
         failure = exc
     finally:
         _CORRECTION_READ_POLICY.reset(read_token)
     if failure is not None:
         reason = "correction_failed"
-        observed = getattr(failure, "observed_usage", None) or getattr(failure, "usage", None)
-        if isinstance(observed, Usage):
-            extra_usage = observed
-        elif isinstance(observed, dict):
-            extra_usage = _usage_from_payload(observed)
+        extra_usage = failed_usage(failure)
         diagnostic = _correction_diagnostic(
-            result, indexes, review_diff, correction_raw=None, selected=False, reason=reason
+            result,
+            indexes,
+            review_diff,
+            correction_raw=None,
+            selected=False,
+            reason=reason,
+            kind=correction_kind,
         )
         return _with_diagnostics(
             result,
@@ -3033,11 +3101,20 @@ def _maybe_correct_literal_excerpts(
                 correction_raw=None,
                 selected=False,
                 reason="correction_raw_oversize",
+                kind=correction_kind,
             ),
             usage=_sum_usage(result.usage, correction.usage),
             duration_s=result.duration_s + (time.monotonic() - started),
         )
-    accepted = _accepted_correction(result.content, correction.content, indexes, review_diff)
+    try:
+        accepted = _accepted_correction(result.content, correction.content, indexes, review_diff)
+    except (TypeError, ValueError, RecursionError):
+        accepted = None
+    if accepted is not None and correction_kind == "count-excerpt-correction":
+        from .excerpt_count_recovery import count_replacement_matches
+
+        if not count_replacement_matches(result.content, accepted, indexes, review_diff):
+            accepted = None
     if accepted is None:
         reason = "replacement_rejected"
     else:
@@ -3051,6 +3128,7 @@ def _maybe_correct_literal_excerpts(
         correction_raw=correction_raw,
         selected=selected,
         reason=reason,
+        kind=correction_kind,
     )
     usage = _sum_usage(result.usage, correction.usage)
     elapsed = time.monotonic() - started
@@ -3096,12 +3174,13 @@ def _correction_diagnostic(
     correction_raw: str | None,
     selected: bool,
     reason: str,
+    kind: str = "literal-excerpt-correction",
 ) -> dict:
     """Bounded, JSON-serializable host record. Never carries completion authority."""
     import hashlib
 
     record = {
-        "kind": "literal-excerpt-correction",
+        "kind": kind,
         "selected": bool(selected),
         "reason": reason,
         "indexes": list(indexes),
@@ -4616,7 +4695,13 @@ def _invoke_openai(
             transport.finish(primary=primary, usage=usage)
         except CaptureUnavailable as error:
             if primary is None:
-                raise AuditPersistenceError() from error
+                failure = AuditPersistenceError()
+                if isinstance(usage, Usage):
+                    failure.observed_usage = usage
+                    failure.usage = (
+                        usage if {"input_tokens", "output_tokens"} <= usage.known_fields else None
+                    )
+                raise failure from error
         except BaseException:
             if primary is None:
                 raise
@@ -4659,7 +4744,7 @@ def _invoke_openai_impl(
         req = urllib.request.Request(  # noqa: S310 - scheme allowlist enforced above
             url, data=_correction_request_payload(body), headers=headers
         )
-        deadline = time.monotonic() + timeout_s
+        deadline = _correction_transport_deadline(timeout_s)
         opened = (
             _open_url(req, timeout_s)
             if _audit_transport is None
@@ -4873,7 +4958,7 @@ def _invoke_anthropic(
         req = urllib.request.Request(  # noqa: S310 - scheme allowlist enforced above
             url, data=_correction_request_payload(body), headers=headers
         )
-        deadline = time.monotonic() + timeout_s
+        deadline = _correction_transport_deadline(timeout_s)
         with _open_url(req, timeout_s) as response:  # noqa: S310 - scheme allowlist enforced above
             raw = _read_with_deadline(response, deadline, backend.name)
             resp_data = _parse_response_body(raw, backend.name)
@@ -5095,7 +5180,7 @@ def _invoke_vertex(
         req = urllib.request.Request(  # noqa: S310 - scheme allowlist enforced above
             url, data=_correction_request_payload(body), headers=headers
         )
-        deadline = time.monotonic() + timeout_s
+        deadline = _correction_transport_deadline(timeout_s)
         with _open_url(req, timeout_s) as response:  # noqa: S310 - scheme allowlist enforced above
             raw = _read_with_deadline(response, deadline, backend.name)
             resp_data = _parse_response_body(raw, backend.name)
