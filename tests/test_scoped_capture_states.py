@@ -919,14 +919,31 @@ def test_a_rebuilt_root_is_not_the_root_that_leaked(tmp_path):
     """The latch follows the directory, not the name it had."""
     import shutil
 
+    from code_forge import invocation_audit as audit
+
     leaked = tmp_path / "root"
     rec = _opened_recorder(leaked, scoped=True)
     with pytest.MonkeyPatch.context() as patch:
         _fail_the_next_close(patch)
         assert _publish(rec).fault.code == "cleanup_unresolved"
+    before = leaked.stat()
+    before_latched = audit._root_unresolved(leaked)
     shutil.rmtree(leaked)
     fresh = _opened_recorder(leaked, scoped=True)
-    assert _publish(fresh).admitted
+    after = leaked.stat()
+    after_latched = audit._root_unresolved(leaked)
+    ack = _publish(fresh)
+    # Failure-only identity evidence: no paths, run identifiers, journal contents,
+    # environment values or unrelated process latch entries are disclosed.
+    assert ack.admitted, {
+        "before": (before.st_dev, before.st_ino),
+        "after": (after.st_dev, after.st_ino),
+        "same_identity": (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino),
+        "before_latched": before_latched,
+        "after_latched": after_latched,
+        "before_filesystem": rec._capability.filesystem_type,
+        "after_filesystem": fresh._capability.filesystem_type,
+    }
 
 
 def test_another_spelling_of_the_same_directory_is_the_same_root(tmp_path):
