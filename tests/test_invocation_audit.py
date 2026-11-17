@@ -249,7 +249,7 @@ def test_empty_schema_and_unknown_cost(disk_root):
 
 def test_automatic_open_and_closed_disk_schema(recorder):
     owner, _ = recorder
-    assert owner.snapshot().capability.filesystem_type in ("ext4", "btrfs")
+    assert owner.snapshot().capability.filesystem_type in audit.LOCAL_FILESYSTEMS
     run = owner.root / RUN
     assert run.stat().st_mode & 0o777 == 0o700
     assert owner.root.stat().st_mode & 0o777 == 0o700
@@ -2760,7 +2760,7 @@ _CLOSED_OPEN_FIELDS = {
     },
     "capability": {
         "profile_id": "unknown",
-        "filesystem_type": "tmpfs",
+        "filesystem_type": "nfs",
         "root_device": -1,
         "root_inode": 0,
         "root_mount_id": 0,

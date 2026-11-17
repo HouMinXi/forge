@@ -2,6 +2,58 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-17 delivery refresh after #531
+
+The existing draft deliveries #528 and #532 were recomposed with fixed main
+`8e75d8c11c16b4ce94d2756da31de464b1bb294f` by normal merges, retaining their
+previous heads `b0d4a629e5d215c8e3e5a2003e9ac72745ee9493` and
+`c23e903c8cad001ca3afe758f3ed497c072cbaee` as first-parent history.
+This is a delivery-validation update, not another acceptance matrix.
+
+For #532 the validated merged tree is
+`6b28523f3bafad6d9c01bb3cb722ce53c4ceacaf`. Its diff against fixed main
+remains two legal-unpublished exporter tests and their two public identities
+(three files, 22 added lines). On Linux with CPython 3.12.14 and pytest 9.2.0:
+
+- The diagnostic-history, scope-history and query-scope-receipt modules passed
+  all 115 tests without skips.
+- Advisory diagnostics and local-filesystem modules passed all 373 tests
+  without skips, exercising the changed storage admission integration.
+- Invocation-audit passed all 1176 tests without skips with `PYTHONPATH=src`,
+  inherited by its system-Python child processes. The initial combined run
+  had 1660 passes and four child-process failures because that environment
+  variable was missing; a direct system-Python import confirmed the missing
+  module. The corrected full audit-module run resolves those local failures.
+- Manifest validation passed: exact fixed-main inventory plus the two new
+  identities, and all 1664 selected collected identities match the manifest.
+- Pinned Ruff 0.17.3 full-tree check/format and diff whitespace checks passed
+  (1084 files already formatted). No dependencies changed.
+
+Five-lens review found no blocking finding: scope and merge composition;
+input validity and exporter rejection semantics; filesystem/trust boundaries;
+test-oracle and manifest consistency; evidence provenance and claim limits.
+The valid `not_published` inputs pass their independent publication validators
+before real exporters reject them, with no locator or ticket produced.
+No production behavior is changed by #532 relative to fixed main.
+
+For #528, the merge preserved the complete prior acceptance document verbatim;
+only this refresh record is added. Historical evidence and the #526/#527/#529
+limited decisions below retain their original attribution. The original
+168/171/40-node evidence remains bound to
+`d8810a212c79c62f6bce9c1b7e404e33696be8f1`.
+The four-file T06/T16 full-byte comparison below applies only between
+`f21f2cef6c0907778e843a2289cff9ddfcc0b0e4` and
+`5a83797118f96260205942aa72fbad9e60f8510a`; it does not extend to new main.
+In particular, #531 changed the advisory storage source and tests. No historical
+experiment was rerun or reassigned to this refresh.
+
+This local selected verification is not a full-suite, installed-wheel, hosted
+Linux CI or CodeQL result. New-head hosted checks must be evaluated separately;
+prior-head green checks do not qualify the new heads. Both PRs remain drafts.
+G13, metadata cap-plus-one disposition, and whole #33/#441 acceptance remain
+unresolved. No issue closure, PR merge, support expansion or new acceptance
+is implied.
+
 ## 2026-11-17 bounded CLI handoff evidence and limited owner acceptance for #529
 
 Related to [#529](https://github.com/HouMinXi/forge/issues/529), parent #33
