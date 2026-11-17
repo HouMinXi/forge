@@ -2,6 +2,124 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-17 bounded CLI handoff evidence and limited owner acceptance for #529
+
+Related to [#529](https://github.com/HouMinXi/forge/issues/529), parent #33
+and shared evidence #441. This records acceptance of the existing current-run
+CLI diagnostic-ticket opt-in, separate from the #527 historical readers.
+
+The fixed reviewed product/test revision is
+`d8810a212c79c62f6bce9c1b7e404e33696be8f1`.
+The prior independent source review and CI evidence review recorded 21 nodes in
+`tests/test_diagnostic_completion.py` and 19 in
+`tests/test_diagnostic_history_host.py` from
+[Linux run 43906002270](https://github.com/HouMinXi/forge/actions/runs/43906002270).
+All 40 exact manifest nodes passed setup, call and teardown without skips;
+collection and aggregate workflow green alone were not the acceptance evidence.
+The recorded environment was CPython 3.14.10 on Ubuntu 26.04, editable source.
+This supplement consumes that prior recorded review, not a new execution or a
+fresh download/revalidation of the raw execution receipts. The original decision
+and its 40-node review summary were rechecked for this documentation delivery;
+raw phase receipts and environment logs were not reconsumed here. The existing
+node maps remain authoritative; this adds no duplicate acceptance matrix.
+
+The [handoff contract](diagnostic-cli-handoff.md) retains the owner-held original
+`Attempt(expected, publication)` tuple. The worker exports at its existing
+presentation point, then seals the original contexts and publication results
+after capture close is attempted and before the completion event is set.
+Capture-cleanup failure is recorded separately. After the host returns or raises,
+the opt-in CLI caller strictly rereads the original observation using that tuple
+before emitting ticket notices. Publication, capture cleanup, worker completion,
+strict reread and caller delivery remain distinct facts. Unknown publication
+creates no successful locator; worker completion is not total CLI success.
+
+The foreign-ticket replacement control proves that the current expected tuple
+is not rebound from the ticket. It does not prove detection or rejection of disk
+ticket replacement. Observation-artifact deletion is a separate strict-reread
+control; it must not be relabelled as deletion of the exported ticket itself.
+Tickets remain caller-trusted selectors, not same-UID authentication. The
+controlled fixtures do not qualify an installed wheel, the full natural CLI
+flow, all SDK/provider paths, or hard I/O deadlines. Default CLI/MCP and direct
+host callers without a completion slot retain their existing contracts.
+
+On 2026-11-17 the owner explicitly accepted this limited current-run handoff
+after the independent source/CI review and these limits were presented in the
+Forge project chat. There is no public decision permalink; private message
+identifiers are not published. This later documentation revision does not
+reassign execution evidence to current main. #529, #33 and #441 remain open;
+no issue closure, whole G12/G13 qualification, support expansion or automatic
+retry authority follows.
+
+## 2026-11-17 bounded T06/T16 static applicability review
+
+The two T06 and three T16 negative-control executions recorded below remain
+bound to `f21f2cef6c0907778e843a2289cff9ddfcc0b0e4`.
+The independent applicability review compared four complete source/test files
+with main `5a83797118f96260205942aa72fbad9e60f8510a` and found byte-identical
+contents. This documentation delivery independently repeated that full-byte
+comparison and confirmed these Git blob identities:
+
+- `src/code_forge/_advisory_diagnostics.py`:
+  `5c140f1d1266c3d7b50d649f392dc06cfb9017d2`.
+- `src/code_forge/cross_repo_impact.py`:
+  `2f80c2f3c62c8dd07ccdc4165e4face85277f15d`.
+- `tests/test_advisory_diagnostics.py`:
+  `c6869a1c7a7e90749c210e093b760ec734767790`.
+- `tests/test_cross_repo_impact.py`:
+  `7ba58b8494977d563ac288c28c7458deec82e4d1`.
+
+T16's `schema_version=True`, `axis="other"` and repository `future=None`
+controls still assert rejection through the real decoder. T06's final-cap
+removal and extra-hop controls retain their targeted assertions: the output
+count equals the existing cap, and the direct-caller fixture has no infrastructure
+errors and exactly the expected direct finding. The exact selectors, mutations,
+original execution outcomes and retained log hashes remain in the dated records
+below; no new mutation or pytest execution is claimed here.
+
+This closes only the concern that these exact source/test targets drifted
+between the two named revisions. It does not establish whole-repository,
+dependency or environment equivalence, a current-main rerun, exhaustive T06/T16
+coverage, overall G12/G13 qualification, or a physical I/O cap. Metadata
+cap-plus-one disposition and the other retained acceptance obligations remain
+separate. No gate or issue status is changed.
+
+## 2026-11-17 bounded history-reader evidence and limited owner acceptance for #527
+
+Related to [#527](https://github.com/HouMinXi/forge/issues/527), parent #33
+and shared evidence #441. This records a limited decision on the existing
+CLI/MCP diagnostic and scope history readers, not a new interface or support domain.
+
+The reviewed product/test revision is
+`d8810a212c79c62f6bce9c1b7e404e33696be8f1`.
+The prior independent review directly consumed execution receipts from
+[Linux run 43906002270](https://github.com/HouMinXi/forge/actions/runs/43906002270)
+and checked the 171 selected nodes in five history-reader modules against
+identity manifest blob `4d72c843bf1bc5cbd3a0c57abacb8ad149cdbc02`.
+The recorded nodes executed successfully without skips. This records that
+existing CI evidence review, not a new local run, and does not reassign the
+result to this later documentation revision.
+
+The existing entry table and the G04/G09 historical-entry node map remain
+authoritative. This evidence includes fresh CLI reads, the tested real MCP
+stdio restart paths, independent history configuration, and controlled
+cancellation/shutdown drain behavior. The tested history transport is not
+qualification of all live review SDK/provider paths.
+
+On 2026-11-17 the owner explicitly accepted this bounded historical-read
+result after the limits were presented in the Forge project chat. There is
+no public decision permalink; private message identifiers are not published.
+
+Tickets and basenames remain caller-trusted selectors, not signatures,
+same-UID authentication or independent source identity. Cancellation/drain
+evidence does not establish a hard I/O deadline. This decision grants no
+all-storage-domain or all-SDK qualification, source/graph freshness,
+current-run credit, review recovery or automatic retry authority.
+
+The selected execution-evidence gap and this limited owner decision are
+recorded, without promoting whole G/T gates. G13 final acceptance,
+metadata cap-plus-one disposition and other retained obligations remain
+separate. #33 and #441 remain open; no issue closure is authorized.
+
 
 ## 2026-11-16 scope-live evidence and limited owner acceptance for #526
 
@@ -3078,7 +3196,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_surrogate_registry_alias_pr
 
 ##### G04/G09 separate historical entries
 
-Oracle: explicitly selected caller-trusted saved context, fixed historical projection/current_run_credit=false, actual SDK/stdio child restarts, independently configured roots and exact cancellation/drain ownership. Limits: these additional history entries are not original live T20 or current-review credentials; a ticket basename is not independent origin authentication. Current runtime NOT_RUN; scope-live count semantics received separate limited owner approval on 2026-11-14 above, without expanding v1 or granting execution credit.
+Oracle: explicitly selected caller-trusted saved context, fixed historical projection/current_run_credit=false, actual SDK/stdio child restarts, independently configured roots and exact cancellation/drain ownership. Limits: these additional history entries are not original live T20 or current-review credentials; a ticket basename is not independent origin authentication. The original mapping recorded Current runtime NOT_RUN. Execution evidence and limited owner acceptance for the selected history-reader slice are now recorded in the 2026-11-17 #527 supplement above; unlisted controls and broader guarantees retain their separate status. Scope-live count semantics received separate limited owner approval on 2026-11-14 above, without expanding v1 or granting execution credit.
 
 <details>
 <summary>Exact static parameter identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>
