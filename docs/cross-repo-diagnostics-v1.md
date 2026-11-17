@@ -94,7 +94,25 @@ Null, missing, empty, bool, float and string forms are not interchangeable. Unkn
 
 Durable root: canonical primary repository `.code-forge/advisory-diagnostics`; namespace execution/repository/axis/sequence.json. The complete root is checked against every temporary per_cwd and its resolved aliases. Writes do not depend on normal receipt collection, so files survive temporary-worker deletion and subsequent output cancellation.
 
-The implementation is Linux-only and admits local overlay, tmpfs and ext4 candidates using the held descriptor's mount identity. fdinfo reads are capped at 4096 bytes; mountinfo at 1 MiB. Every accepted storage descriptor is checked, including descendants, to reject nested unsupported mounts. Actual cloud overlay and tmpfs configurations have been exercised; ext4 is eligible but not locally runtime-qualified. An allowlist is not a universal filesystem qualification. macOS, Windows, network/FUSE filesystems, unreadable/unsupported metadata, deep/long paths and unsafe ownership fail persistent delivery without changing the review.
+The implementation is Linux-only and admits the local filesystems named in
+`src/code_forge/_local_filesystems.py` -- ext2, ext3, ext4, xfs, btrfs, f2fs,
+zfs, bcachefs, overlay and tmpfs -- using the held descriptor's mount identity.
+The same list qualifies the audit root, so the two checks can no longer disagree
+about which filesystem types they accept. They still differ in everything else
+they check, so a directory can pass one and fail the other for a reason unrelated
+to this list. Being on the list means the check attempts the storage; it is not a
+claim that the filesystem has been exercised here. The run that exposed this
+covered btrfs on a Fedora workstation, including subvolume device numbers that
+differ from the mount line; cloud CI covers overlay and tmpfs. Those are the
+results that run reported, and its raw transcript was not re-examined for this
+change. ext4, xfs, f2fs, zfs and bcachefs are eligible but not locally
+runtime-qualified. Because a btrfs
+subvolume reports its own anonymous device in `st_dev`, the descriptor-to-mount
+device comparison is skipped for that filesystem only; a flat filesystem whose
+device does not match still fails closed. fdinfo reads are capped at 4096 bytes;
+mountinfo at 1 MiB. Every accepted storage descriptor is checked, including
+descendants, to reject nested unsupported mounts. An allowlist is not a
+universal filesystem qualification. macOS, Windows, network/FUSE filesystems, unreadable/unsupported metadata, deep/long paths and unsafe ownership fail persistent delivery without changing the review.
 
 Directory traversal is descriptor-relative and no-follow. The source root and diagnostic descendants must belong to the effective UID and have no group/world write bits. Existing permissions are never changed. New directories/files request 0700/0600. Fixed fd-based access/default POSIX ACL queries reject detected ACLs; ENODATA means absent, while ENOTSUP/EOPNOTSUPP on an admitted local filesystem means that ACL functionality is unsupported, not that an ACL was successfully read. Other errors fail closed. Ancestors above the source root need not be private but are traversed no-follow.
 

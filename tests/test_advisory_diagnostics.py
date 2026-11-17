@@ -470,10 +470,18 @@ def test_filesystem_qualification_fails_closed(storage, observation, monkeypatch
             if kind == "duplicate":
                 return raw + raw
             if kind == "device":
-                return b"\n".join(
-                    b" ".join([*line.split()[:2], b"999:999", *line.split()[3:]])
-                    for line in raw.splitlines()
-                )
+                # Name a flat filesystem alongside the bad device: a subvolume
+                # filesystem legitimately reports a device the mount line does
+                # not carry, and that case has its own test.
+                rewritten = []
+                for line in raw.splitlines():
+                    before, separator, after = line.partition(b" - ")
+                    columns = before.split()
+                    columns[2] = b"999:999"
+                    details = after.split()
+                    details[0] = b"ext4"
+                    rewritten.append(b" ".join(columns) + separator + b" ".join(details))
+                return b"\n".join(rewritten)
         return raw
 
     monkeypatch.setattr(records, "_bounded_proc", inspect)
