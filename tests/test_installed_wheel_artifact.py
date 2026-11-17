@@ -306,7 +306,7 @@ def test_unreviewed_backend_or_dependency_metadata_fails_closed(gate, source):
     for old, new in (
         (b"pyyaml>=6.0", b"unreviewed>=1"),
         (b"semgrep>=1.176,<1.183", b"semgrep>=1.176,<1.184"),
-        (b"semgrep>=1.176,<1.184", b"semgrep>=1.176,<1.185"),
+        (b"semgrep>=1.176,<1.186", b"semgrep>=1.176,<1.187"),
         (b"platform_system != 'Darwin' or", b"platform_system != 'Darwin' and"),
         (b"platform_machine == 'x86_64'", b"platform_machine == 'arm64'"),
     ):
