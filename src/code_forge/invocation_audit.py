@@ -21,6 +21,8 @@ import uuid
 from pathlib import Path
 from typing import Callable, Mapping
 
+from ._local_filesystems import LOCAL_FILESYSTEMS
+
 
 @dataclass(frozen=True)
 class InvocationContext:
@@ -746,7 +748,7 @@ def _owner_identity(value):
 def _capability_projection(value):
     value = _closed(value, (f.name for f in fields(AuditCapability)))
     _require(value["profile_id"] == "linux-local-audit-v1", "integrity_error")
-    _vocabulary(value["filesystem_type"], ("ext4", "btrfs"))
+    _vocabulary(value["filesystem_type"], LOCAL_FILESYSTEMS)
     for name in ("root_device", "root_inode", "root_mount_id"):
         _number(value[name], integer=True)
     _require(value["root_inode"] > 0 and value["root_mount_id"] > 0, "integrity_error")
@@ -1011,7 +1013,7 @@ def _profile(fd):
         _require(len(left) >= 6 and len(right) >= 3 and left[0].isdecimal(), "unsupported_profile")
         if int(left[0]) == mount_id:
             matches.append(right[0])
-    _require(len(matches) == 1 and matches[0] in ("ext4", "btrfs"), "unsupported_profile")
+    _require(len(matches) == 1 and matches[0] in LOCAL_FILESYSTEMS, "unsupported_profile")
     return matches[0], mount_id
 
 

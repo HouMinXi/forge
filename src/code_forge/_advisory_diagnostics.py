@@ -2,9 +2,10 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Private, bounded v1 diagnostic records for the cross-repository host.
 
-The qualified domain is Linux local overlay/tmpfs/ext4 with descriptor-relative
-operations, private owned directories, and inspectable ACL namespaces. This is
-not a security boundary against hostile processes with the same effective UID.
+The qualified domain is a Linux local filesystem named by ``_local_filesystems``
+with descriptor-relative operations, private owned directories, and inspectable
+ACL namespaces. This is not a security boundary against hostile processes with
+the same effective UID.
 In particular, checking an owned temporary inode before unlink is not an atomic
 conditional unlink. There is no power-loss durability or filesystem timing claim.
 The host owns observation admission, attempt limits, and independent context.
@@ -22,6 +23,8 @@ import stat
 import sys
 from dataclasses import dataclass
 from uuid import UUID, uuid4
+
+from ._local_filesystems import LOCAL_FILESYSTEMS_BYTES, SUBVOLUME_FILESYSTEMS_BYTES
 
 MAX_BYTES = 4096
 MAX_OBSERVATIONS = 64
@@ -360,9 +363,14 @@ def _filesystem(fd: int, info: os.stat_result) -> None:
         not separator
         or len(columns) < 6
         or len(details) < 3
-        or columns[2] != device
-        or details[0] not in {b"overlay", b"tmpfs", b"ext4"}
+        or details[0] not in LOCAL_FILESYSTEMS_BYTES
     ):
+        raise DiagnosticError("unsupported_filesystem")
+    # The mount id already pinned the mount; the device column confirms that the
+    # descriptor belongs to it. A subvolume filesystem cannot be confirmed that
+    # way, because the mount lists the parent subvolume's device while the file
+    # reports its own.
+    if columns[2] != device and details[0] not in SUBVOLUME_FILESYSTEMS_BYTES:
         raise DiagnosticError("unsupported_filesystem")
 
 
