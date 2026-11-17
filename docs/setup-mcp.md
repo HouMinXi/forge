@@ -9,7 +9,30 @@ directory for all tool calls. It does not re-resolve per call.
 
 If you work on multiple projects, configure a separate MCP server entry
 per project. Claude Code's `.mcp.json` and VS Code's `.vscode/mcp.json`
-are per-project by design, so this maps naturally.
+are per-project by design, so this maps naturally. Claude Code also reads a
+user-level `~/.claude.json`, whose `mcpServers` block applies to every project
+and therefore needs an explicit `FORGE_PROJECT_DIR` on each entry.
+
+### GUI client command and PATH
+
+Graphical clients may inherit a different PATH from your interactive shell.
+Use the absolute path to an executable wrapper that selects your existing
+Forge installation. This POSIX example puts that installation's bin directory
+first while preserving inherited tool paths:
+
+```sh
+#!/bin/sh
+FORGE_BIN="/absolute/path/to/existing-forge/bin"
+export PATH="$FORGE_BIN${PATH:+:$PATH}"
+exec "$FORGE_BIN/code-forge-mcp" "$@"
+```
+
+Save the wrapper as an executable file at the absolute path used below, and
+replace both placeholder paths with your actual paths. Include any other
+required tool directories in the wrapper's PATH if the GUI client does not
+inherit them. Do not rely on shell expansion of `$HOME` or `$PATH` inside JSON
+strings; the examples use literal, already-expanded paths. The wrapper's shell
+expands its own variables. Keep `FORGE_PROJECT_DIR` explicit for each project.
 
 ### Multi-project example (Claude Code)
 
@@ -17,11 +40,11 @@ are per-project by design, so this maps naturally.
 {
   "mcpServers": {
     "forge-projectA": {
-      "command": "code-forge-mcp",
+      "command": "/absolute/path/to/forge-mcp-wrapper",
       "env": { "FORGE_PROJECT_DIR": "/home/user/code/projectA" }
     },
     "forge-projectB": {
-      "command": "code-forge-mcp",
+      "command": "/absolute/path/to/forge-mcp-wrapper",
       "env": { "FORGE_PROJECT_DIR": "/home/user/code/projectB" }
     }
   }
@@ -48,13 +71,16 @@ your project root (the directory containing `.code-forge/`). MCP
 processes typically start with `cwd=~`, so this env var is required
 for the server to locate your gate.yaml.
 
-Example `.claude.json` MCP entry:
+Example user-level `~/.claude.json` entry. Because this file applies to every
+project, each server entry needs its own `FORGE_PROJECT_DIR`. A project-level
+`.mcp.json` reaches the same result only when the client launches the server with
+the project as its working directory; set the variable explicitly if it does not.
 
 ```json
 {
   "mcpServers": {
     "code-forge-mcp": {
-      "command": "code-forge-mcp",
+      "command": "/absolute/path/to/forge-mcp-wrapper",
       "env": {
         "FORGE_PROJECT_DIR": "/home/user/code/myproject"
       }
