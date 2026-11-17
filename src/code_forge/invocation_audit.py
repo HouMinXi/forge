@@ -242,6 +242,10 @@ _EXTRA = {
     "freeze": {"frozen"},
     "audit_fault": {"code", "phase", "attempt_id"},
 }
+# One spelling for the fault a failed release records, so the admission checks,
+# the writer, the acknowledgement and the verdict cannot drift apart.
+CLEANUP_UNRESOLVED = "cleanup_unresolved"
+
 _FAULTS = frozenset(
     (
         "invalid_input",
@@ -252,7 +256,7 @@ _FAULTS = frozenset(
         "quota_refused",
         "persistence_error",
         "integrity_error",
-        "cleanup_unresolved",
+        CLEANUP_UNRESOLVED,
     )
 )
 _PHASES = frozenset(
@@ -314,7 +318,7 @@ def _pin_acquire(handle, *, settlement=False):
     """
     global _PIN_UNCERTAIN  # noqa: PLW0603 - process-wide sticky safety state
     if os.getpid() != _PIN_PID:
-        raise _Rejected("cleanup_unresolved")
+        raise _Rejected(CLEANUP_UNRESOLVED)
     key = _capability_key(handle.capability)
     entry = None
     reserved = False
@@ -323,12 +327,12 @@ def _pin_acquire(handle, *, settlement=False):
         with _unresolved_lock():
             entry = _ROOT_PINS.get(key)
             if _PIN_UNCERTAIN and not (settlement and entry and entry["fd"] >= 0):
-                raise _Rejected("cleanup_unresolved")
+                raise _Rejected(CLEANUP_UNRESOLVED)
             if entry is not None:
                 if not entry["ready"].is_set():
                     raise _Rejected("quota_refused")
                 if entry["fd"] < 0 or (entry["poisoned"] and not settlement):
-                    raise _Rejected("cleanup_unresolved")
+                    raise _Rejected(CLEANUP_UNRESOLVED)
                 entry["leases"] += 1
                 return key, entry
             if len(_ROOT_PINS) >= _PIN_LIMIT:
@@ -342,7 +346,7 @@ def _pin_acquire(handle, *, settlement=False):
         _require((value.st_dev, value.st_ino) == key[1:], "identity_conflict")
         with _unresolved_lock():
             # A different root may have lost its last pin during the syscalls.
-            _require(not _PIN_UNCERTAIN, "cleanup_unresolved")
+            _require(not _PIN_UNCERTAIN, CLEANUP_UNRESOLVED)
             entry["fd"] = fd
             entry["leases"] = 1
             entry["ready"].set()
@@ -3402,7 +3406,7 @@ class AttemptRecorder:
                         self._journal_history(handle, fd, ((prior, self._events),))
                         event = self._event(
                             "audit_fault",
-                            code="cleanup_unresolved",
+                            code=CLEANUP_UNRESOLVED,
                             phase=phase,
                             attempt_id=attempt_id,
                         )
@@ -3434,7 +3438,7 @@ class AttemptRecorder:
                         _pin_release(journal_pin)
                     except BaseException:  # noqa: BLE001, S110 - sticky fallback already recorded
                         pass
-            fault = AuditFault("cleanup_unresolved", phase, attempt_id)
+            fault = AuditFault(CLEANUP_UNRESOLVED, phase, attempt_id)
             if fault not in self._faults:
                 self._faults.append(fault)
             self._state = "incomplete"
@@ -3478,7 +3482,7 @@ class AttemptRecorder:
             # completeness, and its summary has to agree with the latch that stopped it.
             # The dedup is check-then-act on a list two threads can share, so it runs
             # under the same mutex every other write to the recorder takes.
-            fault = AuditFault("cleanup_unresolved", phase, safe_attempt)
+            fault = AuditFault(CLEANUP_UNRESOLVED, phase, safe_attempt)
             with nullcontext() if _mutex_held else self._mutex:
                 self._complete = False
                 self._state = "incomplete"
@@ -3527,7 +3531,7 @@ class AttemptRecorder:
                 if self._scoped_fault_domain or _PIN_UNCERTAIN:
                     pin = _pin_acquire(handle, settlement=phase in _SETTLEMENT_PHASES)
                 elif _root_unresolved(self.root) and phase not in _SETTLEMENT_PHASES:
-                    raise _Rejected("cleanup_unresolved")
+                    raise _Rejected(CLEANUP_UNRESOLVED)
                 with _root_lock(handle, deadline=deadline, monotonic=self._monotonic, create=create):
                     try:
                         result = measured(handle)
@@ -3579,7 +3583,7 @@ class AttemptRecorder:
                             # The action may have written nothing while the latch record did,
                             # so the flag carries what this call put on disk either way.
                             mutated = mutated or recorded
-                            result = deny("cleanup_unresolved")
+                            result = deny(CLEANUP_UNRESOLVED)
                         else:
                             result = deny("persistence_error")
                 except BaseException:
@@ -3592,7 +3596,7 @@ class AttemptRecorder:
                         self._complete = False
                         if not escaping_error:
                             if isinstance(pin_error, OSError):
-                                result = deny("cleanup_unresolved")
+                                result = deny(CLEANUP_UNRESOLVED)
                             else:
                                 raise
             return result

@@ -1633,3 +1633,36 @@ def test_root_pin_journal_mismatch_cleanup_arming_failure_stops_process(
     assert rec._journal_latch("finish", None) is False
     assert audit._PIN_UNCERTAIN
     assert audit._root_unresolved(tmp_path / "other")
+
+
+def test_a_torn_journal_cannot_take_a_second_fault_event(tmp_path):
+    """The in-memory guard is the only one that covers a crash between the two.
+
+    A journal can hold the fault event while the marker never reached disk. In
+    that state the on-disk check finds nothing to stop it, so only the in-memory
+    guard keeps the run to one fault event. The return value proves nothing
+    here -- both calls refuse, the second because the marker publish fails
+    again -- so the count of recorded events is what has teeth.
+    """
+    from code_forge import invocation_audit as audit
+
+    rec = _opened_recorder(tmp_path, scoped=True)
+    real = audit._publish
+
+    def no_marker(fd, name, data, **kwargs):
+        if name == "fault":
+            raise OSError("the marker publish fails")
+        return real(fd, name, data, **kwargs)
+
+    def recorded_faults():
+        return [e for e in rec._events if e["event"] == "audit_fault"]
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(audit, "_publish", no_marker)
+        assert rec._journal_latch("finish", None) is False
+        # The event landed; the marker did not.
+        assert len(recorded_faults()) == 1
+        assert rec._journal_latch("finish", None) is False
+        # Still one: the second call was refused before it could append, and
+        # that refusal is the in-memory guard doing the work.
+        assert len(recorded_faults()) == 1

@@ -740,6 +740,33 @@ class TestExtraction:
         source = ResolvedSource(repo_path=tmp_path, priority=1, source_type="custom")
         assert "linked_src_name" in extract_conventions(source)
 
+    def test_cross_repo_digest_survives_a_symlinked_working_directory(self, tmp_path):
+        """A consumer named through a symlink still sees its sibling conventions.
+
+        The consumer root is opened without following a symlink in any
+        component, so a working directory reached through one pins nothing
+        and -- with no path fallback on POSIX -- drops every sibling digest.
+        The scratch directory under some hosts' TMPDIR is exactly that shape.
+        """
+        real = tmp_path / "real"
+        cwd, sibling, good = real / "consumer", real / "sibling", real / "good"
+        (cwd / "src").mkdir(parents=True)
+        (cwd / "src/local.py").write_text("def LocalOnly(): pass\n")
+        (cwd / ".code-forge").mkdir()
+        sibling.mkdir()
+        good.mkdir()
+        (good / "api.py").write_text("def GoodSibling(): pass\n")
+        (cwd / ".code-forge/conventions.yaml").write_text("siblings: [../sibling, ../good]\n")
+        (sibling / "other.js").write_text("export function UnrelatedJs() {}\n")
+        (sibling / "src").symlink_to("src", target_is_directory=True)
+        link = tmp_path / "link"
+        link.symlink_to(real, target_is_directory=True)
+
+        digest = get_cross_repo_digest(link / "consumer")
+
+        assert "GoodSibling" in digest
+        assert "UnrelatedJs" in digest
+
     def test_python_public_names_via_shared_helper(self, tmp_path):
         """extract_conventions delegates to _extract_python_public_names (B-02)."""
         src = tmp_path / "src"

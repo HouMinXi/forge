@@ -1388,14 +1388,26 @@ def _consumer_root_alias(root: _ConsumerRoot) -> Optional[Path]:
 
 
 def get_cross_repo_digest(cwd: Path) -> str:
-    """Assemble sibling conventions while retaining the consumer metadata root."""
-    consumer_root = _pin_consumer_root(cwd)
+    """Assemble sibling conventions while retaining the consumer metadata root.
+
+    The rooted open below refuses a symlink in any component, so a working
+    directory reached through one -- a scratch symlink, /tmp on macOS, an
+    automount -- pins nothing, and with no path fallback on POSIX the whole
+    cross-repo digest turns into an empty string. Resolve the path once here
+    so the pinned root names the real directory; the no-follow open still
+    rejects a component swapped for a symlink between resolve and open.
+    """
+    try:
+        pinned_cwd = cwd.resolve()
+    except (OSError, RuntimeError, ValueError):
+        pinned_cwd = cwd
+    consumer_root = _pin_consumer_root(pinned_cwd)
     if consumer_root is None and not _path_fallback_supported():
         # A failed rooted open can mean an ancestor was replaced. Do not
         # discover sibling metadata through that unbound pathname.
         return ""
     try:
-        source_cwd = _consumer_root_alias(consumer_root) if consumer_root is not None else cwd
+        source_cwd = _consumer_root_alias(consumer_root) if consumer_root is not None else pinned_cwd
         if source_cwd is None:
             return ""
         return _collect_cross_repo_digest(source_cwd)
