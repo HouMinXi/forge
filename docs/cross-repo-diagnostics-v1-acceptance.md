@@ -2,6 +2,34 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-17 shared strict-reader tail static review
+
+The complete-tail reading gap retained in the
+[#441 review](https://github.com/HouMinXi/forge/issues/441#issuecomment-6956401294)
+was subsequently reviewed at fixed source
+`5d524df377244d172f69c90c61877f9810d79337`: `_advisory_diagnostics.py`
+[677–769](https://github.com/HouMinXi/forge/blob/5d524df377244d172f69c90c61877f9810d79337/src/code_forge/_advisory_diagnostics.py#L677),
+`_read_leaf` (477–510), `_Descriptors` (396–420), and
+[`_query_scope_receipt.py` 140–155](https://github.com/HouMinXi/forge/blob/5d524df377244d172f69c90c61877f9810d79337/src/code_forge/_query_scope_receipt.py#L140),
+with corresponding existing assertions. No new blocking finding was identified.
+
+Shape validation does not establish publication or ownership. The reader then
+requires published status, reopens the retained binding and directory identities,
+checks leaf identity, bounded bytes and digest, and applies the namespace-specific
+strict decoder against expected context. Existing assertions distinguish pure
+validation from real reads, replaced directories/leaves, digest-valid invalid
+schema, cross-namespace rejection and foreign context. Descriptor cleanup attempts
+all registered closes and preserves primary exceptions; close-after-success
+injections do not prove leak freedom after an actual failed close.
+
+This closes only that static reading gap. No tests, mutations or runtime
+qualification were performed for this review; earlier execution evidence keeps
+its original SHA. Real-close-failure leak freedom remains **UNVERIFIED**.
+#531's eligible filesystem names are not native-filesystem qualification.
+Metadata cap-plus-one disposition, G13, final applicable-revision review and
+maintainer acceptance remain outstanding. No new matrix, support commitment,
+whole #33/#441 acceptance or issue closure follows.
+
 ## 2026-11-17 delivery refresh after #531
 
 The existing draft deliveries #528 and #532 were recomposed with fixed main
