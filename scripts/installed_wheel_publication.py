@@ -47,8 +47,8 @@ PLATFORM_EXTRA_REQUIREMENTS = {
     ("semgrep", "semgrep>=1.176,<1.183; platform_system == 'Darwin' and platform_machine == 'x86_64'"): (
         'semgrep<1.183,>=1.176; (platform_system == "Darwin" and platform_machine == "x86_64") and extra == "semgrep"'
     ),
-    ("semgrep", "semgrep>=1.176,<1.184; platform_system != 'Darwin' or platform_machine != 'x86_64'"): (
-        'semgrep<1.184,>=1.176; (platform_system != "Darwin" or platform_machine != "x86_64") and extra == "semgrep"'
+    ("semgrep", "semgrep>=1.176,<1.186; platform_system != 'Darwin' or platform_machine != 'x86_64'"): (
+        'semgrep<1.186,>=1.176; (platform_system != "Darwin" or platform_machine != "x86_64") and extra == "semgrep"'
     ),
 }
 
