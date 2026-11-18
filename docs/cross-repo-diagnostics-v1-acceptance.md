@@ -2,6 +2,38 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-18 #526 scope-live applicability at merged main
+
+Independent full-blob comparison binds the existing live registry-occurrence/counts
+slice to main `a79d39f5b1224c4888eff93993387db069003426`. All seven files below
+have identical blobs at `5d524df377244d172f69c90c61877f9810d79337`,
+`d1b1c7ac085e438c3da2f0ac537a02ce683d3afb` and that merged main:
+
+- `src/code_forge/cross_repo_impact.py`: `2f80c2f3c62c8dd07ccdc4165e4face85277f15d`.
+- `src/code_forge/_query_scope_receipt.py`: `f3c9c98991b406ca07fecebc042481c3d0e2d26f`.
+- `tests/test_cross_repo_query_summary.py`: `378a83b5f94eeee61f25985efeb165659ca355af`.
+- `tests/test_scope_receipt_host.py`: `77a15bf81263dc16c2dd8eb104ee0315059ac3c2`.
+- `tests/test_cross_repo_scope_snapshot.py`: `6bcf4ded639224a9f8e45e04d289b3b10a36a86e`.
+- `tests/test_query_scope_receipt.py`: `da5fc544bb7c4da878575f72e773f1af0f1074e6`.
+- `docs/cross-repo-query-scope-v1.md`: `0c83d11287b49215f2304eeded2e35dbd0ddeb8e`.
+
+There is also no `src/` diff from `5d524df` to this main. This establishes static
+applicability of the already recorded `d1b1c7ac` count-loop/exit review and the
+selected 168-node evidence in Linux run 44136528519 at `5d524df`; it does not
+reassign that execution to `a79d39f5` or create new runtime evidence. The earlier
+168-node run at `d8810a212c79c62f6bce9c1b7e404e33696be8f1` and limited owner
+acceptance keep their separately recorded revisions. No tests or matrix were rerun.
+
+The scope remains live registration occurrences (duplicates included) and counts.
+`query_occurrences_accounted` means completed plus unavailable equals the established
+total; it is distinct from `processing_completed`, which records normal analysis
+return. A helper can finish before later processing fails, as the existing
+scope-snapshot assertions record. Neither flag proves complete cross-repository
+impact, graph freshness, installed-wheel qualification or storage-domain qualification.
+Shared reader/storage and G12/G13 obligations stay with #441, without making every
+future #441 capability a new prerequisite for this limited slice. This applicability
+record is not a fresh owner acceptance, final limited-exit decision or issue closure.
+
 ## 2026-11-18 #527 merged exporter controls: existing receipts consumed
 
 After #532 merged, an independent review consumed existing
