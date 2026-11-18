@@ -2,6 +2,47 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-18 #529 current-run handoff static applicability
+
+Independent full-blob comparison found the following thirteen paths identical at
+`5d524df377244d172f69c90c61877f9810d79337` (existing Linux run 44136528519),
+`d1b1c7ac085e438c3da2f0ac537a02ce683d3afb` (recorded independent static review)
+and checked main `15d19f955d468dc626a4f609539027d61e333997`:
+
+- `src/code_forge/cli.py`: `c0a1ee2348d93c7115355a415d190f9a64e128a9`.
+- `src/code_forge/cross_repo.py`: `6d03d54e0e390ba4afbe2fda2db698bd1bc218ca`.
+- `src/code_forge/_diagnostic_completion.py`: `56ee88497a4b046fdb835ddc5ca02e442c8f532c`.
+- `src/code_forge/_cross_repo_diagnostics.py`: `ca1aa1be4f3a49299ad73b1cacf715b5d73882b2`.
+- `src/code_forge/_advisory_diagnostics.py`: `832097fa0887cfe42310b579f45d91020c0e2d93`.
+- `src/code_forge/_local_filesystems.py`: `85029f10e17593f64a1c33cbf0a44e204d198690`.
+- `src/code_forge/_diagnostic_history.py`: `17b8664e191068dacb7a139612edddc785514d72`.
+- `tests/test_diagnostic_completion.py`: `42d33c3e2a5f48db2912bbc1a17ba82bc11ec132`.
+- `tests/test_diagnostic_history_host.py`: `ca11beba547944781c6096007a0d9b8d4efd1162`.
+- `tests/test_cross_repo_persistent_diagnostic.py`: `cbbc1678afd996e183f003fbfb82e9fddcb2f3fa`.
+- `tests/test_advisory_diagnostics.py`: `162927b2bf277ce2b39495762dfc66581023706a`.
+- `tests/test_local_filesystems.py`: `f88f94efc9ad7a1c347099fe1f45eae63fa659fe`.
+- `docs/diagnostic-cli-handoff.md`: `bc1edbc67f47f3c0eba539257964fe17ee52bbd0`.
+
+This binds the already recorded #529 CLI/host handoff review, shared reader/storage
+source, selected tests/fixture and handoff contract to this main as static evidence.
+There is no `src/` diff from `5d524df` to this main. The selected 40-node execution
+consumed from Linux run 44136528519 remains at `5d524df`; the older independent
+source/execution record and limited owner acceptance at
+`d8810a212c79c62f6bce9c1b7e404e33696be8f1` retain their original attribution.
+This comparison neither reconsumes their raw receipts nor reruns those tests.
+
+Ruff/dependency declarations, installed-wheel tooling, the public identity manifest
+and other test/document files changed outside this set. Blob identity is not
+whole-tree or environment identity, and cancelled Linux run 44362931223 at
+`15d19f955d468dc626a4f609539027d61e333997` receives no pass credit here.
+The controlled fixture still supplies diff, other axes and `_run_ci`; it does not
+qualify the natural full CLI chain, installed wheel or all SDK/provider paths.
+Publication, capture-close attempt, sealing/event/join, caller strict reread and
+notice delivery remain distinct; no real-close-failure leak-freedom or complete
+storage-domain/G12/G13 qualification follows. Shared obligations stay with #441.
+The existing limited #529 owner acceptance is reused, not replaced by a new
+acceptance or exit decision. No support expansion or issue-state change follows.
+
 ## 2026-11-18 #526 scope-live applicability at merged main
 
 Independent full-blob comparison binds the existing live registry-occurrence/counts
