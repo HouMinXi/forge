@@ -1602,6 +1602,54 @@ def test_ensure_open_stays_inside_the_callers_deadline(setup, monkeypatch):
     assert max(deadline for _, deadline in submitted) <= caller_deadline + 0.001
 
 
+def test_a_contended_host_lock_does_not_spend_the_control_window(setup, monkeypatch):
+    """The window belongs to the control, not to the wait for the host lock."""
+    make, supervisor = setup
+    host, _ = make(control_timeout_s=0.08)
+    executed = []
+
+    def execute(command, args, deadline):
+        executed.append((deadline, time.monotonic()))
+        return True
+
+    monkeypatch.setattr(host, "_execute", execute)
+    outcomes = []
+    original_wait = supervisor.wait
+
+    def wait(ticket):
+        outcome = original_wait(ticket)
+        outcomes.append(outcome.state)
+        return outcome
+
+    monkeypatch.setattr(supervisor, "wait", wait)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold():
+        host._lock.acquire()
+        try:
+            entered.set()
+            assert release.wait(5.0)
+        finally:
+            host._lock.release()
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert entered.wait(2.0)
+    timer = threading.Timer(0.2, release.set)
+    timer.start()
+    try:
+        host._ensure_open(time.monotonic() + 5.0)
+    finally:
+        release.set()
+        timer.cancel()
+        holder.join(2.0)
+    assert outcomes and set(outcomes) == {"ack"}, outcomes
+    assert len(executed) == len(outcomes), "every admitted control must run once"
+    for deadline, ran_at in executed:
+        assert deadline > ran_at
+
+
 @pytest.mark.parametrize("phase", [invocation_io.AuditPhase.OPEN, invocation_io.AuditPhase.FINALIZE])
 @pytest.mark.parametrize("late_ack", [False, True])
 def test_replay_cannot_extend_explicit_caller_deadline(setup, monkeypatch, phase, late_ack):
