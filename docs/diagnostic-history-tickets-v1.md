@@ -51,9 +51,23 @@ include the in-memory findings/errors of a whole review. The output strips ticke
 paths, locator details, execution/repository IDs and source/diff identifiers.
 A refusal produces only a bounded error, never raw storage exceptions or paths.
 
-MCP remains unchanged. A future MCP reader needs an explicitly authorized private
-root and selected ticket; job IDs, captured output, or arbitrary client paths
-are not durable history authority. No MCP support is claimed by this prototype.
+### MCP scope: original prototype and later reader
+
+The following statement records this CLI prototype's original MCP scope:
+
+> MCP remains unchanged. A future MCP reader needs an explicitly authorized private
+> root and selected ticket; job IDs, captured output, or arbitrary client paths
+> are not durable history authority. No MCP support is claimed by this prototype.
+
+A later, separately configured [MCP history reader](mcp-diagnostic-history.md)
+provides `forge_diagnostic_history(ticket)`. It is disabled by default and
+requires server-authorized ticket and storage roots. Retained unsigned tickets
+remain caller-trusted historical inputs; they do not gain freshness, review
+recovery authority or current-run credit.
+
+The verification results below remain bound to the recorded CLI prototype
+revision. They do not establish MCP qualification, current-main acceptance or
+completion of #527, #441 or #33.
 
 ## Verification limits
 
