@@ -2,6 +2,44 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-18 selected main execution receipts consumed
+
+An independent receipt review consumed existing
+[Linux run 44136528519](https://github.com/HouMinXi/forge/actions/runs/44136528519)
+at exact main `5d524df377244d172f69c90c61877f9810d79337`.
+This is evidence from that execution, not a local rerun or execution of this
+later documentation head. Earlier 168/171/40-node records and owner decisions
+retain their original revisions; this adds a separately attributed observation.
+
+The four `linux-shard-{0,1,2,3}-evidence` ZIPs were downloaded and their SHA256
+values independently matched the GitHub artifact digests, respectively:
+
+- `14351919990`: `b88be885312861ed5c1bbf26867049ee42574e5f90722b6760ae3861f8944b86`.
+- `14352752372`: `6856d99fd460e18163a5515621f7c4471020132deaeeaa096f2fe6266cdb8ff4`.
+- `14352832815`: `023bfdfa8acf92d67352f03f362918c400f721481f1446474a790d1f42da3e3b`.
+- `14353975707`: `1cbf9828e94201f24f425da5046b5d72c283fa52f4c25a63945aa4da58fce9b7`.
+
+Each receipt names that exact SHA and its shard, has exitstatus 0 and no
+collection errors. Public identities were decoded using that revision's manifest
+blob `2fb0838411dc914b30f1bcaa17f742369d7a11e6` and the global enumeration in
+`ci_private_transport.py::_identities`, not an index reset per module or shard.
+The existing #526 four-module slice has 168 nodes, #527 five-module slice 171,
+and #529 completion/history-host slice 40. In addition,
+`tests/test_advisory_diagnostics.py` has 321 and
+`tests/test_local_filesystems.py` has 52. These 752 nodes are non-overlapping;
+each occurs exactly once in collected identities and has exactly one passed
+setup, call and teardown report (2256 reports), with no target skip or xfail.
+The existing entry/node maps remain authoritative; no second matrix is added.
+
+This finite result does not cover #532's two new legal-unpublished exporter
+nodes, which are absent from this main manifest. The receipts contain collection
+skips for `test_cross_repo_impact_integration.py`, `test_cross_repo_impact.py`
+and `test_dead_code.py`; those modules receive no pass credit here. This review
+is not installed-wheel evidence, all SDK/provider-path qualification, or native
+qualification of every eligible filesystem. It does not rerun mutations, extend
+the earlier T06/T16 byte comparison, resolve real-close-failure leak freedom or
+metadata cap-plus-one, or grant G13/final #33/#441 acceptance. No issue closes.
+
 ## 2026-11-17 shared strict-reader tail static review
 
 The complete-tail reading gap retained in the
