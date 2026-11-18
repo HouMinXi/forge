@@ -2,6 +2,51 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-18 #526/#527/#529 entry-source reading completed
+
+An independent static review at fixed product revision
+`d1b1c7ac085e438c3da2f0ac537a02ce683d3afb` completed the following specific
+source-reading coverage; it found no new blocker in these ranges:
+
+- #526: `src/code_forge/cross_repo_impact.py:617–875` preserves registry
+  occurrences (including duplicates), counts attempts before helper invocation
+  and completion only after helper return, and separates unavailable queries,
+  later processing failures and successful processing completion. The review
+  read the matching occurrence/cache, partial-query, control-exception and
+  output-failure assertions in `tests/test_cross_repo_scope_snapshot.py:19–264`
+  and `tests/test_cross_repo_query_summary.py:56–287`.
+- #527: `src/code_forge/cli.py:2973–3015` returns both historical branches
+  before review dispatch. `src/code_forge/mcp_server.py:585–631,699–720,1848–1905`
+  connects startup authorization, the SDK guard and handler-owned reads;
+  `180–229,306–339` drains cancellation and connects shutdown/signal cleanup.
+  Both `_mcp_diagnostic_history.py` and `_mcp_scope_history.py` retain startup
+  directory authority, recheck identities and return historical public projections.
+  Matching SDK, cancellation, AnyIO, shutdown and stdio assertions were read in
+  `tests/test_mcp_diagnostic_history.py:145–291` and
+  `tests/test_mcp_scope_history.py:154–298`. Controlled release events do not
+  establish deadlines for arbitrary hangs; shutdown-order tests replace
+  `cleanup_all`, and stdio uses `PYTHONPATH`, not an installed-wheel qualification.
+- #529: `src/code_forge/cli.py:3296–3384,3731–3776,5156–5192` and
+  `src/code_forge/cross_repo.py:263–737` connect the caller-owned completion
+  slot to the real host, capture-close attempt, sealing, event, worker join and
+  caller notice consumption, preserving primary-error precedence. The review
+  read `tests/test_diagnostic_completion.py:19–350` and the
+  `persistent_cli` fixture in `tests/test_cross_repo_persistent_diagnostic.py:90–180`.
+  That fixture controls diff acquisition, other advisory axes and `_run_ci`;
+  these assertions do not establish natural full-CLI qualification or prove
+  leak freedom after a real descriptor-close failure.
+
+All twelve named source/test files are byte-identical between `5d524df377244d172f69c90c61877f9810d79337`
+and the fixed revision above. This is static applicability evidence only: no
+product tests, probes or matrices were run for this note. The 752-node execution
+record below remains attributed to `5d524df377244d172f69c90c61877f9810d79337`.
+The existing shared-reader tail review and limited metadata cap-plus-one owner
+decision remain recorded evidence, not new execution or fresh owner approval
+from this review. This closes only the specified source-reading gaps; shared
+reader/storage disposition stays with #441. Final-version binding, G12/G13 and
+individual limited exit decisions remain separate; #526/#527/#529/#33/#441 are not
+thereby accepted or closed, and no support domain is expanded.
+
 ## 2026-11-18 metadata overflow-probe decision
 
 The owner answered “允许” (“allowed”) in project chat to the explicit question
