@@ -2,6 +2,35 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-18 metadata overflow-probe decision
+
+The owner answered “允许” (“allowed”) in project chat to the explicit question
+whether the 4096-byte fdinfo and 1 MiB mountinfo limits permit reading one extra
+byte to detect overflow, with those limits defined as accepted payload thresholds
+rather than absolute physical-read ceilings. This records that limited approval;
+it does not increase the accepted payload sizes.
+
+At product revision `5d524df377244d172f69c90c61877f9810d79337`,
+`_advisory_diagnostics.py::_bounded_proc` requests `cap + 1` bytes and rejects
+a result longer than `cap`. Its callers use 4096 for fdinfo and 1048576 for
+mountinfo. The approved probe therefore requests up to 4097 or 1048577 bytes
+through the Python stream API. Buffering and kernel I/O are not given a physical
+read ceiling by this decision.
+
+The existing
+`tests/test_advisory_diagnostics.py::test_proc_upper_bound_plus_one_read`
+uses a real 17-byte file with a cap of 16 and requires rejection. That is a
+generic overflow control, not an assertion of the stream request length or
+a complete metadata-boundary qualification. No test or mutation was rerun for
+this documentation decision, and no new runtime credit is claimed.
+
+This decision supersedes the earlier pending owner clarification of the
+metadata extra-byte probe in this document, including the G02 limited-decision
+paragraph. Earlier dated evidence and its limitations remain historical.
+Real-close-failure leak freedom, G13/final applicable-revision review and
+maintainer acceptance remain separate; no support expansion, automatic retry,
+issue closure, PR approval or merge follows.
+
 ## 2026-11-18 selected main execution receipts consumed
 
 An independent receipt review consumed existing
