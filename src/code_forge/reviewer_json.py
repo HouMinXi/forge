@@ -45,6 +45,19 @@ REVIEW_REPLY_KEYS = ReplyKeys(
     },
 )
 
+# Excerpt spellings the validator accepts besides the canonical four. A
+# module constant so a new spelling cannot slip in without the tuple test
+# in tests/test_reviewer_json.py noticing. These are not reply-repair keys:
+# that whitelist stays frozen, and a repaired parse carrying either spelling
+# is still refused.
+_EXCERPT_ALIASES = (
+    ("line_start", "start_line"),
+    ("line_end", "end_line"),
+    ("code", "content"),
+    ("line", "start_line"),
+    ("excerpt", "content"),
+)
+
 # The half of every L1 review prompt that describes the JSON to return. It
 # lives next to the validator that enforces that JSON so the two cannot
 # drift: asking for a shape validate_reviewer_json rejects fails every pass
@@ -625,27 +638,80 @@ def _hoist_nested_excerpts(data: dict) -> None:
             del fresh["code_excerpts"]
             rewritten.append(fresh)
         else:
-            rewritten.append(dict(item))
+            fresh = dict(item)
+            excerpt = item.get("excerpt")
+            line = item.get("line")
+            if (
+                isinstance(excerpt, str)
+                and excerpt.strip()
+                and type(item.get("file")) is str
+                and type(line) is int
+                and line > 0
+            ):
+                hoisted.append({"file": item["file"], "line": line, "content": excerpt})
+            rewritten.append(fresh)
     if hoisted:
         data["findings"] = rewritten
         data["code_excerpts"] = hoisted
 
 
+def _excerpt_end_line(start: int, content: str) -> int:
+    """The closing line implied by a validated anchor and its quoted text.
+
+    A finding-shaped anchor names one line and quotes a block; the block's
+    own length is the only end the reply supports. The count uses the same
+    joined text the validator measures, so a list of quoted lines and the
+    equivalent string cannot disagree about how many lines they cover. A
+    stated end_line is never overwritten: a wrong claim has to fail the
+    fidelity check rather than be silently repaired here. A declared end
+    line is a claim and keeps the validator's one-line tolerance; a value
+    derived here is a computation from the quoted text and is exact.
+
+    The caller has already rejected a bad anchor, a non-text content value
+    and a blank quote, so this function only counts.
+    """
+    return start + len(excerpt_lines(content)) - 1
+
+
 def _normalize_excerpt_aliases(data: dict) -> None:
-    """Recognize known excerpt spellings without overriding canonical fields."""
+    """Recognize known excerpt spellings without overriding canonical fields.
+
+    A reply may name an excerpt the way it names a finding: ``line`` plus
+    ``excerpt``. Both spellings stay on the excerpt, as the older aliases
+    do; callers pass the model's own words on, and the canonical fields
+    carry the meaning. Only the closing line, which this shape never
+    states, is derived from the quoted text.
+    """
     excerpts = data.get("code_excerpts")
     if not isinstance(excerpts, list):
         return
-    for excerpt in excerpts:
+    for index, excerpt in enumerate(excerpts):
         if not isinstance(excerpt, dict):
             continue
-        for alias, canonical in (
-            ("line_start", "start_line"),
-            ("line_end", "end_line"),
-            ("code", "content"),
-        ):
+        anchor_present = "line" in excerpt and "start_line" not in excerpt
+        for alias, canonical in _EXCERPT_ALIASES:
             if canonical not in excerpt and alias in excerpt:
                 excerpt[canonical] = excerpt[alias]
+        if anchor_present and "end_line" not in excerpt:
+            if "line_start" in excerpt:
+                anchor = excerpt.get("start_line")
+                if type(anchor) is not int or anchor <= 0:
+                    raise ValueError(f"code_excerpt[{index}] start_line must be a positive integer")
+            else:
+                anchor = excerpt["line"]
+                if type(anchor) is not int or anchor <= 0:
+                    raise ValueError(f"code_excerpt[{index}] line must be a positive integer")
+            content = excerpt.get("content")
+            if content is None:
+                raise ValueError(f"code_excerpt[{index}] excerpt must carry source text")
+            if isinstance(content, list) and not all(isinstance(line, str) for line in content):
+                raise ValueError(f"code_excerpt[{index}] content list must contain only strings")
+            if not isinstance(content, (str, list)):
+                raise ValueError(f"code_excerpt[{index}] content must be str")
+            text = "\n".join(content) if isinstance(content, list) else content
+            if not text.strip():
+                raise ValueError(f"code_excerpt[{index}] excerpt must carry source text")
+            excerpt["end_line"] = _excerpt_end_line(anchor, text)
 
 
 def excerpt_line_count_matches(text: str, claimed: int) -> bool:

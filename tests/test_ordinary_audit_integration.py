@@ -591,6 +591,10 @@ def recovery_responses(branch):
     assert branch == "excerpt_repair"
     content = review_reply("qodo")
     del content["code_excerpts"]
+    # A finding that carries its own quote is evidence by itself (#521), so
+    # strip it as well; the reply must be genuinely missing its excerpts.
+    for finding in content["findings"]:
+        finding.pop("excerpt", None)
     return [wire(content), wire(review_reply("qodo"))], ["initial", "excerpt_repair"]
 
 

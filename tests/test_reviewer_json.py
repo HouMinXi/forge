@@ -7,6 +7,9 @@ import pytest
 from code_forge.reviewer_json import (
     REVIEW_JSON_CONTRACT,
     ExcerptEvidenceError,
+    _EXCERPT_ALIASES,
+    _EXCERPT_REQUIRED,
+    _collect_excerpts,
     _hoist_nested_excerpts,
     validate_reviewer_json,
 )
@@ -344,6 +347,61 @@ class TestNestedFindingExcerpts:
         assert out["findings"][0]["line"] == 84
         assert out["findings"][0]["severity"] == "P1"
 
+    def test_finding_level_excerpt_is_hoisted_with_its_line(self):
+        """A finding whose whole evidence is `line` + `excerpt` still counts."""
+        finding = {
+            "file": "scripts/mirror-hermes-plugins.sh",
+            "line": 58,
+            "severity": "P2",
+            "description": "unset credentials exit without a message",
+            "excerpt": 'if [ -z "${GITEA_USER:-}" ]; then\n  exit 1\nfi',
+        }
+        out = validate_reviewer_json(json.dumps({"findings": [finding]}))
+        assert out["code_excerpts"] == [
+            {
+                "file": "scripts/mirror-hermes-plugins.sh",
+                "line": 58,
+                "start_line": 58,
+                "end_line": 60,
+                "content": 'if [ -z "${GITEA_USER:-}" ]; then\n  exit 1\nfi',
+            }
+        ]
+        assert set(out["code_excerpts"][0]) == {
+            "file",
+            "line",
+            "start_line",
+            "end_line",
+            "content",
+        }
+        assert out["findings"][0]["excerpt"] == finding["excerpt"]
+
+    def test_hoisted_excerpt_reaches_the_collector_with_its_coordinates(self):
+        finding = {
+            "file": "scripts/mirror-hermes-plugins.sh",
+            "line": 58,
+            "severity": "P2",
+            "description": "unset credentials exit without a message",
+            "excerpt": 'if [ -z "${GITEA_USER:-}" ]; then\n  exit 1\nfi',
+        }
+        out = validate_reviewer_json(json.dumps({"findings": [finding]}))
+        collected = _collect_excerpts(out, pass_name="expert")
+        assert collected == [
+            {
+                "file": "scripts/mirror-hermes-plugins.sh",
+                "line": 58,
+                "start_line": 58,
+                "end_line": 60,
+                "content": 'if [ -z "${GITEA_USER:-}" ]; then\n  exit 1\nfi',
+                "pass_name": "expert",
+            }
+        ]
+
+    def test_root_excerpts_win_over_a_finding_level_excerpt(self):
+        """A claimed root envelope is never double-counted by the finding."""
+        finding = dict(self._finding(), excerpt="    assert body.startswith('x')")
+        out = validate_reviewer_json(json.dumps({"findings": [finding], "code_excerpts": [self._exc()]}))
+        assert out["code_excerpts"] == [self._exc()]
+
     def test_nested_excerpts_from_several_findings_are_concatenated(self):
         other = {
             "file": "framework/package/base.sh",
@@ -483,6 +541,22 @@ class TestNestedFindingExcerpts:
 class TestExcerptFieldAliases:
     """Known reviewer spellings enter the same schema and diff checks."""
 
+    def test_the_alias_table_is_pinned(self):
+        """A new spelling cannot arrive without this test changing."""
+        assert _EXCERPT_ALIASES == (
+            ("line_start", "start_line"),
+            ("line_end", "end_line"),
+            ("code", "content"),
+            ("line", "start_line"),
+            ("excerpt", "content"),
+        )
+
+    def test_every_alias_targets_a_canonical_excerpt_field(self):
+        """An alias may rename a field, never invent one."""
+        targets = {canonical for _, canonical in _EXCERPT_ALIASES}
+        assert targets <= _EXCERPT_REQUIRED
+        assert targets == _EXCERPT_REQUIRED - {"file"}
+
     @staticmethod
     def _alias_excerpt(**overrides):
         excerpt = {"file": "mod.py", "line_start": 1, "line_end": 1, "code": "actual_name = 1"}
@@ -510,6 +584,107 @@ class TestExcerptFieldAliases:
         assert result["code_excerpts"][0]["content"] == "actual_name = 1"
         assert result["code_excerpts"][0]["start_line"] == 1
         assert "code_excerpts" not in result["findings"][0]
+
+    def test_single_line_field_derives_the_end_from_the_content(self):
+        """A quote anchored by a finding-style `line` is still one excerpt."""
+        excerpt = {"file": "mod.py", "line": 58, "excerpt": "a\nb\nc"}
+        result = validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+        got = result["code_excerpts"][0]
+        assert (got["start_line"], got["end_line"], got["content"]) == (58, 60, "a\nb\nc")
+
+    def test_canonical_coordinates_win_over_the_single_line_field(self):
+        excerpt = {
+            "file": "mod.py",
+            "line": 99,
+            "start_line": 1,
+            "end_line": 1,
+            "code": "actual_name = 1",
+        }
+        result = validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+        assert result["code_excerpts"][0]["start_line"] == 1
+        assert result["code_excerpts"][0]["end_line"] == 1
+
+    def test_the_start_line_alias_outranks_the_single_line_field(self):
+        """When both spellings appear, the alias supplies the coordinate."""
+        excerpt = {"file": "mod.py", "line": 1, "line_start": 9, "excerpt": "a\nb"}
+        result = validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+        got = result["code_excerpts"][0]
+        assert (got["start_line"], got["end_line"]) == (9, 10)
+
+    def test_a_redundant_line_field_is_not_validated(self):
+        """The coordinate source is checked, not the spelling it shadows."""
+        excerpt = {"file": "mod.py", "line": 0, "line_start": 9, "excerpt": "a\nb"}
+        result = validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+        got = result["code_excerpts"][0]
+        assert (got["start_line"], got["end_line"]) == (9, 10)
+
+    def test_a_bad_alias_coordinate_names_the_alias(self):
+        excerpt = {"file": "mod.py", "line": 1, "line_start": 0, "excerpt": "a"}
+        with pytest.raises(ValueError, match=r"start_line must be a positive integer"):
+            validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+
+    def test_list_content_derives_the_end_from_the_joined_text(self):
+        excerpt = {"file": "mod.py", "line": 10, "excerpt": ["a", "b", ""]}
+        got = validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))[
+            "code_excerpts"
+        ][0]
+        assert (got["content"], got["end_line"]) == (["a", "b", ""], 11)
+
+    def test_a_list_item_with_an_embedded_newline_still_counts_each_line(self):
+        """Items are joined before counting, so an inner newline adds a line."""
+        excerpt = {"file": "mod.py", "line": 10, "excerpt": ["a\nb", "c"]}
+        got = validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))[
+            "code_excerpts"
+        ][0]
+        assert got["end_line"] == 12
+
+    def test_an_unusable_anchor_names_the_real_cause(self):
+        excerpt = {"file": "mod.py", "line": 0, "excerpt": "a"}
+        with pytest.raises(ValueError, match=r"line must be a positive integer"):
+            validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+
+    def test_an_empty_quote_names_its_own_cause(self):
+        excerpt = {"file": "mod.py", "line": 10, "excerpt": "   "}
+        with pytest.raises(ValueError, match=r"excerpt must carry source text"):
+            validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+
+    def test_derivation_stays_inside_the_single_anchor_spelling(self):
+        """A canonical reply missing its end line is still refused."""
+        for excerpt in (
+            {"file": "mod.py", "start_line": 10, "content": "a\nb"},
+            {"file": "mod.py", "line_start": 10, "code": "a\nb"},
+            {"file": "mod.py", "line": 10, "start_line": 10, "excerpt": "a\nb"},
+        ):
+            with pytest.raises(ValueError, match=r"missing: end_line"):
+                validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+
+    def test_a_declared_end_line_survives_a_single_anchor(self):
+        """Derivation never rewrites the closing line the reply stated."""
+        long_claim = {"file": "mod.py", "line": 1, "end_line": 99, "excerpt": "a\nb"}
+        with pytest.raises(ExcerptEvidenceError, match=r"declares 99 lines but carries 2"):
+            validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [long_claim]}))
+        reversed_claim = {"file": "mod.py", "line": 9, "end_line": 2, "excerpt": "a\nb"}
+        with pytest.raises(ValueError, match=r"start_line 9 > end_line 2"):
+            validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [reversed_claim]}))
+
+    def test_an_alias_content_list_with_a_non_string_names_its_cause(self):
+        excerpt = {"file": "mod.py", "line": 1, "excerpt": ["a", 3]}
+        with pytest.raises(ValueError, match=r"content list must contain only strings"):
+            validate_reviewer_json(json.dumps({"findings": [], "code_excerpts": [excerpt]}))
+
+    def test_non_text_alias_content_names_its_cause(self):
+        excerpt = {"file": "mod.py", "line": 1, "excerpt": ("a", "b")}
+        with pytest.raises(ValueError, match=r"content must be str"):
+            validate_reviewer_json({"findings": [], "code_excerpts": [excerpt]})
+
+    def test_blank_canonical_excerpt_is_skipped_but_a_blank_anchor_is_refused(self):
+        finding = {"file": "mod.py", "line": 1, "severity": "P3", "description": "note"}
+        canonical = {"file": "mod.py", "start_line": 1, "end_line": 1, "content": "  \n"}
+        out = validate_reviewer_json(json.dumps({"findings": [finding], "code_excerpts": [canonical]}))
+        assert out["code_excerpts"] == []
+        anchored = {"file": "mod.py", "line": 1, "excerpt": "  \n"}
+        with pytest.raises(ValueError, match=r"excerpt must carry source text"):
+            validate_reviewer_json(json.dumps({"findings": [finding], "code_excerpts": [anchored]}))
 
     @pytest.mark.parametrize(
         ("canonical", "bad_value", "error"),
