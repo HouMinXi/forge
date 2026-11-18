@@ -2,6 +2,45 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-18 #527 merged exporter controls: existing receipts consumed
+
+After #532 merged, an independent review consumed existing
+[Linux run 44275864512](https://github.com/HouMinXi/forge/actions/runs/44275864512)
+at exact main `a79d39f5b1224c4888eff93993387db069003426`.
+The downloaded `linux-shard-{0,1,2,3}-evidence` ZIP SHA256 values matched
+GitHub's artifact digests, respectively:
+
+- `14415701295`: `763d81b0859332f1e8d24520be0fb944c4d8dbb5df7c05e612bd757f574f2f29`.
+- `14414154375`: `a6e89db165ac94f4ab7f6880fa39012ba51d364a3840a50793566779d5a9cd04`.
+- `14414816972`: `22c3ebb9098819813815a051a97b4230eb320a3c90080c59a3f940acf93176dd`.
+- `14414782557`: `563c630b828764cf8cc7b186698a5a60e6a9d914fa0b7ebf6cf23ddc656740fd`.
+
+Manifest blob `172751fbd028af5e5100aec2fe477bf7bb055e09`, using the
+whole-manifest enumeration in `ci_private_transport.py::_identities`, maps
+`tests/test_diagnostic_history.py::test_valid_not_published_result_cannot_export_ticket`
+to `public-7971` on shard 1 and the same test name in `tests/test_scope_history.py`
+to `public-41875` on shard 0. Across all four receipts each node was collected
+exactly once, with setup/call/teardown each passed and no skip or xfail. All four
+receipts name the exact SHA above, exitstatus 0 and no collection errors.
+The assertions validate a legal `not_published` result before requiring export
+rejection, no locator and an empty ticket directory. This supplies the two
+merged exporter controls; it does not establish all #527 acceptance obligations.
+Collection skips elsewhere include cross-repo impact/integration and dead-code
+modules; this is not an assertion that the whole run had no skips.
+
+Between `d1b1c7ac085e438c3da2f0ac537a02ce683d3afb` and this main revision,
+only this acceptance document, the public identity manifest and those two test
+files changed. The prior fixed-source wiring review therefore remains statically
+applicable; the older 171/752-node execution evidence retains its original SHA.
+This note consumes an existing run: no new tests, probes or matrix were executed.
+
+#441 continues to carry the shared reader/storage obligations: full storage-domain
+qualification, leak freedom under real descriptor-close failure, and final-version
+G12/G13 review. Existing reader-tail static review and the limited metadata
+cap-plus-one allowance are already recorded; neither is missing, and neither is
+new runtime proof. This receipt supplement makes no final limited-exit decision,
+reopening/closure decision or support expansion for #527, #33 or #441.
+
 ## 2026-11-18 #526/#527/#529 entry-source reading completed
 
 An independent static review at fixed product revision
