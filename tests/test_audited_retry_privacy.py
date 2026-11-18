@@ -8,10 +8,27 @@ from code_forge import llm_invoke as invoke
 from tests import test_cli_inline_audit_integration as inline, test_invocation_send_audit as sends
 from tests.audit_diagnostic_probe import AuditDiagnosticProbe
 
-host_setup = inline.host_setup
+_fault_host_setup = inline.host_setup
 api_backend = inline.api_backend
 real_inline = inline.real_inline
 SECRET = "PRIVATE_PROVIDER_BODY_SENTINEL"
+
+
+@pytest.fixture
+def host_setup(_fault_host_setup):
+    # Privacy success paths need scheduling headroom, not the host fault tests'
+    # 80 ms expiry budget. Keep their small buffers and real worker unchanged.
+    from code_forge.invocation_host import HostAuditLimits
+
+    make, supervisor = _fault_host_setup
+    defaults = HostAuditLimits()
+
+    def make_private_host(**kwargs):
+        kwargs.setdefault("control_timeout_s", defaults.control_timeout_s)
+        kwargs.setdefault("flush_timeout_s", defaults.flush_timeout_s)
+        return make(**kwargs)
+
+    return make_private_host, supervisor
 
 
 @pytest.fixture
@@ -342,7 +359,7 @@ def test_actual_retry_failure_transcript_receipt_and_replay_are_private(
     credential = "SYNTHETIC_RETRY_API_KEY_NOT_FOR_CHILD"
     plugin = tmp_path / "retry_failure_injection.py"
     plugin.write_text(
-        "import os\nimport threading\nimport pytest\n"
+        "import os\nimport threading\nimport pytest\nfrom dataclasses import replace\n"
         "from code_forge import invocation_host\n"
         "from tests import test_invocation_host as host_tests\n"
         "@pytest.fixture(autouse=True)\n"
@@ -352,7 +369,13 @@ def test_actual_retry_failure_transcript_receipt_and_replay_are_private(
         "    real_finalize = invocation_host.HostAuditSession.finalize\n"
         "    def finalize(host, *args, **kwargs):\n"
         "        in_finalize[0] = True\n"
-        "        try:\n"
+        "        limits = host.limits\n"
+        + (
+            "        host.limits = replace(limits, control_timeout_s=0.08)\n"
+            if fault == "recorder_delay"
+            else ""
+        )
+        + "        try:\n"
         "            result = real_finalize(host, *args, **kwargs)\n"
         + (
             "            for recorder in host_tests.MockRecorder.instances:\n"
@@ -363,6 +386,7 @@ def test_actual_retry_failure_transcript_receipt_and_replay_are_private(
         )
         + "            return result\n"
         "        finally:\n"
+        "            host.limits = limits\n"
         "            in_finalize[0] = False\n"
         "    monkeypatch.setattr(invocation_host.HostAuditSession, 'finalize', finalize)\n"
         "    original = host_tests.MockRecorder.finalize\n"
