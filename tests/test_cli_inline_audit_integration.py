@@ -53,8 +53,12 @@ def real_inline(monkeypatch, tmp_path, host_setup, api_backend):
     monkeypatch.setattr(invocation_host, "maintain_audit_root", lambda *a, **k: None)
 
     def create(*, context, manifest, strict, environ):
+        # Recording must survive slow CI hosts: the first send opens the audit
+        # session (including managed-root preparation), which must not consume
+        # the default tight test budget before any storage is asserted.
         host, _ = make(
             strict=strict,
+            control_timeout_s=5.0,
             warn=lambda _: print(
                 "code-forge: invocation audit unavailable; recording is incomplete", file=cli.sys.stderr
             ),

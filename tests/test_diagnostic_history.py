@@ -146,6 +146,16 @@ def test_ticket_mode_symlink_fifo_refused_without_blocking(sample, change):
     assert result.stdout == "" and result.stderr == "code-forge: historical diagnostic unavailable\n"
 
 
+def test_valid_not_published_result_cannot_export_ticket(sample):
+    _, tickets, expected, _, _ = sample
+    result = storage.PublicationResult("not_published", failure="publication_failed")
+    storage.validate_publication(result, expected)
+    with pytest.raises(history.TicketError):
+        history.export_ticket(tickets, result, expected)
+    assert result.locator is None
+    assert list(tickets.iterdir()) == []
+
+
 def test_export_requires_matching_strictly_read_record(sample, monkeypatch):
     _, tickets, expected, _, pub = sample
     with pytest.raises(history.TicketError):
