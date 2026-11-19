@@ -2,6 +2,52 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-19 #441 limited G12 evidence candidate
+
+This supplement records evidence for review, not a new owner decision. The
+earlier bounded G12 decision remains attached to its original evidence.
+
+- **Fixed local source:** [`a72dc5a990194494c875fac7b783436b30ed272d`](https://github.com/HouMinXi/forge/commit/a72dc5a990194494c875fac7b783436b30ed272d),
+  tree `414358023ac07e412cfd413116d2c32da4eada91`. A Git archive of the fixed
+  commit was used; all 1,598 tracked blobs, including symlink contents, were
+  verified after running. No separate pre-run byte scan was recorded.
+- **Selected local regression:** 32 unmodified modules, **1,392 passed** on
+  CPython 3.12.14, SQLite 3.53.1, pytest 9.2.0, pytest-asyncio 1.5.0,
+  code-review-graph 2.4.0, MCP SDK 1.30.0 and Ruff 0.17.4. Two empty-diff
+  controls stopped at toolchain detection on the initial run without Ruff.
+  After adding the pinned Ruff to the test environment, both passed
+  individually and in the full selected rerun without tracked input edits.
+  This is not Python 3.14 qualification or a reattribution of prior runs.
+- **Parent #33 direct callers:** real provider build and registration for
+  synthetic repositories, followed by the real runner. At 2/2 registered
+  siblings completed, only the direct caller was returned. Removing the
+  indirect sibling graph retained that result at 1/2; removing the sole
+  direct sibling graph instead returned no findings at 1/2, explicitly
+  reporting one unavailable in both cases. Restoration recovered 2/2 and
+  the direct caller. No graph-freshness or coverage outside the registered
+  scope is established.
+- **Separate delivery controls:** six CLI/direct-host and four MCP-handler
+  fixture controls verified visible partial scope and unchanged verdict and
+  receipt behavior. They did not exercise a single provider-to-CLI chain or
+  the full MCP wire protocol. The independent reviewer consumed these records
+  and assertions; this does not claim an independent re-execution.
+- **Separate hosted checks:** [Linux](https://github.com/HouMinXi/forge/actions/runs/44515651203),
+  [wheel](https://github.com/HouMinXi/forge/actions/runs/44515651290),
+  [lint](https://github.com/HouMinXi/forge/actions/runs/44515651138) and
+  [CodeQL](https://github.com/HouMinXi/forge/actions/runs/44515651256)
+  passed for the earlier #541 head `6308f6ae855feb81912dede47f2edd569c634b74`.
+  The Linux checkout was synthetic merge
+  `a40c5dc1b95225ae43155ca4804b27d86a994641` into the fixed main above.
+  None of those checks ran this documentation supplement.
+
+**Exit boundary:** Acceptance of this run as additional limited G12 evidence
+is pending. Original 78-test equivalence remains unknown; a real failed
+`close()` with no leak remains unverified under T19. Preserve existing storage
+eligibility versus runtime qualification, and do not extend the support domain.
+G13 requires final independent review of the applicable product, test and
+document revisions and explicit maintainer acceptance. Neither issue closes;
+no G/T checkbox changes.
+
 ## 2026-11-18 #529 current-run handoff static applicability
 
 Independent full-blob comparison found the following thirteen paths identical at
