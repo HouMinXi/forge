@@ -43,6 +43,12 @@ storage-domain/G12/G13 qualification follows. Shared obligations stay with #441.
 The existing limited #529 owner acceptance is reused, not replaced by a new
 acceptance or exit decision. No support expansion or issue-state change follows.
 
+**2026-11-19 static refresh:** the same thirteen blobs also match merged main
+`a72dc5a990194494c875fac7b783436b30ed272d`. The no-`src/`-diff statement
+above is specific to the earlier comparison with `15d19f9`; later main
+changes files outside the listed set. The 40-node run remains attributed
+to `5d524df`; no execution credit is transferred by this refresh.
+
 ## 2026-11-18 #526 scope-live applicability at merged main
 
 Independent full-blob comparison binds the existing live registry-occurrence/counts
