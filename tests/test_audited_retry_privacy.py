@@ -79,7 +79,9 @@ def test_recovery_diagnostics_preserve_private_error_and_usage(
     host_setup, api_backend, monkeypatch, capsys, caplog, audited
 ):
     make, _ = host_setup
-    host, _ = make()
+    # The audited parameter needs the session to open on slow CI hosts, so
+    # the open budget must outlast managed-root preparation; the flush budget stays tight so finalize-delay probes still see their timeout.
+    host, _ = make(control_timeout_s=5.0)
     monkeypatch.setattr(invoke.time, "sleep", lambda _: None)
     responses = [sends.reply(sends.PARTIAL, finish="length", tokens=3)]
     responses += [sends.http_error(503, SECRET.encode()) for _ in range(3)]
@@ -106,7 +108,8 @@ def test_http_error_identity_cause_retry_delay_and_prompt(
     host_setup, api_backend, monkeypatch, capsys, audited
 ):
     make, _ = host_setup
-    host, _ = make()
+    # Same recording-budget need as the recovery test above: audit must open.
+    host, _ = make(control_timeout_s=5.0)
     errors = [sends.http_error(429, SECRET.encode()) for _ in range(2)]
     errors[0].headers["Retry-After"] = "7"
     transport = sends.scripted(monkeypatch, errors)
@@ -341,6 +344,9 @@ def test_actual_retry_failure_transcript_receipt_and_replay_are_private(
     private_partial = "PRIVATE_RETRY_PARTIAL_BYTES_SENTINEL"
     credential = "SYNTHETIC_RETRY_API_KEY_NOT_FOR_CHILD"
     plugin = tmp_path / "retry_failure_injection.py"
+    # The finalize deadline inherits the control budget, so the injected
+    # recorder delay must track the live limit: a fixed delay assumed the old
+    # tight default and broke as soon as the open budget widened.
     plugin.write_text(
         "import os\nimport threading\nimport pytest\n"
         "from code_forge import invocation_host\n"
@@ -349,9 +355,13 @@ def test_actual_retry_failure_transcript_receipt_and_replay_are_private(
         "def inject(monkeypatch, host_setup):\n"
         "    assert 'API_KEY' not in os.environ\n"
         "    in_finalize = [False]\n"
+        "    budget = [None]\n"
         "    real_finalize = invocation_host.HostAuditSession.finalize\n"
         "    def finalize(host, *args, **kwargs):\n"
         "        in_finalize[0] = True\n"
+        "        captured = host.limits.control_timeout_s\n"
+        "        assert type(captured) is float and captured > 0\n"
+        "        budget[0] = captured\n"
         "        try:\n"
         "            result = real_finalize(host, *args, **kwargs)\n"
         + (
@@ -371,7 +381,7 @@ def test_actual_retry_failure_transcript_receipt_and_replay_are_private(
         + (
             f"            raise OSError(5, {private_error!r})\n"
             if fault == "recorder_error"
-            else "            threading.Event().wait(0.24)\n"
+            else "            threading.Event().wait(budget[0] + 0.25)\n"
             if fault == "recorder_delay"
             else "            pass\n"
         )
