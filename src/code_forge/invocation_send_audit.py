@@ -295,7 +295,11 @@ class _SendOpener:
 
     def open(self, request, *, timeout):
         parent = self.parent
-        if parent._deadline - time.monotonic() <= 0:
+
+        def remaining():
+            return parent._deadline - time.monotonic()
+
+        if remaining() <= 0:
             # An elapsed budget must stop before a ticket exists. A ticket
             # submitted past its deadline can only expire, and the host reports
             # that as an unavailable service rather than a spent budget.
@@ -307,14 +311,14 @@ class _SendOpener:
             model=parent.model,
             deadline=parent._deadline,
         )
-        if parent._deadline - time.monotonic() <= 0:
+        if remaining() <= 0:
             raise SendDeadlineBeforeNetwork()
         if parent._active is not None:
             parent._active.enter()
         # Both admission and entered controls can consume the shared budget.
         # ENTERED is a local boundary, never proof that this call reached wire.
-        remaining = parent._deadline - time.monotonic()
-        if remaining <= 0:
+        left = remaining()
+        if left <= 0:
             raise SendDeadlineBeforeNetwork()
         parent._opens += 1
-        return parent._transport.open(request, timeout=remaining)
+        return parent._transport.open(request, timeout=left)
