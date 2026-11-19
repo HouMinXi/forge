@@ -15468,6 +15468,7 @@
     "tests/test_invocation_finish_failures.py::test_primary_metadata_failure_still_preserves_primary_when_both_diagnostics_fail",
     "tests/test_invocation_host.py::test_a_claim_is_spent_before_its_callback_runs",
     "tests/test_invocation_host.py::test_a_contended_host_lock_does_not_spend_the_control_window",
+    "tests/test_invocation_host.py::test_a_contended_rearm_refuses_a_replay_instead_of_submitting_it_expired",
     "tests/test_invocation_host.py::test_a_failing_abandon_still_releases_a_provably_unexecuted_command",
     "tests/test_invocation_host.py::test_a_hostile_equality_cannot_spend_the_terminal_slot",
     "tests/test_invocation_host.py::test_a_refinement_delivered_first_suppresses_a_later_unrecognized_code",

@@ -467,10 +467,14 @@ class HostAuditSession:
                 if grace <= 0.0:
                     raise _Unavailable()
                 deadline = self._deadline(min(caller_deadline, deadline + grace))
-                if time.monotonic() >= deadline:
-                    raise _Unavailable()
             with self._lock:
-                if attempt == 0:
+                if attempt:
+                    # Waiting for the lock spends the renewal as well. A ticket
+                    # created from a lapsed renewal can only expire, and the
+                    # host reports that as an unavailable service.
+                    if time.monotonic() >= deadline:
+                        raise _Unavailable()
+                else:
                     # The window starts where the control is admitted: waiting
                     # for the host lock must not spend it, or the ticket arrives
                     # already expired and reads as an unavailable host.

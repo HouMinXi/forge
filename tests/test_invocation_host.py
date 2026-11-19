@@ -2028,3 +2028,44 @@ def test_a_signal_right_after_arming_the_drain_does_not_wedge_the_outlet():
     source = Path(invocation_stream.__file__).read_text(encoding="utf-8")
     emit = source[source.index("    def emit(self, code):") : source.index("class WireCapture:")]
     assert emit.index("        try:\n") < emit.index("            with self._lock:")
+
+
+def test_a_contended_rearm_refuses_a_replay_instead_of_submitting_it_expired(setup, monkeypatch):
+    """A renewal the lock wait has spent must be refused, not submitted."""
+    make, supervisor = setup
+    host, _ = make(control_timeout_s=0.08)
+    clock = [100.0]
+    real_lock = host._lock
+    admissions = []
+
+    class AdmissionLock:
+        delay = 0.0
+
+        def __enter__(self):
+            real_lock.acquire()
+            clock[0] += self.delay
+            self.delay = 0.0
+            return self
+
+        def __exit__(self, *exc):
+            real_lock.release()
+
+    lock = AdmissionLock()
+    monkeypatch.setattr(host, "_lock", lock)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    def submit(target, phase, *, deadline):
+        admissions.append(deadline)
+        return object()
+
+    def wait(_ticket):
+        # The first control provably never ran, and the re-arm is contended.
+        lock.delay = 0.2
+        return invocation_io.IoOutcome("expired", value=None, not_executed=True)
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", wait)
+
+    with pytest.raises(module._Unavailable):
+        host._request(invocation_io.AuditPhase.OPEN, "unused", None, 101.0)
+    assert admissions == [pytest.approx(100.08)], admissions
