@@ -295,6 +295,11 @@ class _SendOpener:
 
     def open(self, request, *, timeout):
         parent = self.parent
+        if parent._deadline - time.monotonic() <= 0:
+            # An elapsed budget must stop before a ticket exists. A ticket
+            # submitted past its deadline can only expire, and the host reports
+            # that as an unavailable service rather than a spent budget.
+            raise SendDeadlineBeforeNetwork()
         parent._active = parent.scope.start(
             request,
             cause=parent.cause if parent._opens == 0 else "redirect",
