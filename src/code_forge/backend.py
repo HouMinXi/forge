@@ -1091,6 +1091,12 @@ def _classify_live_failure(exc: "LLMInvokeError") -> Tuple[str, str]:
             "truncated-output",
             "The backend could not finish a bounded probe reply; check its output limits.",
         )
+    if exc.kind == "empty":
+        return (
+            "empty-output",
+            "The backend returned no usable text. If it spent its output budget "
+            "on reasoning, lower reasoning_effort or thinking_budget for it.",
+        )
     if exc.kind == "refusal":
         return (
             "provider-refusal",

@@ -2407,10 +2407,9 @@ class TestTruncationBreaker:
         assert exc.retryable is False
         assert "truncations" in str(exc)
         assert "timeout" not in str(exc).lower()
-        # The advice must not unconditionally say "raise output_ceiling":
-        # the backend may already clamp below the configured cap, in
-        # which case raising the knob changes nothing.
-        assert "may already clamp below the configured" in str(exc)
+        # The wording itself is pinned by
+        # tests/test_invoke_error_contract.py; asserting phrases here too
+        # would be a second copy of the same expectation.
         assert breaker.count == 5
         assert breaker.tripped is True
         with pytest.raises(TruncationBreakerError):
@@ -7560,3 +7559,324 @@ class TestMidStreamErrorSSE:
         assert ei.value.retryable is True
         assert ei.value.exit_code == 0
         assert "partial response discarded" in str(ei.value)
+
+
+def _runaway_backend(max_tokens=65536):
+    return BackendConfig(
+        name="agnes",
+        type="api",
+        model="m",
+        format="openai",
+        base_url="http://x",
+        api_key_env="K",
+        max_tokens=max_tokens,
+    )
+
+
+def _length_body(content, usage, model=""):
+    return {
+        "choices": [{"message": {"content": content}, "finish_reason": "length"}],
+        "usage": usage,
+        "model": model,
+    }
+
+
+def _runaway_error(body, backend):
+    with patch("urllib.request.urlopen", return_value=_mock_body(body)):
+        with pytest.raises(LLMInvokeError) as exc_info:
+            _invoke_openai("p", backend, api_key="k", timeout_s=10)
+    return exc_info.value
+
+
+def test_openai_length_with_empty_content_is_a_retryable_reasoning_runaway():
+    """A reasoning loop burns the whole cap and emits no answer text.
+
+    Measured against agnes-cn-3: finish_reason=length, 65536 output tokens,
+    zero content characters. The capacity message is wrong for this shape --
+    a larger cap cannot produce text the model never started -- and a
+    non-retryable error drops the pass on one bad roll. A plain (not
+    _TruncatedResponse) error keeps it out of the continuation path, which
+    has no partial object to continue.
+    """
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": 10112, "completion_tokens": 65536}),
+        _runaway_backend(),
+    )
+    assert not isinstance(error, _TruncatedResponse)
+    assert error.retryable is True
+    assert error.exit_code == 0
+    message = str(error)
+    assert "spent 65536 output tokens without emitting answer text" in message
+    assert "Lower reasoning_effort or thinking_budget" in message
+    assert "output_ceiling" not in message
+    # The burned tokens stay in the books the L1 fold reads.
+    assert error.observed_usage is not None
+    assert error.observed_usage.output_tokens == 65536
+    assert "output_tokens" in error.observed_usage.known_fields
+    assert error.usage is not None
+    assert error.usage.input_tokens == 10112
+
+
+def test_runaway_is_not_filed_as_a_provider_capacity_failure():
+    """kind decides the host's diagnostic class; capacity is the wrong one.
+
+    The whole point of this branch is that raising the cap does not help, so
+    it must not fold into PROVIDER_CAPACITY the way the truncation class does.
+    """
+    from code_forge.llm_invoke import _retry_cause
+
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert error.kind == "empty"
+    assert _retry_cause(error, audited=True) == "provider response empty"
+
+
+def test_openai_length_with_whitespace_only_content_is_the_same_runaway():
+    """Whitespace is not an answer: it takes the same branch."""
+    error = _runaway_error(
+        _length_body("   \n\t ", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert "without emitting answer text" in str(error)
+    assert "chars=6" in str(error)
+    assert error.retryable is True
+
+
+def test_empty_content_message_reports_spent_tokens_not_the_cap():
+    """A backend can clamp below the configured cap; the message names what
+    the attempt actually spent, not what it was allowed."""
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _runaway_backend(max_tokens=65536),
+    )
+    message = str(error)
+    assert "spent 4096 output tokens" in message
+    assert "cap=65536" in message
+
+
+def test_empty_content_without_a_cap_keeps_the_missing_knob_message():
+    """max_tokens: 0 means no cap to raise, not a reasoning runaway."""
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": 10, "completion_tokens": 10}),
+        _runaway_backend(max_tokens=0),
+    )
+    message = str(error)
+    assert "no usable output cap is configured" in message
+    assert "without emitting answer" not in message
+
+
+def test_boolean_usage_counts_are_not_rendered_as_numbers():
+    """JSON true is an int in Python; it must not masquerade as a token count.
+
+    An empty reply with a valid cap is the shape that would otherwise take the
+    runaway branch, so this also pins that a boolean count keeps it out.
+    """
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": True, "completion_tokens": True}),
+        _runaway_backend(max_tokens=4096),
+    )
+    message = str(error)
+    assert "output=True" not in message
+    assert "output=?" in message
+    assert "input=True" not in message
+    assert "input=?" in message
+    assert "without emitting answer" not in message
+
+
+@pytest.mark.parametrize(
+    ("cap", "expected"),
+    [(True, "output capacity"), (-5, "no usable output cap")],
+)
+def test_unusable_caps_do_not_take_the_runaway_branch(cap, expected):
+    """A boolean or negative max_tokens is not a cap, so none of them can be
+    spent: the old truncation paths keep the call."""
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _runaway_backend(max_tokens=cap),
+    )
+    message = str(error)
+    assert expected in message
+    assert "without emitting answer" not in message
+
+
+def test_fractional_usage_counts_are_accounted_as_whole_tokens():
+    """Some providers report counts as JSON numbers with a fraction.
+
+    Admitting floats into the branch while the accounting helpers accept only
+    ints would record zero tokens for a reply that really spent the cap.
+    """
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": 10112.0, "completion_tokens": 65536.0}),
+        _runaway_backend(),
+    )
+    message = str(error)
+    assert "spent 65536 output tokens" in message
+    assert error.observed_usage is not None
+    assert error.observed_usage.output_tokens == 65536
+    assert error.observed_usage.input_tokens == 10112
+    assert {"input_tokens", "output_tokens"} <= error.observed_usage.known_fields
+    assert error.usage is not None
+    assert error.usage.input_tokens == 10112
+    assert error.usage.output_tokens == 65536
+
+
+def test_infinite_usage_counts_do_not_take_the_runaway_branch():
+    """JSON tolerates Infinity; a token count is a whole number.
+
+    The reply keeps the pre-existing capacity path, which renders the wire
+    value as it always has. What matters here is that no runaway is claimed
+    from a count that is not a count.
+    """
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": float("inf"), "completion_tokens": float("inf")}),
+        _runaway_backend(max_tokens=4096),
+    )
+    message = str(error)
+    assert "without emitting answer" not in message
+    assert "output capacity" in message
+
+
+def test_attempt_loop_retries_a_runaway_and_returns_the_next_reply(monkeypatch):
+    """The retry observation, not just the flag: one looped reply then an answer."""
+    monkeypatch.setenv("K", "key")
+    runaway = _mock_body(_length_body("", {"prompt_tokens": 900, "completion_tokens": 4096}))
+    answered = _mock_body(
+        {
+            "choices": [{"message": {"content": '{"review": "ok"}'}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 900, "completion_tokens": 12},
+        }
+    )
+    with patch("urllib.request.urlopen", side_effect=[runaway, answered]) as opened:
+        result = llm_invoke(
+            "p",
+            backend=_runaway_backend(max_tokens=4096),
+            max_attempts=3,
+            initial_delay_s=0,
+        )
+    assert opened.call_count == 2
+    assert result.content == {"review": "ok"}
+
+
+def test_generic_empty_reply_does_not_consume_the_run_breaker(monkeypatch):
+    """kind='empty' is shared with the pre-existing transient-empty path.
+
+    Only the reasoning runaway may count as a cap truncation; an ordinary
+    empty reply must still retry and leave the caller's breaker alone.
+    """
+    from code_forge.llm_invoke import TruncationBreaker
+
+    monkeypatch.setenv("K", "key")
+    empty = _mock_body(
+        {
+            "choices": [{"message": {"content": None}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 0},
+        }
+    )
+    answered = _mock_body(
+        {
+            "choices": [{"message": {"content": '{"ok": 1}'}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+    )
+    breaker = TruncationBreaker(threshold=1)
+    with patch("urllib.request.urlopen", side_effect=[empty, empty, answered]) as opened:
+        result = llm_invoke(
+            "p",
+            backend=_runaway_backend(max_tokens=4096),
+            max_attempts=4,
+            initial_delay_s=0,
+            continuation_breaker=breaker,
+        )
+    assert result.content == {"ok": 1}
+    assert opened.call_count == 3
+    assert breaker.count == 0
+
+
+def test_second_runaway_in_one_call_stops_with_the_diagnosis_intact(monkeypatch):
+    """One retry is worth it; a second loop means this backend always will.
+
+    The capacity breaker is deliberately not involved: it counts provider-cap
+    truncations, and letting a reasoning loop into it would file the run as a
+    capacity problem for every later consumer.
+    """
+    from code_forge.llm_invoke import TruncationBreaker
+
+    monkeypatch.setenv("K", "key")
+    body = _length_body("", {"prompt_tokens": 900, "completion_tokens": 4096})
+    breaker = TruncationBreaker(threshold=1)
+    with patch("urllib.request.urlopen", return_value=_mock_body(body)) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke(
+                "p",
+                backend=_runaway_backend(max_tokens=4096),
+                max_attempts=5,
+                initial_delay_s=0,
+                continuation_breaker=breaker,
+            )
+    error = exc_info.value
+    assert error.kind == "empty"
+    assert error.retryable is False
+    assert "output_ceiling" not in str(error)
+    assert "Lower reasoning_effort" in str(error)
+    assert error.observed_usage is not None
+    assert error.observed_usage.output_tokens == 4096
+    assert opened.call_count == 2
+    assert breaker.count == 0
+
+
+def test_zero_width_only_content_is_not_an_answer():
+    """A reasoning loop can emit zero-width characters and still hold the cap."""
+    error = _runaway_error(
+        _length_body("\u200b\u200b", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert "without emitting answer text" in str(error)
+
+
+def test_missing_input_count_still_names_the_spent_output_tokens():
+    """Only the output count decides the branch; the input count may be absent."""
+    error = _runaway_error(
+        _length_body("", {"completion_tokens": 4096}),
+        _runaway_backend(max_tokens=4096),
+    )
+    message = str(error)
+    assert "spent 4096 output tokens" in message
+    assert "input=?" in message
+
+
+def test_live_probe_classifies_a_reasoning_runaway_as_empty_output():
+    """The doctor's taxonomy must name this shape, not call it unclassified."""
+    from code_forge.backend import _classify_live_failure
+
+    error = LLMInvokeError(
+        "spent 4096 output tokens without emitting answer text",
+        kind="empty",
+        exit_code=0,
+    )
+    name, suggestion = _classify_live_failure(error)
+    assert name == "empty-output"
+    assert "reasoning_effort" in suggestion
+
+
+def test_zero_width_next_to_real_text_is_still_an_answer():
+    """Only a reply without visible characters is a runaway.
+
+    A zero-width joiner in front of real text must not be stripped into the
+    runaway branch: this reply has content, so it takes the truncation path.
+    """
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    with patch(
+        "urllib.request.urlopen",
+        return_value=_mock_body(
+            _length_body("\u200b partial", {"prompt_tokens": 900, "completion_tokens": 4096})
+        ),
+    ):
+        with pytest.raises(LLMInvokeError) as exc_info:
+            _invoke_openai("p", _runaway_backend(max_tokens=4096), api_key="k", timeout_s=10)
+    assert isinstance(exc_info.value, _TruncatedResponse)
+    assert "without emitting answer" not in str(exc_info.value)

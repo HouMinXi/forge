@@ -193,10 +193,12 @@ class TruncationBreakerError(LLMInvokeError):
     def __init__(self, count, threshold):
         super().__init__(
             "backend hit %d truncations (>=%d) this run; review output "
-            "keeps hitting the provider cap, which the backend may "
-            "already clamp below the configured ceiling. Raise "
-            "output_ceiling only if the configured cap is the limit; "
-            "otherwise switch backends." % (count, threshold),
+            "keeps reaching its length limit -- either the provider cap, or "
+            "the budget a reasoning loop burns before writing an answer. "
+            "Raise output_ceiling only if the configured cap is the limit; "
+            "if replies come back empty after spending the budget on "
+            "reasoning, lower reasoning_effort or thinking_budget instead."
+            % (count, threshold),
             kind="truncated",
             retryable=False,
         )
@@ -291,6 +293,50 @@ def _observed_usage(usage_data: dict, api_format: str) -> Usage:
         *(value if known else 0 for value, known in zip(counts, valid, strict=True)),
         known_fields=frozenset(name for name, known in zip(_USAGE_FIELDS, valid, strict=True) if known),
     )
+
+
+def _whole_token_count(value):
+    """A provider token count as a whole number, or None when it is not one.
+
+    Fractional and non-finite JSON numbers still satisfy isinstance(...,
+    (int, float)), but the accounting helpers accept only ints: passing
+    65536.0 through would record a known zero for tokens that were really
+    spent. The message keeps the wire value; the books need a whole number.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        return int(value)
+    return value
+
+
+_ZERO_WIDTH_CHARS = "\u200b\u200c\u200d\u2060\ufeff"
+
+
+def _has_answer_text(content) -> bool:
+    """True when the reply carries something a reader could see.
+
+    Whitespace alone is not an answer, and neither is a run of zero-width
+    characters: a reasoning loop can emit those and still hold the cap. A
+    non-string delta never counts as text either.
+    """
+    if not isinstance(content, str):
+        return False
+    return bool(content.strip().strip(_ZERO_WIDTH_CHARS).strip())
+
+
+def _whole_usage_counts(usage_data: dict) -> dict:
+    """Copy a usage dict with whole token counts the accounting helpers accept."""
+    if not isinstance(usage_data, dict):
+        return {}
+    normalized = dict(usage_data)
+    for key in ("prompt_tokens", "completion_tokens", "input_tokens", "output_tokens"):
+        whole = _whole_token_count(normalized.get(key))
+        if whole is not None:
+            normalized[key] = whole
+    return normalized
 
 
 def _response_error_usage(usage_data: dict, api_format: str) -> Usage | None:
@@ -1011,7 +1057,9 @@ def _assemble_sse(response, deadline=None, backend_name="", *, _on_done=None, po
             delta = choice.get("delta", {})
             if isinstance(delta.get("refusal"), str) and delta["refusal"]:
                 refusal_seen = True
-            if delta.get("content"):
+            # OpenAI's content delta is a string; a truthy non-string would
+            # crash the join that assembles the reply.
+            if isinstance(delta.get("content"), str) and delta["content"]:
                 if not first_emitted:
                     first_emitted = True
                     progress.emit("backend %s: first token" % backend_name)
@@ -4321,6 +4369,7 @@ def _invoke_api(
     # Inner try catches TimeoutError (socket.timeout alias on Python 3.12+).
     # Outer except catches LLMInvokeError from both the format dispatch and
     # the converted TimeoutError, applying retry logic.
+    runaway_attempts = 0
     for attempt in range(max_attempts):
         # Fail fast before any network call once the run-level breaker
         # has tripped: further passes would only repeat the same
@@ -4373,10 +4422,12 @@ def _invoke_api(
                 # three extraction sites converge here, inside the retry
                 # loop, so one check covers them and a transient empty
                 # response gets retried instead of ending the run.  A capped
-                # response never reaches this point: each per-format helper
-                # detects its own truncation signal and raises before it
-                # returns, so finish_reason=length still surfaces with the
-                # advice to raise output_ceiling.  Cost of retrying: a
+                # response that carries text never reaches this point: each
+                # per-format helper raises on its own truncation signal.  A
+                # capped reply with no text at all does raise earlier too --
+                # as a runaway when the whole budget went to reasoning, or as
+                # the capacity errors when nothing was spent.  Cost of
+                # retrying: a
                 # backend that returns null on every call resubmits the
                 # whole prompt max_attempts times before failing.  That is
                 # the price of recovering the intermittent case, which is
@@ -4616,6 +4667,26 @@ def _invoke_api(
                     # and the reason each failed.
                     raise spent_error from None
             cause = _retry_cause(exc, audited=_audit_scope is not None)
+            # One fresh reply after a reasoning loop is worth its cost: the
+            # same prompt that looped once answered on the next call. A second
+            # one in the same call is not -- that backend is going to burn a
+            # full output budget every time. The run-level breaker is left
+            # alone: it counts provider-cap truncations, and a reasoning loop
+            # is a different failure whose class must not become capacity.
+            if isinstance(exc, LLMInvokeError) and getattr(exc, "reasoning_runaway", False):
+                runaway_attempts += 1
+                if runaway_attempts >= 2:
+                    raise LLMInvokeError(
+                        "%s No further attempt: %d replies in this call spent "
+                        "their whole output budget on reasoning without writing "
+                        "an answer." % (exc, runaway_attempts),
+                        exit_code=exc.exit_code,
+                        duration_s=exc.duration_s,
+                        kind=exc.kind,
+                        retryable=False,
+                        usage=exc.usage,
+                        observed_usage=exc.observed_usage,
+                    ) from None
             if not exc.retryable or attempt == max_attempts - 1:
                 if attempt > 0 or (exc.retryable and max_attempts == 1):
                     _emit_retry_failed(backend.name, max_attempts, cause)
@@ -4913,11 +4984,68 @@ def _invoke_openai_impl(
     # Truncation detection: openai format uses finish_reason == "length"
     # when the response hit max_tokens / max_completion_tokens.  Same
     # pattern as the anthropic path (stop_reason == "max_tokens") and
-    # the sampling path (stopReason == "maxTokens") -- all three raise
-    # kind="truncated" so callers route them uniformly.
+    # the sampling path (stopReason == "maxTokens") -- the capacity
+    # shapes raise kind="truncated" so callers route them uniformly.
+    # The one exception is the runaway below: a reply that spent its
+    # whole budget without writing anything is kind="empty", because
+    # the truncated class is what callers fold into a capacity problem.
     if finish == "length":
-        in_tok = usage_data.get("prompt_tokens", "?")
-        out_tok = usage_data.get("completion_tokens", "?")
+        # usage is provider-controlled: a non-number (or a JSON boolean, which
+        # is an int in Python) would put arbitrary text into a message. Floats
+        # stay: some providers report counts as JSON numbers with a fraction.
+        in_raw = usage_data.get("prompt_tokens")
+        in_tok = in_raw if isinstance(in_raw, (int, float)) and not isinstance(in_raw, bool) else "?"
+        out_raw = usage_data.get("completion_tokens")
+        out_tok = out_raw if isinstance(out_raw, (int, float)) and not isinstance(out_raw, bool) else "?"
+        whole_usage = _whole_usage_counts(usage_data)
+        spent_in = _whole_token_count(usage_data.get("prompt_tokens"))
+        spent_out = _whole_token_count(usage_data.get("completion_tokens"))
+        chars = len(content) if isinstance(content, str) else 0
+        if (
+            not _has_answer_text(content)
+            and isinstance(resolved_cap, int)
+            and not isinstance(resolved_cap, bool)
+            and resolved_cap > 0
+            and spent_out is not None
+            and spent_out > 0
+        ):
+            # Every token of the cap went to reasoning and no answer text came
+            # back. A larger cap buys more thinking, not an answer, so the
+            # "raise output_ceiling" advice would be wrong here. This is a
+            # plain error, not a _TruncatedResponse: the continuation path
+            # needs a partial object and there is none, while retryable lets
+            # the attempt loop draw a fresh reply -- the same prompt that
+            # looped once answers on the next call. Zero output tokens stays
+            # out of this branch: nothing was spent, so there is no runaway.
+            #
+            # kind is "empty" (a response that carried no usable text): the
+            # "truncated" class is what the host folds into a provider-capacity
+            # diagnosis, and this failure is precisely the case where raising
+            # the cap does not help.
+            runaway = LLMInvokeError(
+                "%s backend spent %s output tokens without emitting answer text "
+                "(finish_reason=length, input=%s, output=%s, cap=%s, chars=%d). "
+                "Lower reasoning_effort or thinking_budget on this backend; "
+                "raising the cap only buys more reasoning."
+                % (
+                    backend.name,
+                    spent_out,
+                    spent_in if spent_in is not None else "?",
+                    spent_out,
+                    resolved_cap,
+                    chars,
+                ),
+                exit_code=0,
+                kind="empty",
+                retryable=True,
+                usage=_response_error_usage(whole_usage, backend.format),
+                observed_usage=_observed_usage(whole_usage, backend.format),
+            )
+            # Marks this event for the retry loop, which allows one fresh
+            # reply and then stops. kind="empty" is shared with the
+            # pre-existing transient-empty path, which must not be capped.
+            runaway.reasoning_runaway = True
+            raise runaway
         # Name the limit that actually truncated, not the one in the
         # config. When output landed below the configured ceiling the
         # backend clamped on its own (a hard model/plan cap), so
