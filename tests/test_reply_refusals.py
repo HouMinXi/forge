@@ -21,6 +21,7 @@ from code_forge.llm_invoke import (
     ReplyKeyRejected,
     _extract_json_from_text,
     _loads_model_json,
+    _unknown_reply_key,
     llm_invoke,
     loads_reply_json,
 )
@@ -411,6 +412,27 @@ def test_excerpt_aliases_are_reply_keys():
     parsed = _loads_model_json(text, REVIEW_REPLY_KEYS)
     assert parsed["findings"][0]["description"] == 'uses "x" here'
     assert parsed["code_excerpts"][0]["code"] == "x"
+
+
+def test_a_finding_spelling_is_an_unknown_excerpt_key():
+    """The repair whitelist never learns the finding-only spellings."""
+    reply = {
+        "findings": [],
+        "code_excerpts": [{"file": "a.py", "start_line": 1, "end_line": 1, "content": "x", "line": 1}],
+    }
+    assert _unknown_reply_key(reply, REVIEW_REPLY_KEYS) == "line"
+    reply["code_excerpts"] = [{"file": "a.py", "start_line": 1, "end_line": 1, "excerpt": "x"}]
+    assert _unknown_reply_key(reply, REVIEW_REPLY_KEYS) == "excerpt"
+
+
+def test_repaired_excerpt_carrying_a_finding_spelling_is_refused():
+    """A repair that mangles a quote must not yield a legal-looking excerpt."""
+    text = (
+        '{"findings": [], "code_excerpts": [{"file": "a.py", "start_line": 1, '
+        '"end_line": 1, "content": "split("X", 1) tail", "excerpt": "d"}]}'
+    )
+    with pytest.raises(ReplyKeyRejected):
+        _loads_model_json(text, REVIEW_REPLY_KEYS)
 
 
 def test_review_reply_top_keys_are_pinned():
