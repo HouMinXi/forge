@@ -455,10 +455,8 @@ class HostAuditSession:
         self._ensure_io()
         if threading.current_thread() is self._io._worker:
             raise _Unavailable()
-        start = time.monotonic()
         caller_deadline = deadline
-        deadline = self._deadline(deadline)
-        window = max(0.0, deadline - start)
+        window = 0.0
         outcome = None
         # Replaying a provably unexecuted ticket cannot apply work twice. A
         # replay may renew the per-control window only within the original
@@ -469,9 +467,19 @@ class HostAuditSession:
                 if grace <= 0.0:
                     raise _Unavailable()
                 deadline = self._deadline(min(caller_deadline, deadline + grace))
-                if time.monotonic() >= deadline:
-                    raise _Unavailable()
             with self._lock:
+                if attempt:
+                    # Waiting for the lock spends the renewal as well. A ticket
+                    # created from a lapsed renewal can only expire, and the
+                    # host reports that as an unavailable service.
+                    if time.monotonic() >= deadline:
+                        raise _Unavailable()
+                else:
+                    # The window starts where the control is admitted: waiting
+                    # for the host lock must not spend it, or the ticket arrives
+                    # already expired and reads as an unavailable host.
+                    deadline = self._deadline(caller_deadline)
+                    window = max(0.0, deadline - time.monotonic())
                 # Replay admission and accounting share one lifecycle boundary.
                 # A close/disable/finalize during re-arming must not slip between
                 # the check and registration. Already registered work remains

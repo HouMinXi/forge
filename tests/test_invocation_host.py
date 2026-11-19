@@ -1602,6 +1602,61 @@ def test_ensure_open_stays_inside_the_callers_deadline(setup, monkeypatch):
     assert max(deadline for _, deadline in submitted) <= caller_deadline + 0.001
 
 
+def test_a_contended_host_lock_does_not_spend_the_control_window(setup, monkeypatch):
+    """Exercise _request admission directly, without scheduler or worker timing."""
+    make, supervisor = setup
+    host, _ = make(control_timeout_s=0.08)
+    clock = [100.0]
+    real_lock = host._lock
+    admissions = []
+
+    class AdmissionLock:
+        delay = 0.0
+
+        def __enter__(self):
+            real_lock.acquire()
+            clock[0] += self.delay
+            self.delay = 0.0
+            return self
+
+        def __exit__(self, *exc):
+            real_lock.release()
+
+    lock = AdmissionLock()
+    monkeypatch.setattr(host, "_lock", lock)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    def submit(target, phase, *, deadline):
+        admissions.append((phase, clock[0], deadline))
+        return object()
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", lambda _: invocation_io.IoOutcome("ack", value=True))
+    # Every independent control starts its window at admission. The two narrow
+    # budgets separately prove that neither caller nor job caps are extended.
+    for phase in (invocation_io.AuditPhase.OPEN, invocation_io.AuditPhase.FINALIZE):
+        for caller_budget, job_budget, expected_budget in (
+            (1.0, None, 0.08),
+            (0.23, None, 0.03),
+            (1.0, 0.24, 0.04),
+        ):
+            clock[0] = 100.0
+            host._job_deadline = None if job_budget is None else 100.0 + job_budget
+            lock.delay = 0.2
+            before = len(admissions)
+            assert host._request(phase, "unused", None, 100.0 + caller_budget) is True
+            assert len(admissions) == before + 1
+            admitted_phase, admitted_at, deadline = admissions[-1]
+            assert admitted_phase is phase
+            assert admitted_at == pytest.approx(100.2)
+            assert deadline == pytest.approx(admitted_at + expected_budget)
+            assert deadline <= 100.0 + caller_budget
+            if host._job_deadline is not None:
+                assert deadline <= host._job_deadline
+            assert not host._commands and host._control_bytes == 0
+    host._job_deadline = None
+
+
 @pytest.mark.parametrize("phase", [invocation_io.AuditPhase.OPEN, invocation_io.AuditPhase.FINALIZE])
 @pytest.mark.parametrize("late_ack", [False, True])
 def test_replay_cannot_extend_explicit_caller_deadline(setup, monkeypatch, phase, late_ack):
@@ -1973,3 +2028,44 @@ def test_a_signal_right_after_arming_the_drain_does_not_wedge_the_outlet():
     source = Path(invocation_stream.__file__).read_text(encoding="utf-8")
     emit = source[source.index("    def emit(self, code):") : source.index("class WireCapture:")]
     assert emit.index("        try:\n") < emit.index("            with self._lock:")
+
+
+def test_a_contended_rearm_refuses_a_replay_instead_of_submitting_it_expired(setup, monkeypatch):
+    """A renewal the lock wait has spent must be refused, not submitted."""
+    make, supervisor = setup
+    host, _ = make(control_timeout_s=0.08)
+    clock = [100.0]
+    real_lock = host._lock
+    admissions = []
+
+    class AdmissionLock:
+        delay = 0.0
+
+        def __enter__(self):
+            real_lock.acquire()
+            clock[0] += self.delay
+            self.delay = 0.0
+            return self
+
+        def __exit__(self, *exc):
+            real_lock.release()
+
+    lock = AdmissionLock()
+    monkeypatch.setattr(host, "_lock", lock)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    def submit(target, phase, *, deadline):
+        admissions.append(deadline)
+        return object()
+
+    def wait(_ticket):
+        # The first control provably never ran, and the re-arm is contended.
+        lock.delay = 0.2
+        return invocation_io.IoOutcome("expired", value=None, not_executed=True)
+
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", wait)
+
+    with pytest.raises(module._Unavailable):
+        host._request(invocation_io.AuditPhase.OPEN, "unused", None, 101.0)
+    assert admissions == [pytest.approx(100.08)], admissions
