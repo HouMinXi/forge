@@ -1603,51 +1603,58 @@ def test_ensure_open_stays_inside_the_callers_deadline(setup, monkeypatch):
 
 
 def test_a_contended_host_lock_does_not_spend_the_control_window(setup, monkeypatch):
-    """The window belongs to the control, not to the wait for the host lock."""
+    """Exercise _request admission directly, without scheduler or worker timing."""
     make, supervisor = setup
     host, _ = make(control_timeout_s=0.08)
-    executed = []
+    clock = [100.0]
+    real_lock = host._lock
+    admissions = []
 
-    def execute(command, args, deadline):
-        executed.append((deadline, time.monotonic()))
-        return True
+    class AdmissionLock:
+        delay = 0.0
 
-    monkeypatch.setattr(host, "_execute", execute)
-    outcomes = []
-    original_wait = supervisor.wait
+        def __enter__(self):
+            real_lock.acquire()
+            clock[0] += self.delay
+            self.delay = 0.0
+            return self
 
-    def wait(ticket):
-        outcome = original_wait(ticket)
-        outcomes.append(outcome.state)
-        return outcome
+        def __exit__(self, *exc):
+            real_lock.release()
 
-    monkeypatch.setattr(supervisor, "wait", wait)
-    entered = threading.Event()
-    release = threading.Event()
+    lock = AdmissionLock()
+    monkeypatch.setattr(host, "_lock", lock)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
 
-    def hold():
-        host._lock.acquire()
-        try:
-            entered.set()
-            assert release.wait(5.0)
-        finally:
-            host._lock.release()
+    def submit(target, phase, *, deadline):
+        admissions.append((phase, clock[0], deadline))
+        return object()
 
-    holder = threading.Thread(target=hold)
-    holder.start()
-    assert entered.wait(2.0)
-    timer = threading.Timer(0.2, release.set)
-    timer.start()
-    try:
-        host._ensure_open(time.monotonic() + 5.0)
-    finally:
-        release.set()
-        timer.cancel()
-        holder.join(2.0)
-    assert outcomes and set(outcomes) == {"ack"}, outcomes
-    assert len(executed) == len(outcomes), "every admitted control must run once"
-    for deadline, ran_at in executed:
-        assert deadline > ran_at
+    monkeypatch.setattr(supervisor, "submit", submit)
+    monkeypatch.setattr(supervisor, "wait", lambda _: invocation_io.IoOutcome("ack", value=True))
+    # Every independent control starts its window at admission. The two narrow
+    # budgets separately prove that neither caller nor job caps are extended.
+    for phase in (invocation_io.AuditPhase.OPEN, invocation_io.AuditPhase.FINALIZE):
+        for caller_budget, job_budget, expected_budget in (
+            (1.0, None, 0.08),
+            (0.23, None, 0.03),
+            (1.0, 0.24, 0.04),
+        ):
+            clock[0] = 100.0
+            host._job_deadline = None if job_budget is None else 100.0 + job_budget
+            lock.delay = 0.2
+            before = len(admissions)
+            assert host._request(phase, "unused", None, 100.0 + caller_budget) is True
+            assert len(admissions) == before + 1
+            admitted_phase, admitted_at, deadline = admissions[-1]
+            assert admitted_phase is phase
+            assert admitted_at == pytest.approx(100.2)
+            assert deadline == pytest.approx(admitted_at + expected_budget)
+            assert deadline <= 100.0 + caller_budget
+            if host._job_deadline is not None:
+                assert deadline <= host._job_deadline
+            assert not host._commands and host._control_bytes == 0
+    host._job_deadline = None
 
 
 @pytest.mark.parametrize("phase", [invocation_io.AuditPhase.OPEN, invocation_io.AuditPhase.FINALIZE])
