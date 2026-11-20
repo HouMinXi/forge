@@ -2,6 +2,37 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-20 #441 limited G13 recognition
+
+**Maintainer decision (2026-11-20 UTC):** Accept #441 within the existing
+limited scope, covering only the diagnostic behavior supported by the
+recorded evidence. This decision resolves the pending decision only within
+that scope, not the broader obligations in the historical inventory.
+
+- **Reviewed delivery:** [#541](https://github.com/HouMinXi/forge/pull/541)
+  at `9ed42a4be978df94e5afc2905bff3cfbf8d5743c`, with independent
+  applicability review bound to the [tested merge
+  `d36b3c1a04b5fc52bd3395ee70c2ac5b4d6e3e3c`](https://github.com/HouMinXi/forge/commit/d36b3c1a04b5fc52bd3395ee70c2ac5b4d6e3e3c)
+  against main `f4b9aabbe977df17268392a1e8a21d5b9334cefb`.
+  The prior approved document blob was unchanged by the sync; the reviewed
+  diff against that main added only this acceptance document's supplement.
+  [Linux](https://github.com/HouMinXi/forge/actions/runs/44697828722),
+  [wheel](https://github.com/HouMinXi/forge/actions/runs/44697828737),
+  [lint](https://github.com/HouMinXi/forge/actions/runs/44697828800), and
+  [CodeQL](https://github.com/HouMinXi/forge/actions/runs/44697828734) passed
+  for that delivery revision, not for this subsequent decision record.
+- **Evidence boundary:** The provider-enabled three-repository controls and
+  the 32-module regression below remain evidence on the recorded Python
+  3.12 revision only. The reviewed hosted Linux receipts show collection
+  skips for both provider-impact test modules. They do not qualify that
+  provider path on Python 3.14.
+- **Unchanged limits:** Storage eligibility is not runtime qualification for
+  the complete storage domain. T19 leak freedom on a real failed `close()`
+  remains unverified. Equivalence to the original 78 tests remains unknown.
+  This decision adds no runtime or historical G0/G1 credit, does not
+  complete the broader G12 obligations, and does not merge #541 or close
+  #441 or #33.
+
 ## 2026-11-19 #441 evidence and limited G12 decision
 
 **Owner decision (2026-11-20 UTC):** Accept the regression and controls
