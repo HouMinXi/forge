@@ -2,6 +2,132 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-20 #441 limited G13 recognition
+
+**Maintainer decision (2026-11-20 UTC):** Accept #441 within the existing
+limited scope, covering only the diagnostic behavior supported by the
+recorded evidence. This decision resolves the pending decision only within
+that scope, not the broader obligations in the historical inventory.
+
+- **Reviewed delivery:** [#541](https://github.com/HouMinXi/forge/pull/541)
+  at `9ed42a4be978df94e5afc2905bff3cfbf8d5743c`, with independent
+  applicability review bound to the [tested merge
+  `d36b3c1a04b5fc52bd3395ee70c2ac5b4d6e3e3c`](https://github.com/HouMinXi/forge/commit/d36b3c1a04b5fc52bd3395ee70c2ac5b4d6e3e3c)
+  against main `f4b9aabbe977df17268392a1e8a21d5b9334cefb`.
+  The prior approved document blob was unchanged by the sync; the reviewed
+  diff against that main added only this acceptance document's supplement.
+  [Linux](https://github.com/HouMinXi/forge/actions/runs/44697828722),
+  [wheel](https://github.com/HouMinXi/forge/actions/runs/44697828737),
+  [lint](https://github.com/HouMinXi/forge/actions/runs/44697828800), and
+  [CodeQL](https://github.com/HouMinXi/forge/actions/runs/44697828734) passed
+  for that delivery revision, not for this subsequent decision record.
+- **Evidence boundary:** The provider-enabled three-repository controls and
+  the 32-module regression below remain evidence on the recorded Python
+  3.12 revision only. The reviewed hosted Linux receipts show collection
+  skips for both provider-impact test modules. They do not qualify that
+  provider path on Python 3.14.
+- **Unchanged limits:** Storage eligibility is not runtime qualification for
+  the complete storage domain. T19 leak freedom on a real failed `close()`
+  remains unverified. Equivalence to the original 78 tests remains unknown.
+  This decision adds no runtime or historical G0/G1 credit, does not
+  complete the broader G12 obligations, and does not merge #541 or close
+  #441 or #33.
+
+## 2026-11-19 #441 evidence and limited G12 decision
+
+**Owner decision (2026-11-20 UTC):** Accept the regression and controls
+pinned below to `a72dc5a990194494c875fac7b783436b30ed272d` as additional
+limited evidence for G12. The owner confirmed this scope in the Forge project
+chat. The earlier bounded G12 decision remains attached to its original evidence.
+
+- **Fixed local source:** [`a72dc5a990194494c875fac7b783436b30ed272d`](https://github.com/HouMinXi/forge/commit/a72dc5a990194494c875fac7b783436b30ed272d),
+  tree `414358023ac07e412cfd413116d2c32da4eada91`. A Git archive of the fixed
+  commit was used; all 1,598 tracked blobs, including symlink contents, were
+  verified after running. No separate pre-run byte scan was recorded.
+- **Selected local regression:** 32 unmodified modules, **1,392 passed** on
+  CPython 3.12.14, SQLite 3.53.1, pytest 9.2.0, pytest-asyncio 1.5.0,
+  code-review-graph 2.4.0, MCP SDK 1.30.0 and Ruff 0.17.4. Two empty-diff
+  controls stopped at toolchain detection on the initial run without Ruff.
+  After adding the pinned Ruff to the test environment, both passed
+  individually and in the full selected rerun without tracked input edits.
+  This is not Python 3.14 qualification or a reattribution of prior runs.
+- **Parent #33 direct callers:** real provider build and registration for
+  synthetic repositories, followed by the real runner. At 2/2 registered
+  siblings completed, only the direct caller was returned. Removing the
+  indirect sibling graph retained that result at 1/2; removing the sole
+  direct sibling graph instead returned no findings at 1/2, explicitly
+  reporting one unavailable in both cases. Restoration recovered 2/2 and
+  the direct caller. No graph-freshness or coverage outside the registered
+  scope is established.
+- **Separate delivery controls:** six CLI/direct-host and four MCP-handler
+  fixture controls verified visible partial scope and unchanged verdict and
+  receipt behavior. They did not exercise a single provider-to-CLI chain or
+  the full MCP wire protocol. The independent reviewer consumed these records
+  and assertions; this does not claim an independent re-execution.
+- **Separate hosted checks:** [Linux](https://github.com/HouMinXi/forge/actions/runs/44515651203),
+  [wheel](https://github.com/HouMinXi/forge/actions/runs/44515651290),
+  [lint](https://github.com/HouMinXi/forge/actions/runs/44515651138) and
+  [CodeQL](https://github.com/HouMinXi/forge/actions/runs/44515651256)
+  passed for the earlier #541 head `6308f6ae855feb81912dede47f2edd569c634b74`.
+  The Linux checkout was synthetic merge
+  `a40c5dc1b95225ae43155ca4804b27d86a994641` into the fixed main above.
+  None of those checks ran this documentation supplement.
+
+**Exit boundary:** This decision does not complete G12 or grant G13. It does
+not qualify Python 3.14. Original 78-test equivalence remains unknown; a real failed
+`close()` with no leak remains unverified under T19. Preserve existing storage
+eligibility versus runtime qualification, and do not extend the support domain.
+G13 requires final independent review of the applicable product, test and
+document revisions and explicit maintainer acceptance. Neither issue closes;
+no G/T checkbox changes.
+
+## 2026-11-18 #529 current-run handoff static applicability
+
+Independent full-blob comparison found the following thirteen paths identical at
+`5d524df377244d172f69c90c61877f9810d79337` (existing Linux run 44136528519),
+`d1b1c7ac085e438c3da2f0ac537a02ce683d3afb` (recorded independent static review)
+and checked main `15d19f955d468dc626a4f609539027d61e333997`:
+
+- `src/code_forge/cli.py`: `c0a1ee2348d93c7115355a415d190f9a64e128a9`.
+- `src/code_forge/cross_repo.py`: `6d03d54e0e390ba4afbe2fda2db698bd1bc218ca`.
+- `src/code_forge/_diagnostic_completion.py`: `56ee88497a4b046fdb835ddc5ca02e442c8f532c`.
+- `src/code_forge/_cross_repo_diagnostics.py`: `ca1aa1be4f3a49299ad73b1cacf715b5d73882b2`.
+- `src/code_forge/_advisory_diagnostics.py`: `832097fa0887cfe42310b579f45d91020c0e2d93`.
+- `src/code_forge/_local_filesystems.py`: `85029f10e17593f64a1c33cbf0a44e204d198690`.
+- `src/code_forge/_diagnostic_history.py`: `17b8664e191068dacb7a139612edddc785514d72`.
+- `tests/test_diagnostic_completion.py`: `42d33c3e2a5f48db2912bbc1a17ba82bc11ec132`.
+- `tests/test_diagnostic_history_host.py`: `ca11beba547944781c6096007a0d9b8d4efd1162`.
+- `tests/test_cross_repo_persistent_diagnostic.py`: `cbbc1678afd996e183f003fbfb82e9fddcb2f3fa`.
+- `tests/test_advisory_diagnostics.py`: `162927b2bf277ce2b39495762dfc66581023706a`.
+- `tests/test_local_filesystems.py`: `f88f94efc9ad7a1c347099fe1f45eae63fa659fe`.
+- `docs/diagnostic-cli-handoff.md`: `bc1edbc67f47f3c0eba539257964fe17ee52bbd0`.
+
+This binds the already recorded #529 CLI/host handoff review, shared reader/storage
+source, selected tests/fixture and handoff contract to this main as static evidence.
+There is no `src/` diff from `5d524df` to this main. The selected 40-node execution
+consumed from Linux run 44136528519 remains at `5d524df`; the older independent
+source/execution record and limited owner acceptance at
+`d8810a212c79c62f6bce9c1b7e404e33696be8f1` retain their original attribution.
+This comparison neither reconsumes their raw receipts nor reruns those tests.
+
+Ruff/dependency declarations, installed-wheel tooling, the public identity manifest
+and other test/document files changed outside this set. Blob identity is not
+whole-tree or environment identity, and cancelled Linux run 44362931223 at
+`15d19f955d468dc626a4f609539027d61e333997` receives no pass credit here.
+The controlled fixture still supplies diff, other axes and `_run_ci`; it does not
+qualify the natural full CLI chain, installed wheel or all SDK/provider paths.
+Publication, capture-close attempt, sealing/event/join, caller strict reread and
+notice delivery remain distinct; no real-close-failure leak-freedom or complete
+storage-domain/G12/G13 qualification follows. Shared obligations stay with #441.
+The existing limited #529 owner acceptance is reused, not replaced by a new
+acceptance or exit decision. No support expansion or issue-state change follows.
+
+**2026-11-19 static refresh:** the same thirteen blobs also match merged main
+`a72dc5a990194494c875fac7b783436b30ed272d`. The no-`src/`-diff statement
+above is specific to the earlier comparison with `15d19f9`; later main
+changes files outside the listed set. The 40-node run remains attributed
+to `5d524df`; no execution credit is transferred by this refresh.
+
 ## 2026-11-18 #526 scope-live applicability at merged main
 
 Independent full-blob comparison binds the existing live registry-occurrence/counts
