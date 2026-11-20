@@ -245,6 +245,69 @@ def _make_snapshot_restore(cwd: Path, resolved: ResolvedReview) -> Callable[[Sta
     return _revert
 
 
+@dataclass(frozen=True)
+class _MissingMutmutRunner:
+    """Report mutation availability when the factory cannot find mutmut."""
+
+    cwd: Path | None
+
+    def __call__(
+        self,
+        diff_files: list[str],
+        baseline_cmd: list[str],
+        *,
+        baseline_timeout: int = 120,
+        timeout: int = 600,
+        also_copy: list[str] | None = None,
+        max_children: int | None = None,
+        memory_limit_bytes: int | None = None,
+    ) -> tuple[list[StateFinding], list[str]]:
+        if not diff_files:
+            return ([], [])
+
+        from .mutation_dispatch import group_by_adapter, other_adapter_note
+
+        grouped = group_by_adapter(diff_files)
+        py_files = grouped.get("python-mutmut", [])
+        other = [key for key in grouped if key and key != "python-mutmut"]
+        if not py_files:
+            if other:
+                fingerprint = "mutation-other-adapter"
+                file = diff_files[0]
+                description = other_adapter_note(diff_files, root=self.cwd or Path.cwd())
+            else:
+                fingerprint = "mutation-no-adapter"
+                file = ""
+                description = "no registered mutation adapter for this diff"
+            return (
+                [
+                    StateFinding(
+                        id="MUTATION_SKIPPED",
+                        fingerprint=fingerprint,
+                        source="MUTANT",
+                        disposition=Disposition.DISMISSED,
+                        file=file,
+                        line_range=[],
+                        description=description,
+                    )
+                ],
+                [],
+            )
+        findings = [
+            StateFinding(
+                id="MUTATION_SKIPPED",
+                fingerprint="mutation-unavailable",
+                source="MUTANT",
+                disposition=Disposition.CONFIRMED,
+                file="",
+                line_range=[],
+                description="mutmut not installed, mutation measurement unavailable",
+            )
+        ]
+        infra_errors = ["mutmut not found on PATH"]
+        return (findings, infra_errors)
+
+
 def build_l2_runner(*, cwd: Path | None = None) -> Callable:
     """Build l2_runner (mutation testing) callable.
 
@@ -253,58 +316,14 @@ def build_l2_runner(*, cwd: Path | None = None) -> Callable:
          timeout=600, also_copy=None, max_children=None, memory_limit_bytes=None)
         -> tuple[list[StateFinding], list[str]]
 
-    If mutmut is not on PATH, returns a no-op callable that produces
-    a single MUTATION_SKIPPED finding (soft dependency).
+    If mutmut is not on PATH, returns a callable that reports adapter skips
+    or unavailable Python mutation.
 
     The returned callable delegates to run_mutation from the mutation
     module when mutmut is available.
     """
     if shutil.which("mutmut") is None:
-        from .mutation_dispatch import group_by_adapter, other_adapter_note
-
-        def _no_mutation(
-            diff_files: list[str],
-            baseline_cmd: list[str],
-            *,
-            baseline_timeout: int = 120,
-            timeout: int = 600,
-            also_copy: list[str] | None = None,
-            max_children: int | None = None,
-            memory_limit_bytes: int | None = None,
-        ) -> tuple[list[StateFinding], list[str]]:
-            grouped = group_by_adapter(diff_files)
-            py_files = grouped.get("python-mutmut", [])
-            other = [key for key in grouped if key and key != "python-mutmut"]
-            if not py_files and other:
-                return (
-                    [
-                        StateFinding(
-                            id="MUTATION_SKIPPED",
-                            fingerprint="mutation-other-adapter",
-                            source="MUTANT",
-                            disposition=Disposition.DISMISSED,
-                            file=diff_files[0] if diff_files else "",
-                            line_range=[],
-                            description=other_adapter_note(diff_files, root=cwd or Path.cwd()),
-                        )
-                    ],
-                    [],
-                )
-            findings = [
-                StateFinding(
-                    id="MUTATION_SKIPPED",
-                    fingerprint="mutation-unavailable",
-                    source="MUTANT",
-                    disposition=Disposition.CONFIRMED,
-                    file="",
-                    line_range=[],
-                    description="mutmut not installed, mutation measurement unavailable",
-                )
-            ]
-            infra_errors = ["mutmut not found on PATH"]
-            return (findings, infra_errors)
-
-        return _no_mutation
+        return _MissingMutmutRunner(cwd)
 
     # mutmut is available, delegate to run_mutation
     return run_mutation if cwd is None else partial(run_mutation, cwd=cwd)
