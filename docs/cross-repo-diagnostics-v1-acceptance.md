@@ -2,10 +2,12 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
-## 2026-11-19 #441 limited G12 evidence candidate
+## 2026-11-19 #441 evidence and limited G12 decision
 
-This supplement records evidence for review, not a new owner decision. The
-earlier bounded G12 decision remains attached to its original evidence.
+**Owner decision (2026-11-20 UTC):** Accept the regression and controls
+pinned below to `a72dc5a990194494c875fac7b783436b30ed272d` as additional
+limited evidence for G12. The owner confirmed this scope in the Forge project
+chat. The earlier bounded G12 decision remains attached to its original evidence.
 
 - **Fixed local source:** [`a72dc5a990194494c875fac7b783436b30ed272d`](https://github.com/HouMinXi/forge/commit/a72dc5a990194494c875fac7b783436b30ed272d),
   tree `414358023ac07e412cfd413116d2c32da4eada91`. A Git archive of the fixed
@@ -40,8 +42,8 @@ earlier bounded G12 decision remains attached to its original evidence.
   `a40c5dc1b95225ae43155ca4804b27d86a994641` into the fixed main above.
   None of those checks ran this documentation supplement.
 
-**Exit boundary:** Acceptance of this run as additional limited G12 evidence
-is pending. Original 78-test equivalence remains unknown; a real failed
+**Exit boundary:** This decision does not complete G12 or grant G13. It does
+not qualify Python 3.14. Original 78-test equivalence remains unknown; a real failed
 `close()` with no leak remains unverified under T19. Preserve existing storage
 eligibility versus runtime qualification, and do not extend the support domain.
 G13 requires final independent review of the applicable product, test and
