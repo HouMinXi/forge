@@ -160,6 +160,7 @@ class PatchCorpusAdapter:
             if baseline_state is not BaselineState.PASSED:
                 return self._short(
                     target,
+                    snapshot,
                     context,
                     baseline,
                     corpus_artifact,
@@ -174,6 +175,7 @@ class PatchCorpusAdapter:
                 )
                 return self._short(
                     target,
+                    snapshot,
                     context,
                     baseline,
                     coverage,
@@ -210,7 +212,7 @@ class PatchCorpusAdapter:
                 for entry in corpus.entries
             )
             return TargetResult(
-                identity=_identity(target, context),
+                identity=_identity(target, snapshot, context),
                 target_id=target.id,
                 adapter_id=ADAPTER_ID,
                 adapter_version=ADAPTER_VERSION,
@@ -245,7 +247,12 @@ class PatchCorpusAdapter:
             # A sandbox failure: an incomplete result that keeps the baseline
             # and the receipts gathered so far.
             return sandbox_failure_result(
-                exc, _identity(target, context), run_directory, baseline, receipts, artifacts
+                exc,
+                _identity(target, snapshot, context),
+                run_directory,
+                baseline,
+                receipts,
+                artifacts,
             )
         finally:
             shutil.rmtree(workspace, ignore_errors=True)
@@ -253,6 +260,7 @@ class PatchCorpusAdapter:
     def _short(
         self,
         target: TargetDeclaration,
+        snapshot: InputSnapshot,
         context: ExecutionContext,
         baseline: BaselineRecord,
         corpus_artifact: ArtifactReference,
@@ -262,7 +270,7 @@ class PatchCorpusAdapter:
     ) -> TargetResult:
         empty = Inventory(0, 0, 0, 0, ())
         return TargetResult(
-            identity=_identity(target, context),
+            identity=_identity(target, snapshot, context),
             target_id=target.id,
             adapter_id=ADAPTER_ID,
             adapter_version=ADAPTER_VERSION,
@@ -479,12 +487,14 @@ def _coverage_payload(selected: list[CorpusEntry], outside: list[str]) -> bytes:
     return json.dumps(body, sort_keys=True).encode("utf-8")
 
 
-def _identity(target: TargetDeclaration, context: ExecutionContext) -> RunIdentity:
+def _identity(
+    target: TargetDeclaration, snapshot: InputSnapshot, context: ExecutionContext
+) -> RunIdentity:
     return RunIdentity(
         run_id=context.run_id,
-        reviewed_source_id=context.run_id,
-        input_manifest_digest=context.config_digest,
-        selection_digest=context.config_digest,
+        reviewed_source_id=snapshot.reviewed_source_id,
+        input_manifest_digest=snapshot.manifest_digest,
+        selection_digest=snapshot.selection_digest,
         config_digest=context.config_digest,
         execution_policy_digest=context.execution_policy_digest,
         toolchain_fingerprint=context.toolchain_fingerprint,

@@ -22,6 +22,7 @@ from tests.test_mutation_adapter_cleanup import (
     _corpus_run,
     _gremlins_probe,
     _run_failing_at,
+    _snapshot,
     _target,
 )
 from tests.test_python_mutmut_cleanup import _probe_with, _run
@@ -96,7 +97,7 @@ def test_real_probe_failure_survives_result_serialization(tmp_path, monkeypatch,
         error.cleanup_failure = isolate.CgroupCleanupError("payload group left")
     directory = tmp_path / "report"
     result = sandbox_failure_result(
-        error, _identity(_target("python-mutmut"), _context(tmp_path)), directory
+        error, _identity(_target("python-mutmut"), _snapshot(tmp_path), _context(tmp_path)), directory
     )
     _assert_result(result, error, directory, run=run, sole=sole)
 
@@ -115,7 +116,7 @@ def test_unstructured_notes_do_not_become_cleanup_evidence(tmp_path, note):
     error.add_note(note)
     directory = tmp_path / "report"
     result = sandbox_failure_result(
-        error, _identity(_target("python-mutmut"), _context(tmp_path)), directory
+        error, _identity(_target("python-mutmut"), _snapshot(tmp_path), _context(tmp_path)), directory
     )
     assert result.cleanup.state is CleanupState.COMPLETE
     assert result.cleanup.errors == ()
