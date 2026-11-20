@@ -1,0 +1,140 @@
+diff --git a/src/code_forge/cli.py b/src/code_forge/cli.py
+index c0a1ee2..37aa7fb 100644
+--- a/src/code_forge/cli.py
++++ b/src/code_forge/cli.py
+@@ -4545,6 +4545,14 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
+     _backend_arg = getattr(args, "backend", None)
+     has_explicit_backend = has_inline or (_backend_arg is not None)
+ 
++    from transport_cap import ACTIVE_CAP, SendRefused, check_profile
++
++    if ACTIVE_CAP.get() is not None and (
++        not review_lenses or args.mode != "ci"
++        or args.outlet != "subprocess" or not _backend_arg
++    ):
++        raise SendRefused("experiment requires trusted lenses, CI subprocess and an explicit profile")
++
+     def _reachability():
+         from .backend import resolve_backend, probe_backend
+ 
+@@ -4637,6 +4645,7 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
+             raise
+ 
+     # outlet == "subprocess" (Outlet A): fall through to review pipeline
++    check_profile(backend)
+ 
+     # Fast-fail: verify the selected backend's credentials are available
+     # before entering the review state machine.  Without this, each of
+diff --git a/src/code_forge/factories.py b/src/code_forge/factories.py
+index 09d133d..eb95c0c 100644
+--- a/src/code_forge/factories.py
++++ b/src/code_forge/factories.py
+@@ -605,11 +605,30 @@ def build_l1_provider(
+ 
+         annotated_diff = annotated_diff_prompt_block(diff_text)
+ 
++        # Disposable #537 experiment. The CLI still budgets/groups using A.
++        arm = os.environ.get("FORGE_EXPERIMENT_537_ARM", "A")
++        if arm not in ("A", "B") or (arm == "B" and not review_lenses):
++            raise ValueError("#537 experiment requires arm A or trusted lenses with arm B")
++        scoped_blocks = {}
+         shared = REVIEW_JSON_CONTRACT
+         if review_lenses:
+             from .lenses import LENS_BLOCK
+ 
+-            shared += LENS_BLOCK
++            if arm == "A":
++                shared += LENS_BLOCK
++            else:
++                from .lenses import PASS_LENSES
++
++                rule_lines, lens_lines = (
++                    LENS_BLOCK.splitlines(keepends=True)[:-5],
++                    LENS_BLOCK.splitlines(keepends=True)[-5:],
++                )
++                if tuple(row[:3] for row in lens_lines) != ("L1 ", "L2 ", "L3 ", "L4 ", "L5 "):
++                    raise ValueError("#537 experiment lens layout drifted")
++                scoped_blocks = {
++                    name: "".join(rule_lines) + "".join(row for row in lens_lines if row[:2] in selected)
++                    for name, selected in PASS_LENSES.items()
++                }
+         shared += L1_JSON_ENCODING_GUIDANCE
+         if manifest_spec:
+             shared += "\n" + manifest_spec.strip() + "\n"
+@@ -637,9 +656,21 @@ def build_l1_provider(
+             shared += "\n## Split Review Context\n" + split_context + "\n"
+         shared += annotated_diff
+ 
+-        prompts = [
+-            shared + "\nYou are a " + role + ". Review this diff.\n" for _pn, role in pass_configs
+-        ]
++        if scoped_blocks:
++            boundary = len(REVIEW_JSON_CONTRACT)
++            prompts = [
++                shared[:boundary]
++                + scoped_blocks[pn]
++                + shared[boundary:]
++                + "\nYou are a "
++                + role
++                + ". Review this diff.\n"
++                for pn, role in pass_configs
++            ]
++        else:
++            prompts = [
++                shared + "\nYou are a " + role + ". Review this diff.\n" for _pn, role in pass_configs
++            ]
+         if review_lenses:
+             # The selection line is the only per-pass lens byte, so it goes
+             # after the role sentence and the shared prefix stays shared.
+@@ -672,21 +703,26 @@ def build_l1_provider(
+                     time.sleep(delay)
+             pn = pass_configs[idx][0]
+             progress.emit("pass %s: calling %s" % (pn, backend.name if backend else "unknown"))
+-            r = llm_invoke(
+-                prompts[idx],
+-                backend=backend,
+-                max_attempts=max_attempts,
+-                initial_delay_s=initial_delay_s,
+-                continuation_breaker=continuation_breaker,
+-                retry_timeout=retry_timeout,
+-                l1_evidence_required=_requires_l1_excerpts(
+-                    diff_text, reviewed_repositories=reviewed_repositories
+-                ),
+-                reply_keys=REVIEW_REPLY_KEYS,
+-                review_diff=review_diff,
+-                _excerpt_allowance=allowance,
+-                **({"host_audit": pass_scopes[idx]} if pass_scopes is not None else {}),
+-            )
++            from transport_cap import check_prompt, experiment_pass, record_usage
++
++            with experiment_pass(arm, pn, backend):
++                check_prompt(arm, pn, prompts[idx])
++                r = llm_invoke(
++                    prompts[idx],
++                    backend=backend,
++                    max_attempts=max_attempts,
++                    initial_delay_s=initial_delay_s,
++                    continuation_breaker=continuation_breaker,
++                    retry_timeout=retry_timeout,
++                    l1_evidence_required=_requires_l1_excerpts(
++                        diff_text, reviewed_repositories=reviewed_repositories
++                    ),
++                    reply_keys=REVIEW_REPLY_KEYS,
++                    review_diff=review_diff,
++                    _excerpt_allowance=allowance,
++                    **({"host_audit": pass_scopes[idx]} if pass_scopes is not None else {}),
++                )
++            record_usage(arm, pn, r.usage)
+             for record in getattr(r, "excerpt_diagnostics", ()) or ():
+                 call.correction_observations.append(dict(record, pass_name=pn))
+             if r.usage.input_tokens > 0 or r.usage.output_tokens > 0 or r.usage.cached_input_tokens > 0:
+@@ -1057,6 +1093,9 @@ def build_l1_provider(
+                     )
+                     continue
+ 
++            from transport_cap import record_validated
++
++            record_validated(arm, pass_name)
+             # Retain accepted text until the writer checks physical source.
+             # This pending lane does not carry rejection/completion authority.
+             raw_response = getattr(result, "raw_response", None)
