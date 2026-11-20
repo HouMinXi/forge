@@ -282,7 +282,14 @@ def test_grouped_correction_cap_and_existing_owner_lifetime_are_unchanged(monkey
 
 def test_missing_repair_cannot_stack_a_count_request(monkeypatch):
     original = count_reply()
-    initial = {"findings": original["findings"]}
+    # A finding that carries its own quote is now evidence by itself (#521),
+    # so the reply is only missing its excerpts when the findings have none.
+    initial = {
+        "findings": [
+            {key: value for key, value in finding.items() if key != "excerpt"}
+            for finding in original["findings"]
+        ]
+    }
     calls = []
 
     def transport(prompt, backend, key, timeout_s, **kwargs):

@@ -410,8 +410,12 @@ def test_managed_absent_roots_not_created_or_claimed_pruned(managed, monkeypatch
 def test_existing_managed_roots_maintained_before_open_once(managed, monkeypatch):
     from code_forge import invocation_host as module
     from code_forge.invocation_audit import AuditAcknowledgement
+    from tests.audit_diagnostic_probe import AuditDiagnosticProbe
 
     host = managed()
+    probe = AuditDiagnosticProbe(detailed=True)
+    probe.install(monkeypatch, host._io)
+    probe.install_timing(monkeypatch, host._io, MockRecorder)
     for root in host._maintenance_roots:
         root.mkdir(parents=True, mode=0o700)
     sequence = []
@@ -429,8 +433,12 @@ def test_existing_managed_roots_maintained_before_open_once(managed, monkeypatch
 
     monkeypatch.setattr(MockRecorder, "touch", touch)
     monkeypatch.setattr(module, "maintain_audit_root", maintain)
-    settled(host)
-    settled(host)
+    for _ in range(2):
+        attempt = host.scope().start_send(request())
+        assert attempt is not None, probe.summary(include_timing=True)
+        assert attempt.finish(
+            outcome="failed", error_class="SendDeadlineBeforeNetwork", duration_s=0, usage=None
+        ), probe.summary(include_timing=True)
     assert sequence[:3] == ["invocations-v2", "invocations-v1", "open"]
     host.finalize(maintain=True)
     assert sequence.count("invocations-v2") == sequence.count("invocations-v1") == 1

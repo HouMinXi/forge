@@ -27,6 +27,7 @@ from code_forge.mutation_engines.adapters.patch_corpus import PatchCorpusAdapter
 from code_forge.mutation_engines.corpus import CorpusEntry
 from code_forge.mutation_engines.corpus import compute_source_digest
 from code_forge.mutation_engines.schemas import (
+    BaselineRecord,
     BaselineState,
     Budget,
     NormalizedStatus,
@@ -374,3 +375,87 @@ def _passed_event(run_id, mutant):
         "exit_status": 0,
         "failed_nodes": [],
     }
+
+
+@pytest.mark.parametrize("path", ["normal", "baseline-failed", "empty", "isolation-failed"])
+def test_result_preserves_snapshot_identity(tmp_path, monkeypatch, path):
+    """Serialization binds every return path to inputs, not run/config IDs."""
+    import shutil
+
+    from code_forge.mutation_engines.isolate import IsolationUnavailable
+
+    root = tmp_path / "proj"
+    shutil.copytree(FIXTURE, root, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    _write_corpus(root)
+    snapshot = _snapshot(root)
+    context = _context(tmp_path)
+    # The fixture values must not coincide with the run/config identifiers the
+    # old implementation substituted, or the assertions below would hold even
+    # for the defect this test exists to pin.
+    assert snapshot.reviewed_source_id != context.run_id
+    assert snapshot.manifest_digest != context.config_digest
+    assert snapshot.selection_digest != context.config_digest
+    selection = TargetSelection(
+        target_id="shell-config",
+        granularity="file",
+        files=("unselected.sh",) if path == "empty" else (SCRIPT,),
+        line_ranges={},
+        reasons=("identity-control",),
+    )
+
+    def fake_selector(self, target, workspace, events_dir, context, entry, label):
+        if path == "isolation-failed":
+            # Let the baseline finish so a receipt has already been gathered,
+            # then fail in isolation: the test must prove that receipt is kept.
+            if label != "baseline":
+                raise IsolationUnavailable("identity control")
+            return (
+                BaselineState.PASSED,
+                t_receipt(label, target.id),
+                _passed_event(context.run_id, None),
+            )
+        state = BaselineState.FAILED if path == "baseline-failed" else BaselineState.PASSED
+        event = _passed_event(context.run_id, None if entry is None else entry.id)
+        if path == "baseline-failed":
+            event = dict(
+                event,
+                executed=1,
+                failed_assertions=1,
+                failed_nodes=["tests/test_probe.py::test_probe"],
+            )
+        return (state, t_receipt(label, target.id), event)
+
+    monkeypatch.setattr(PatchCorpusAdapter, "_run_selector", fake_selector)
+    result = PatchCorpusAdapter().run(_target(), selection, snapshot, context)
+    identity = result.to_dict()["identity"]
+    assert identity["reviewed_source_id"] == snapshot.reviewed_source_id
+    assert identity["input_manifest_digest"] == snapshot.manifest_digest
+    assert identity["selection_digest"] == snapshot.selection_digest
+    assert identity["run_id"] == context.run_id
+    assert identity["config_digest"] == context.config_digest
+    assert identity["execution_policy_digest"] == context.execution_policy_digest
+    assert identity["toolchain_fingerprint"] == context.toolchain_fingerprint
+    # Every return path keeps the baseline it measured.
+    assert isinstance(result.baseline, BaselineRecord)
+    if path == "normal":
+        assert result.run_state is RunState.COMPLETE
+        assert result.reason_code == "corpus-limited"
+        assert len(result.outcomes) == 2
+        assert len(result.command_receipts) == 3
+    elif path == "isolation-failed":
+        # The sandbox stopped the run after the baseline: incomplete, with the
+        # baseline receipt and the sandbox report kept as evidence.
+        assert result.run_state is RunState.INCOMPLETE
+        assert result.reason_code == "isolation-unavailable"
+        assert [receipt.id for receipt in result.command_receipts] == ["baseline"]
+        assert "results/isolation-failure.json" in [
+            artifact.relative_run_path for artifact in result.native_artifacts
+        ]
+        assert not result.outcomes
+    else:
+        assert result.run_state is RunState.COMPLETE
+        assert not result.outcomes
+        assert result.reason_code == (
+            "baseline-not-passed" if path == "baseline-failed" else "corpus-limited"
+        )
+        assert len(result.command_receipts) == 1
