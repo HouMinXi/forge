@@ -341,15 +341,42 @@ session-default backend is used.
 | `output_token_limit` | no | Known maximum output budget, including retries (default: 0, unknown) |
 | `default` | no | If `true`, use this backend when no override is set |
 
-Initial requests keep the selected output cap. Set `output_token_limit` only
-when you know the backend/model allows that budget; it must be at least the
-selected initial cap. After bounded continuation attempts are exhausted,
-forge can re-ask once with up to twice the initial budget, capped at that
-known limit. With the default unknown limit, no automatic budget widening
-occurs. A positive `output_ceiling` remains a fixed request override and
-disables wider retries, which would otherwise resend the same budget.
-Continuation requests retain their initial budget. This replaces the older
-unconditional doubling behavior; no provider limit is inferred or discovered.
+Initial requests keep the selected output cap. When a response hits that cap
+(`finish_reason=length`), forge tries to recover in two steps:
+
+1. **Continuation**: send the truncated tail back and ask the model to resume.
+   This uses the same cap and has a small retry budget.
+2. **Wider retry**: if continuation fails, re-ask for the whole answer with
+   twice the cap, up to `output_token_limit`.
+
+The wider retry only happens when `output_token_limit` is set and is larger
+than the initial cap. With the default (0, meaning unknown), forge skips the
+wider retry entirely -- it will not guess how far a model can go. Set
+`output_token_limit` to the model's documented maximum if you want automatic
+recovery from truncation.
+
+A positive `output_ceiling` overrides the cap for every request and disables
+wider retries, since doubling would just resend the same fixed budget.
+
+Example: a model documented at 128K output tokens, with reviews that sometimes
+need more than 64K:
+
+```yaml
+backends:
+  my-backend:
+    type: api
+    format: openai
+    base_url: "https://api.example.com/v1"
+    api_key_env: MY_API_KEY
+    model: my-model
+    max_tokens: 65536
+    output_token_limit: 131072
+```
+
+If a review hits 65536, continuation tries to resume at the same cap.
+If that fails and `output_token_limit` is set, forge retries once at 131072.
+Without `output_token_limit`, continuation still runs, but if it fails the
+truncation stands -- there is no wider retry.
 
 **Security note**: Never put an API key directly in `gate.yaml`. Use
 `api_key_env` to specify the name of an environment variable, and set
