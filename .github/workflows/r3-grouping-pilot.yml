@@ -1,0 +1,39 @@
+name: R3 grouping pilot (advisory only)
+'on':
+  push:
+    branches: [experiment/r3-grouping-pilot-20261121]
+permissions:
+  contents: read
+jobs:
+  grouping-evidence:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          path: pilot
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 12fbfac533f19c8d167500aa372543e4d2696089
+          persist-credentials: false
+          path: subject
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12.14'
+      - name: Install small pinned test dependencies
+        run: python -m pip install pytest==8.4.2 PyYAML==6.0.3 unidiff==0.7.5
+      - name: Validate fixed grouping control
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(git -C pilot rev-parse HEAD)" = "$GITHUB_SHA"
+          python -B pilot/scripts/r3_pilot/run.py subject "$RUNNER_TEMP/r3-summary.json"
+      - name: Publish only validated summary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: r3-grouping-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r3-summary.json
+          if-no-files-found: error
+          retention-days: 14
