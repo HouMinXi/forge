@@ -112,11 +112,22 @@ worktree. Reverse the experiment patch with
 `git worktree remove "$control"`. Do not force removal if Git reports any
 other changes.
 
-## After this smoke
+## Stage 2 disposition
 
-If the route works, Stage 2 still needs a separate paired A/B evaluation
-using frozen candidates and evidence, blinded adjudication, a pre-agreed
-non-inferiority margin, and real cost and human effort measurements. Follow
-[#537](https://github.com/HouMinXi/forge/issues/537); this PR does not change
-the frozen Stage 1 interface, add C0 routing, add lenses, or expose an option
-in the published Forge CLI.
+Keep **A** as the default. Do not start **C₀** or rerun the four pilot cases.
+The commands above document how the original smoke was run; they are not
+a request to repeat the experiment. No production review settings change.
+
+The later, separate four-case workstation pilot had 24 validated replies.
+After deduplication, both arms caught the same three known defects and
+neither reported a finding on the clean case. B used 2,192 fewer input
+tokens (15.0%) but 7,790 more output tokens, a net increase of 5,598
+(16.2%). These are usage counts for synthetic cases, not a cost estimate
+or evidence of equivalent recall on real changes. The paired runner is
+not included in this PR.
+
+See the [locked assessment and reveal](https://github.com/HouMinXi/forge/pull/547#issuecomment-7036791249)
+and [recorded decision](https://github.com/HouMinXi/forge/pull/547#stage-2-disposition).
+Neither the smoke nor the pilot qualifies a Forge review, changes the
+frozen [Stage 1 contract](https://github.com/HouMinXi/forge/issues/537#issuecomment-6999075145),
+or enables a new production route.
