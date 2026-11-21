@@ -22,6 +22,7 @@ from code_forge.falsify import StubFalsifier
 from code_forge.llm_invoke import Usage
 from code_forge.machine import StateMachine, _FixpointResult
 from code_forge.state import (
+    EARNED_WINDOW_VERSION,
     ROUND_PHASES,
     Mode,
     State,
@@ -1291,7 +1292,12 @@ def test_c3_begin_host_attempt_clears_strip_set(tmp_path, monkeypatch):
     assert sm._schema_coverage_credit_preserve(_FixpointResult.RESET) is True
     assert sm._c3_strip_fps
     sm._state.round_history = []
-    sm._state.earned_clean_window = {"reviewed_repositories": None}
+    sm._state.earned_clean_window = {
+        "version": EARNED_WINDOW_VERSION,
+        "source_hash": sm.source_hash,
+        "reviewed_repositories": None,
+        "cycles": [],
+    }
     monkeypatch.setattr(sm, "_persist_state", lambda: None)
     sm._begin_host_attempt(0)
     assert sm._c3_strip_fps == set()
