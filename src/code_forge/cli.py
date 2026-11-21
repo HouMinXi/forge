@@ -210,6 +210,7 @@ def _emit_ci_output(
     """
     if report_version not in ("v1", "v2"):
         raise ValueError("unsupported report version")
+    from .receipt_provenance import receipt_finding_provenance
     from .report_presentation import prepare_legacy_report, prepare_report_views
     from .report_projection import classify_report_records
 
@@ -249,11 +250,8 @@ def _emit_ci_output(
     # accepts the same document the pure helpers will extend.
     legacy_stdout = json.dumps(log_dict, ensure_ascii=False, allow_nan=False)
     substrate = prepare_legacy_report(log_dict, stdout=legacy_stdout, stderr=legacy_summary)
-    if substrate.sarif_document is not None:
-        projection = classify_report_records(final_state)
-        prepared = prepare_report_views(substrate, projection)
-    else:
-        prepared = prepare_report_views(substrate, None)
+    projection = classify_report_records(final_state) if substrate.sarif_document is not None else None
+    prepared = prepare_report_views(substrate, projection)
     if report_version == "v1":
         print(prepared.stdout, file=sys.stdout)
         # Order: legacy summary (+ optional budget qualifier in prepared.stderr)
@@ -267,6 +265,25 @@ def _emit_ci_output(
             format_classification_line(prepared.report_classification),
             file=sys.stderr,
         )
+        if (
+            projection is not None
+            and projection.classification_complete
+            and prepared.report_classification.availability == "available"
+        ):
+            # Use the receipt producer's display provenance and the report's
+            # protocol label together. The legacy counts still include these rows.
+            findings = final_state.findings
+            protocol_failures = sum(
+                1
+                for record in projection.product
+                if record.host_failure_kind == "PROVIDER_PROTOCOL"
+                and receipt_finding_provenance(findings[record.index])["channel"] == "execution"
+            )
+            if protocol_failures:
+                print(
+                    f"code-forge: review service protocol failures={protocol_failures} [included in findings]",
+                    file=sys.stderr,
+                )
     if loaded_path is not None:
         try:
             if (
