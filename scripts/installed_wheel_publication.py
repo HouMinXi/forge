@@ -33,7 +33,7 @@ REQUIREMENTS = {
     "unidiff>=0.7.5,<0.8.0": "unidiff<0.8.0,>=0.7.5",
     "pytest==9.2.0": "pytest==9.2.0",
     "pytest-asyncio>=1.0": "pytest-asyncio>=1.0",
-    "ruff==0.17.3": "ruff==0.17.3",
+    "ruff==0.17.4": "ruff==0.17.4",
     "mutmut>=3.4,<4.0": "mutmut<4.0,>=3.4",
     "jsonschema>=4.18": "jsonschema>=4.18",
     "google-auth>=2.35.0": "google-auth>=2.35.0",

@@ -36,19 +36,15 @@ def finding_reply():
 
 
 @pytest.mark.parametrize("mode", [Mode.LOCAL, Mode.CI])
-@pytest.mark.parametrize("damage", [None, "anchor-as-root", "count", "empty-root", "absent-root"])
+@pytest.mark.parametrize("damage", [None, "count", "empty-root"])
 def test_factory_to_machine_diagnostics_preserve_evidence_gate(
     tmp_path, monkeypatch, capsys, mode, damage
 ):
     payload = finding_reply()
-    if damage == "anchor-as-root":
-        payload["code_excerpts"] = [{"file": "control.ts", "line": 1, "excerpt": contract.CONTENT}]
-    elif damage == "count":
+    if damage == "count":
         payload["code_excerpts"][0]["end_line"] = 8
     elif damage == "empty-root":
         payload["code_excerpts"] = []
-    elif damage == "absent-root":
-        del payload["code_excerpts"]
     original = copy.deepcopy(payload)
     calls = []
 
@@ -79,15 +75,11 @@ def test_factory_to_machine_diagnostics_preserve_evidence_gate(
         assert result is not Verdict.PASS and not machine._state.converged
         assert machine._state.consecutive_clean_rounds == 0
         assert any(f.id == "RECEIPT_INVALID" for f in machine._state.findings)
-        assert receipt["pass_status"] == (
-            "schema_fail" if damage in ("anchor-as-root", "absent-root") else "incomplete"
-        )
+        assert receipt["pass_status"] == "incomplete"
         assert receipt["code_excerpts"] == []
         expected = {
-            "anchor-as-root": ("schema", "code_excerpt[0] missing:"),
             "count": ("evidence", "declares 8 lines but carries 1"),
             "empty-root": ("missing-excerpts", "required L1 pass has no root code_excerpts"),
-            "absent-root": ("schema", "missing required field: code_excerpts"),
         }[damage]
         assert len(diagnostics) == len(calls) // 3
         assert all(
@@ -101,6 +93,69 @@ def test_factory_to_machine_diagnostics_preserve_evidence_gate(
             art["payload"] == original | {"pass_name": "expert"} for art in artifacts
         )
         assert provider.raw_observations == [] and provider.correction_observations == []
+
+
+@pytest.mark.parametrize("mode", [Mode.LOCAL, Mode.CI])
+@pytest.mark.parametrize(
+    "shape",
+    ["anchor-as-root", "absent-root"],
+    ids=["root-alias", "hoisted-finding-excerpt"],
+)
+def test_legacy_evidence_spellings_reach_the_source_check(tmp_path, monkeypatch, capsys, mode, shape):
+    """Two spellings reach the source check: a root excerpt anchored by ``line``,
+    and a finding-level excerpt hoisted when the reply carries no root excerpt."""
+    payload = finding_reply()
+    if shape == "anchor-as-root":
+        payload["code_excerpts"] = [{"file": "control.ts", "line": 1, "excerpt": contract.CONTENT}]
+    else:
+        del payload["code_excerpts"]
+
+    def transport(prompt, **kwargs):
+        current = payload if "You are a senior engineer:" in prompt else contract.good("control.ts")
+        return LLMResult(copy.deepcopy(current), Usage(), 0.0)
+
+    monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", transport)
+    diff = contract.diff_for("control.ts")
+    provider = build_l1_provider("real", ResolvedReview([Path("control.ts")], None, diff, "git"))
+    machine = contract.machine_for(tmp_path, mode, provider, diff, ["control.ts"])
+    machine.falsifier = SimpleNamespace(falsify=lambda finding: Disposition.DISMISSED)
+    result = machine.run()
+    capsys.readouterr()
+    receipts_dir = tmp_path / ".code-forge/receipts"
+    receipt = json.loads((receipts_dir / "receipt-c1p2.json").read_text())
+    assert result is Verdict.PASS and machine._state.converged
+    assert machine._state.consecutive_clean_rounds == (3 if mode is Mode.LOCAL else 0)
+    assert receipt["pass_status"] == "completed"
+    assert [(e["start_line"], e["end_line"], e["content"]) for e in receipt["code_excerpts"]] == [
+        (1, 1, contract.CONTENT)
+    ]
+    assert not (receipts_dir / "attempted").exists()
+
+
+@pytest.mark.parametrize("shape", ["anchor-as-root", "absent-root"])
+def test_legacy_evidence_spellings_cannot_smuggle_unverified_text(tmp_path, monkeypatch, capsys, shape):
+    """The accepted spelling still has to pass the frozen-source check."""
+    forged = "const value = 99;\n"
+    payload = finding_reply()
+    if shape == "anchor-as-root":
+        payload["code_excerpts"] = [{"file": "control.ts", "line": 1, "excerpt": forged}]
+    else:
+        payload["findings"][0]["excerpt"] = forged
+        del payload["code_excerpts"]
+
+    def transport(prompt, **kwargs):
+        current = payload if "You are a senior engineer:" in prompt else contract.good("control.ts")
+        return LLMResult(copy.deepcopy(current), Usage(), 0.0)
+
+    monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", transport)
+    diff = contract.diff_for("control.ts")
+    provider = build_l1_provider("real", ResolvedReview([Path("control.ts")], None, diff, "git"))
+    machine = contract.machine_for(tmp_path, Mode.CI, provider, diff, ["control.ts"])
+    machine.falsifier = SimpleNamespace(falsify=lambda finding: Disposition.DISMISSED)
+    result = machine.run()
+    capsys.readouterr()
+    assert result is not Verdict.PASS
+    assert machine._state.consecutive_clean_rounds == 0
 
 
 @pytest.mark.parametrize(

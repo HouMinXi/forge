@@ -2,6 +2,578 @@
 
 This record separates implemented behavior, directly tested behavior and remaining acceptance decisions. It is not G0/G1 approval, issue closure, a recovered or one-to-one equivalent original 78-test port, or a claim that every T01–T20 negative control has run.
 
+## 2026-11-20 #441 limited G13 recognition
+
+**Maintainer decision (2026-11-20 UTC):** Accept #441 within the existing
+limited scope, covering only the diagnostic behavior supported by the
+recorded evidence. This decision resolves the pending decision only within
+that scope, not the broader obligations in the historical inventory.
+
+- **Reviewed delivery:** [#541](https://github.com/HouMinXi/forge/pull/541)
+  at `9ed42a4be978df94e5afc2905bff3cfbf8d5743c`, with independent
+  applicability review bound to the [tested merge
+  `d36b3c1a04b5fc52bd3395ee70c2ac5b4d6e3e3c`](https://github.com/HouMinXi/forge/commit/d36b3c1a04b5fc52bd3395ee70c2ac5b4d6e3e3c)
+  against main `f4b9aabbe977df17268392a1e8a21d5b9334cefb`.
+  The prior approved document blob was unchanged by the sync; the reviewed
+  diff against that main added only this acceptance document's supplement.
+  [Linux](https://github.com/HouMinXi/forge/actions/runs/44697828722),
+  [wheel](https://github.com/HouMinXi/forge/actions/runs/44697828737),
+  [lint](https://github.com/HouMinXi/forge/actions/runs/44697828800), and
+  [CodeQL](https://github.com/HouMinXi/forge/actions/runs/44697828734) passed
+  for that delivery revision, not for this subsequent decision record.
+- **Evidence boundary:** The provider-enabled three-repository controls and
+  the 32-module regression below remain evidence on the recorded Python
+  3.12 revision only. The reviewed hosted Linux receipts show collection
+  skips for both provider-impact test modules. They do not qualify that
+  provider path on Python 3.14.
+- **Unchanged limits:** Storage eligibility is not runtime qualification for
+  the complete storage domain. T19 leak freedom on a real failed `close()`
+  remains unverified. Equivalence to the original 78 tests remains unknown.
+  This decision adds no runtime or historical G0/G1 credit, does not
+  complete the broader G12 obligations, and does not merge #541 or close
+  #441 or #33.
+
+## 2026-11-19 #441 evidence and limited G12 decision
+
+**Owner decision (2026-11-20 UTC):** Accept the regression and controls
+pinned below to `a72dc5a990194494c875fac7b783436b30ed272d` as additional
+limited evidence for G12. The owner confirmed this scope in the Forge project
+chat. The earlier bounded G12 decision remains attached to its original evidence.
+
+- **Fixed local source:** [`a72dc5a990194494c875fac7b783436b30ed272d`](https://github.com/HouMinXi/forge/commit/a72dc5a990194494c875fac7b783436b30ed272d),
+  tree `414358023ac07e412cfd413116d2c32da4eada91`. A Git archive of the fixed
+  commit was used; all 1,598 tracked blobs, including symlink contents, were
+  verified after running. No separate pre-run byte scan was recorded.
+- **Selected local regression:** 32 unmodified modules, **1,392 passed** on
+  CPython 3.12.14, SQLite 3.53.1, pytest 9.2.0, pytest-asyncio 1.5.0,
+  code-review-graph 2.4.0, MCP SDK 1.30.0 and Ruff 0.17.4. Two empty-diff
+  controls stopped at toolchain detection on the initial run without Ruff.
+  After adding the pinned Ruff to the test environment, both passed
+  individually and in the full selected rerun without tracked input edits.
+  This is not Python 3.14 qualification or a reattribution of prior runs.
+- **Parent #33 direct callers:** real provider build and registration for
+  synthetic repositories, followed by the real runner. At 2/2 registered
+  siblings completed, only the direct caller was returned. Removing the
+  indirect sibling graph retained that result at 1/2; removing the sole
+  direct sibling graph instead returned no findings at 1/2, explicitly
+  reporting one unavailable in both cases. Restoration recovered 2/2 and
+  the direct caller. No graph-freshness or coverage outside the registered
+  scope is established.
+- **Separate delivery controls:** six CLI/direct-host and four MCP-handler
+  fixture controls verified visible partial scope and unchanged verdict and
+  receipt behavior. They did not exercise a single provider-to-CLI chain or
+  the full MCP wire protocol. The independent reviewer consumed these records
+  and assertions; this does not claim an independent re-execution.
+- **Separate hosted checks:** [Linux](https://github.com/HouMinXi/forge/actions/runs/44515651203),
+  [wheel](https://github.com/HouMinXi/forge/actions/runs/44515651290),
+  [lint](https://github.com/HouMinXi/forge/actions/runs/44515651138) and
+  [CodeQL](https://github.com/HouMinXi/forge/actions/runs/44515651256)
+  passed for the earlier #541 head `6308f6ae855feb81912dede47f2edd569c634b74`.
+  The Linux checkout was synthetic merge
+  `a40c5dc1b95225ae43155ca4804b27d86a994641` into the fixed main above.
+  None of those checks ran this documentation supplement.
+
+**Exit boundary:** This decision does not complete G12 or grant G13. It does
+not qualify Python 3.14. Original 78-test equivalence remains unknown; a real failed
+`close()` with no leak remains unverified under T19. Preserve existing storage
+eligibility versus runtime qualification, and do not extend the support domain.
+G13 requires final independent review of the applicable product, test and
+document revisions and explicit maintainer acceptance. Neither issue closes;
+no G/T checkbox changes.
+
+## 2026-11-18 #529 current-run handoff static applicability
+
+Independent full-blob comparison found the following thirteen paths identical at
+`5d524df377244d172f69c90c61877f9810d79337` (existing Linux run 44136528519),
+`d1b1c7ac085e438c3da2f0ac537a02ce683d3afb` (recorded independent static review)
+and checked main `15d19f955d468dc626a4f609539027d61e333997`:
+
+- `src/code_forge/cli.py`: `c0a1ee2348d93c7115355a415d190f9a64e128a9`.
+- `src/code_forge/cross_repo.py`: `6d03d54e0e390ba4afbe2fda2db698bd1bc218ca`.
+- `src/code_forge/_diagnostic_completion.py`: `56ee88497a4b046fdb835ddc5ca02e442c8f532c`.
+- `src/code_forge/_cross_repo_diagnostics.py`: `ca1aa1be4f3a49299ad73b1cacf715b5d73882b2`.
+- `src/code_forge/_advisory_diagnostics.py`: `832097fa0887cfe42310b579f45d91020c0e2d93`.
+- `src/code_forge/_local_filesystems.py`: `85029f10e17593f64a1c33cbf0a44e204d198690`.
+- `src/code_forge/_diagnostic_history.py`: `17b8664e191068dacb7a139612edddc785514d72`.
+- `tests/test_diagnostic_completion.py`: `42d33c3e2a5f48db2912bbc1a17ba82bc11ec132`.
+- `tests/test_diagnostic_history_host.py`: `ca11beba547944781c6096007a0d9b8d4efd1162`.
+- `tests/test_cross_repo_persistent_diagnostic.py`: `cbbc1678afd996e183f003fbfb82e9fddcb2f3fa`.
+- `tests/test_advisory_diagnostics.py`: `162927b2bf277ce2b39495762dfc66581023706a`.
+- `tests/test_local_filesystems.py`: `f88f94efc9ad7a1c347099fe1f45eae63fa659fe`.
+- `docs/diagnostic-cli-handoff.md`: `bc1edbc67f47f3c0eba539257964fe17ee52bbd0`.
+
+This binds the already recorded #529 CLI/host handoff review, shared reader/storage
+source, selected tests/fixture and handoff contract to this main as static evidence.
+There is no `src/` diff from `5d524df` to this main. The selected 40-node execution
+consumed from Linux run 44136528519 remains at `5d524df`; the older independent
+source/execution record and limited owner acceptance at
+`d8810a212c79c62f6bce9c1b7e404e33696be8f1` retain their original attribution.
+This comparison neither reconsumes their raw receipts nor reruns those tests.
+
+Ruff/dependency declarations, installed-wheel tooling, the public identity manifest
+and other test/document files changed outside this set. Blob identity is not
+whole-tree or environment identity, and cancelled Linux run 44362931223 at
+`15d19f955d468dc626a4f609539027d61e333997` receives no pass credit here.
+The controlled fixture still supplies diff, other axes and `_run_ci`; it does not
+qualify the natural full CLI chain, installed wheel or all SDK/provider paths.
+Publication, capture-close attempt, sealing/event/join, caller strict reread and
+notice delivery remain distinct; no real-close-failure leak-freedom or complete
+storage-domain/G12/G13 qualification follows. Shared obligations stay with #441.
+The existing limited #529 owner acceptance is reused, not replaced by a new
+acceptance or exit decision. No support expansion or issue-state change follows.
+
+**2026-11-19 static refresh:** the same thirteen blobs also match merged main
+`a72dc5a990194494c875fac7b783436b30ed272d`. The no-`src/`-diff statement
+above is specific to the earlier comparison with `15d19f9`; later main
+changes files outside the listed set. The 40-node run remains attributed
+to `5d524df`; no execution credit is transferred by this refresh.
+
+## 2026-11-18 #526 scope-live applicability at merged main
+
+Independent full-blob comparison binds the existing live registry-occurrence/counts
+slice to main `a79d39f5b1224c4888eff93993387db069003426`. All seven files below
+have identical blobs at `5d524df377244d172f69c90c61877f9810d79337`,
+`d1b1c7ac085e438c3da2f0ac537a02ce683d3afb` and that merged main:
+
+- `src/code_forge/cross_repo_impact.py`: `2f80c2f3c62c8dd07ccdc4165e4face85277f15d`.
+- `src/code_forge/_query_scope_receipt.py`: `f3c9c98991b406ca07fecebc042481c3d0e2d26f`.
+- `tests/test_cross_repo_query_summary.py`: `378a83b5f94eeee61f25985efeb165659ca355af`.
+- `tests/test_scope_receipt_host.py`: `77a15bf81263dc16c2dd8eb104ee0315059ac3c2`.
+- `tests/test_cross_repo_scope_snapshot.py`: `6bcf4ded639224a9f8e45e04d289b3b10a36a86e`.
+- `tests/test_query_scope_receipt.py`: `da5fc544bb7c4da878575f72e773f1af0f1074e6`.
+- `docs/cross-repo-query-scope-v1.md`: `0c83d11287b49215f2304eeded2e35dbd0ddeb8e`.
+
+There is also no `src/` diff from `5d524df` to this main. This establishes static
+applicability of the already recorded `d1b1c7ac` count-loop/exit review and the
+selected 168-node evidence in Linux run 44136528519 at `5d524df`; it does not
+reassign that execution to `a79d39f5` or create new runtime evidence. The earlier
+168-node run at `d8810a212c79c62f6bce9c1b7e404e33696be8f1` and limited owner
+acceptance keep their separately recorded revisions. No tests or matrix were rerun.
+
+The scope remains live registration occurrences (duplicates included) and counts.
+`query_occurrences_accounted` means completed plus unavailable equals the established
+total; it is distinct from `processing_completed`, which records normal analysis
+return. A helper can finish before later processing fails, as the existing
+scope-snapshot assertions record. Neither flag proves complete cross-repository
+impact, graph freshness, installed-wheel qualification or storage-domain qualification.
+Shared reader/storage and G12/G13 obligations stay with #441, without making every
+future #441 capability a new prerequisite for this limited slice. This applicability
+record is not a fresh owner acceptance, final limited-exit decision or issue closure.
+
+## 2026-11-18 #527 merged exporter controls: existing receipts consumed
+
+After #532 merged, an independent review consumed existing
+[Linux run 44275864512](https://github.com/HouMinXi/forge/actions/runs/44275864512)
+at exact main `a79d39f5b1224c4888eff93993387db069003426`.
+The downloaded `linux-shard-{0,1,2,3}-evidence` ZIP SHA256 values matched
+GitHub's artifact digests, respectively:
+
+- `14415701295`: `763d81b0859332f1e8d24520be0fb944c4d8dbb5df7c05e612bd757f574f2f29`.
+- `14414154375`: `a6e89db165ac94f4ab7f6880fa39012ba51d364a3840a50793566779d5a9cd04`.
+- `14414816972`: `22c3ebb9098819813815a051a97b4230eb320a3c90080c59a3f940acf93176dd`.
+- `14414782557`: `563c630b828764cf8cc7b186698a5a60e6a9d914fa0b7ebf6cf23ddc656740fd`.
+
+Manifest blob `172751fbd028af5e5100aec2fe477bf7bb055e09`, using the
+whole-manifest enumeration in `ci_private_transport.py::_identities`, maps
+`tests/test_diagnostic_history.py::test_valid_not_published_result_cannot_export_ticket`
+to `public-7971` on shard 1 and the same test name in `tests/test_scope_history.py`
+to `public-41875` on shard 0. Across all four receipts each node was collected
+exactly once, with setup/call/teardown each passed and no skip or xfail. All four
+receipts name the exact SHA above, exitstatus 0 and no collection errors.
+The assertions validate a legal `not_published` result before requiring export
+rejection, no locator and an empty ticket directory. This supplies the two
+merged exporter controls; it does not establish all #527 acceptance obligations.
+Collection skips elsewhere include cross-repo impact/integration and dead-code
+modules; this is not an assertion that the whole run had no skips.
+
+Between `d1b1c7ac085e438c3da2f0ac537a02ce683d3afb` and this main revision,
+only this acceptance document, the public identity manifest and those two test
+files changed. The prior fixed-source wiring review therefore remains statically
+applicable; the older 171/752-node execution evidence retains its original SHA.
+This note consumes an existing run: no new tests, probes or matrix were executed.
+
+#441 continues to carry the shared reader/storage obligations: full storage-domain
+qualification, leak freedom under real descriptor-close failure, and final-version
+G12/G13 review. Existing reader-tail static review and the limited metadata
+cap-plus-one allowance are already recorded; neither is missing, and neither is
+new runtime proof. This receipt supplement makes no final limited-exit decision,
+reopening/closure decision or support expansion for #527, #33 or #441.
+
+## 2026-11-18 #526/#527/#529 entry-source reading completed
+
+An independent static review at fixed product revision
+`d1b1c7ac085e438c3da2f0ac537a02ce683d3afb` completed the following specific
+source-reading coverage; it found no new blocker in these ranges:
+
+- #526: `src/code_forge/cross_repo_impact.py:617–875` preserves registry
+  occurrences (including duplicates), counts attempts before helper invocation
+  and completion only after helper return, and separates unavailable queries,
+  later processing failures and successful processing completion. The review
+  read the matching occurrence/cache, partial-query, control-exception and
+  output-failure assertions in `tests/test_cross_repo_scope_snapshot.py:19–264`
+  and `tests/test_cross_repo_query_summary.py:56–287`.
+- #527: `src/code_forge/cli.py:2973–3015` returns both historical branches
+  before review dispatch. `src/code_forge/mcp_server.py:585–631,699–720,1848–1905`
+  connects startup authorization, the SDK guard and handler-owned reads;
+  `180–229,306–339` drains cancellation and connects shutdown/signal cleanup.
+  Both `_mcp_diagnostic_history.py` and `_mcp_scope_history.py` retain startup
+  directory authority, recheck identities and return historical public projections.
+  Matching SDK, cancellation, AnyIO, shutdown and stdio assertions were read in
+  `tests/test_mcp_diagnostic_history.py:145–291` and
+  `tests/test_mcp_scope_history.py:154–298`. Controlled release events do not
+  establish deadlines for arbitrary hangs; shutdown-order tests replace
+  `cleanup_all`, and stdio uses `PYTHONPATH`, not an installed-wheel qualification.
+- #529: `src/code_forge/cli.py:3296–3384,3731–3776,5156–5192` and
+  `src/code_forge/cross_repo.py:263–737` connect the caller-owned completion
+  slot to the real host, capture-close attempt, sealing, event, worker join and
+  caller notice consumption, preserving primary-error precedence. The review
+  read `tests/test_diagnostic_completion.py:19–350` and the
+  `persistent_cli` fixture in `tests/test_cross_repo_persistent_diagnostic.py:90–180`.
+  That fixture controls diff acquisition, other advisory axes and `_run_ci`;
+  these assertions do not establish natural full-CLI qualification or prove
+  leak freedom after a real descriptor-close failure.
+
+All twelve named source/test files are byte-identical between `5d524df377244d172f69c90c61877f9810d79337`
+and the fixed revision above. This is static applicability evidence only: no
+product tests, probes or matrices were run for this note. The 752-node execution
+record below remains attributed to `5d524df377244d172f69c90c61877f9810d79337`.
+The existing shared-reader tail review and limited metadata cap-plus-one owner
+decision remain recorded evidence, not new execution or fresh owner approval
+from this review. This closes only the specified source-reading gaps; shared
+reader/storage disposition stays with #441. Final-version binding, G12/G13 and
+individual limited exit decisions remain separate; #526/#527/#529/#33/#441 are not
+thereby accepted or closed, and no support domain is expanded.
+
+## 2026-11-18 metadata overflow-probe decision
+
+The owner answered “允许” (“allowed”) in project chat to the explicit question
+whether the 4096-byte fdinfo and 1 MiB mountinfo limits permit reading one extra
+byte to detect overflow, with those limits defined as accepted payload thresholds
+rather than absolute physical-read ceilings. This records that limited approval;
+it does not increase the accepted payload sizes.
+
+At product revision `5d524df377244d172f69c90c61877f9810d79337`,
+`_advisory_diagnostics.py::_bounded_proc` requests `cap + 1` bytes and rejects
+a result longer than `cap`. Its callers use 4096 for fdinfo and 1048576 for
+mountinfo. The approved probe therefore requests up to 4097 or 1048577 bytes
+through the Python stream API. Buffering and kernel I/O are not given a physical
+read ceiling by this decision.
+
+The existing
+`tests/test_advisory_diagnostics.py::test_proc_upper_bound_plus_one_read`
+uses a real 17-byte file with a cap of 16 and requires rejection. That is a
+generic overflow control, not an assertion of the stream request length or
+a complete metadata-boundary qualification. No test or mutation was rerun for
+this documentation decision, and no new runtime credit is claimed.
+
+This decision supersedes the earlier pending owner clarification of the
+metadata extra-byte probe in this document, including the G02 limited-decision
+paragraph. Earlier dated evidence and its limitations remain historical.
+Real-close-failure leak freedom, G13/final applicable-revision review and
+maintainer acceptance remain separate; no support expansion, automatic retry,
+issue closure, PR approval or merge follows.
+
+## 2026-11-18 selected main execution receipts consumed
+
+An independent receipt review consumed existing
+[Linux run 44136528519](https://github.com/HouMinXi/forge/actions/runs/44136528519)
+at exact main `5d524df377244d172f69c90c61877f9810d79337`.
+This is evidence from that execution, not a local rerun or execution of this
+later documentation head. Earlier 168/171/40-node records and owner decisions
+retain their original revisions; this adds a separately attributed observation.
+
+The four `linux-shard-{0,1,2,3}-evidence` ZIPs were downloaded and their SHA256
+values independently matched the GitHub artifact digests, respectively:
+
+- `14351919990`: `b88be885312861ed5c1bbf26867049ee42574e5f90722b6760ae3861f8944b86`.
+- `14352752372`: `6856d99fd460e18163a5515621f7c4471020132deaeeaa096f2fe6266cdb8ff4`.
+- `14352832815`: `023bfdfa8acf92d67352f03f362918c400f721481f1446474a790d1f42da3e3b`.
+- `14353975707`: `1cbf9828e94201f24f425da5046b5d72c283fa52f4c25a63945aa4da58fce9b7`.
+
+Each receipt names that exact SHA and its shard, has exitstatus 0 and no
+collection errors. Public identities were decoded using that revision's manifest
+blob `2fb0838411dc914b30f1bcaa17f742369d7a11e6` and the global enumeration in
+`ci_private_transport.py::_identities`, not an index reset per module or shard.
+The existing #526 four-module slice has 168 nodes, #527 five-module slice 171,
+and #529 completion/history-host slice 40. In addition,
+`tests/test_advisory_diagnostics.py` has 321 and
+`tests/test_local_filesystems.py` has 52. These 752 nodes are non-overlapping;
+each occurs exactly once in collected identities and has exactly one passed
+setup, call and teardown report (2256 reports), with no target skip or xfail.
+The existing entry/node maps remain authoritative; no second matrix is added.
+
+This finite result does not cover #532's two new legal-unpublished exporter
+nodes, which are absent from this main manifest. The receipts contain collection
+skips for `test_cross_repo_impact_integration.py`, `test_cross_repo_impact.py`
+and `test_dead_code.py`; those modules receive no pass credit here. This review
+is not installed-wheel evidence, all SDK/provider-path qualification, or native
+qualification of every eligible filesystem. It does not rerun mutations, extend
+the earlier T06/T16 byte comparison, resolve real-close-failure leak freedom or
+metadata cap-plus-one, or grant G13/final #33/#441 acceptance. No issue closes.
+
+## 2026-11-17 shared strict-reader tail static review
+
+The complete-tail reading gap retained in the
+[#441 review](https://github.com/HouMinXi/forge/issues/441#issuecomment-6956401294)
+was subsequently reviewed at fixed source
+`5d524df377244d172f69c90c61877f9810d79337`: `_advisory_diagnostics.py`
+[677–769](https://github.com/HouMinXi/forge/blob/5d524df377244d172f69c90c61877f9810d79337/src/code_forge/_advisory_diagnostics.py#L677),
+`_read_leaf` (477–510), `_Descriptors` (396–420), and
+[`_query_scope_receipt.py` 140–155](https://github.com/HouMinXi/forge/blob/5d524df377244d172f69c90c61877f9810d79337/src/code_forge/_query_scope_receipt.py#L140),
+with corresponding existing assertions. No new blocking finding was identified.
+
+Shape validation does not establish publication or ownership. The reader then
+requires published status, reopens the retained binding and directory identities,
+checks leaf identity, bounded bytes and digest, and applies the namespace-specific
+strict decoder against expected context. Existing assertions distinguish pure
+validation from real reads, replaced directories/leaves, digest-valid invalid
+schema, cross-namespace rejection and foreign context. Descriptor cleanup attempts
+all registered closes and preserves primary exceptions; close-after-success
+injections do not prove leak freedom after an actual failed close.
+
+This closes only that static reading gap. No tests, mutations or runtime
+qualification were performed for this review; earlier execution evidence keeps
+its original SHA. Real-close-failure leak freedom remains **UNVERIFIED**.
+#531's eligible filesystem names are not native-filesystem qualification.
+Metadata cap-plus-one disposition, G13, final applicable-revision review and
+maintainer acceptance remain outstanding. No new matrix, support commitment,
+whole #33/#441 acceptance or issue closure follows.
+
+## 2026-11-17 delivery refresh after #531
+
+The existing draft deliveries #528 and #532 were recomposed with fixed main
+`8e75d8c11c16b4ce94d2756da31de464b1bb294f` by normal merges, retaining their
+previous heads `b0d4a629e5d215c8e3e5a2003e9ac72745ee9493` and
+`c23e903c8cad001ca3afe758f3ed497c072cbaee` as first-parent history.
+This is a delivery-validation update, not another acceptance matrix.
+
+For #532 the validated merged tree is
+`6b28523f3bafad6d9c01bb3cb722ce53c4ceacaf`. Its diff against fixed main
+remains two legal-unpublished exporter tests and their two public identities
+(three files, 22 added lines). On Linux with CPython 3.12.14 and pytest 9.2.0:
+
+- The diagnostic-history, scope-history and query-scope-receipt modules passed
+  all 115 tests without skips.
+- Advisory diagnostics and local-filesystem modules passed all 373 tests
+  without skips, exercising the changed storage admission integration.
+- Invocation-audit passed all 1176 tests without skips with `PYTHONPATH=src`,
+  inherited by its system-Python child processes. The initial combined run
+  had 1660 passes and four child-process failures because that environment
+  variable was missing; a direct system-Python import confirmed the missing
+  module. The corrected full audit-module run resolves those local failures.
+- Manifest validation passed: exact fixed-main inventory plus the two new
+  identities, and all 1664 selected collected identities match the manifest.
+- Pinned Ruff 0.17.3 full-tree check/format and diff whitespace checks passed
+  (1084 files already formatted). No dependencies changed.
+
+Five-lens review found no blocking finding: scope and merge composition;
+input validity and exporter rejection semantics; filesystem/trust boundaries;
+test-oracle and manifest consistency; evidence provenance and claim limits.
+The valid `not_published` inputs pass their independent publication validators
+before real exporters reject them, with no locator or ticket produced.
+No production behavior is changed by #532 relative to fixed main.
+
+For #528, the merge preserved the complete prior acceptance document verbatim;
+only this refresh record is added. Historical evidence and the #526/#527/#529
+limited decisions below retain their original attribution. The original
+168/171/40-node evidence remains bound to
+`d8810a212c79c62f6bce9c1b7e404e33696be8f1`.
+The four-file T06/T16 full-byte comparison below applies only between
+`f21f2cef6c0907778e843a2289cff9ddfcc0b0e4` and
+`5a83797118f96260205942aa72fbad9e60f8510a`; it does not extend to new main.
+In particular, #531 changed the advisory storage source and tests. No historical
+experiment was rerun or reassigned to this refresh.
+
+This local selected verification is not a full-suite, installed-wheel, hosted
+Linux CI or CodeQL result. New-head hosted checks must be evaluated separately;
+prior-head green checks do not qualify the new heads. Both PRs remain drafts.
+G13, metadata cap-plus-one disposition, and whole #33/#441 acceptance remain
+unresolved. No issue closure, PR merge, support expansion or new acceptance
+is implied.
+
+## 2026-11-17 bounded CLI handoff evidence and limited owner acceptance for #529
+
+Related to [#529](https://github.com/HouMinXi/forge/issues/529), parent #33
+and shared evidence #441. This records acceptance of the existing current-run
+CLI diagnostic-ticket opt-in, separate from the #527 historical readers.
+
+The fixed reviewed product/test revision is
+`d8810a212c79c62f6bce9c1b7e404e33696be8f1`.
+The prior independent source review and CI evidence review recorded 21 nodes in
+`tests/test_diagnostic_completion.py` and 19 in
+`tests/test_diagnostic_history_host.py` from
+[Linux run 43906002270](https://github.com/HouMinXi/forge/actions/runs/43906002270).
+All 40 exact manifest nodes passed setup, call and teardown without skips;
+collection and aggregate workflow green alone were not the acceptance evidence.
+The recorded environment was CPython 3.14.10 on Ubuntu 26.04, editable source.
+This supplement consumes that prior recorded review, not a new execution or a
+fresh download/revalidation of the raw execution receipts. The original decision
+and its 40-node review summary were rechecked for this documentation delivery;
+raw phase receipts and environment logs were not reconsumed here. The existing
+node maps remain authoritative; this adds no duplicate acceptance matrix.
+
+The [handoff contract](diagnostic-cli-handoff.md) retains the owner-held original
+`Attempt(expected, publication)` tuple. The worker exports at its existing
+presentation point, then seals the original contexts and publication results
+after capture close is attempted and before the completion event is set.
+Capture-cleanup failure is recorded separately. After the host returns or raises,
+the opt-in CLI caller strictly rereads the original observation using that tuple
+before emitting ticket notices. Publication, capture cleanup, worker completion,
+strict reread and caller delivery remain distinct facts. Unknown publication
+creates no successful locator; worker completion is not total CLI success.
+
+The foreign-ticket replacement control proves that the current expected tuple
+is not rebound from the ticket. It does not prove detection or rejection of disk
+ticket replacement. Observation-artifact deletion is a separate strict-reread
+control; it must not be relabelled as deletion of the exported ticket itself.
+Tickets remain caller-trusted selectors, not same-UID authentication. The
+controlled fixtures do not qualify an installed wheel, the full natural CLI
+flow, all SDK/provider paths, or hard I/O deadlines. Default CLI/MCP and direct
+host callers without a completion slot retain their existing contracts.
+
+On 2026-11-17 the owner explicitly accepted this limited current-run handoff
+after the independent source/CI review and these limits were presented in the
+Forge project chat. There is no public decision permalink; private message
+identifiers are not published. This later documentation revision does not
+reassign execution evidence to current main. #529, #33 and #441 remain open;
+no issue closure, whole G12/G13 qualification, support expansion or automatic
+retry authority follows.
+
+## 2026-11-17 bounded T06/T16 static applicability review
+
+The two T06 and three T16 negative-control executions recorded below remain
+bound to `f21f2cef6c0907778e843a2289cff9ddfcc0b0e4`.
+The independent applicability review compared four complete source/test files
+with main `5a83797118f96260205942aa72fbad9e60f8510a` and found byte-identical
+contents. This documentation delivery independently repeated that full-byte
+comparison and confirmed these Git blob identities:
+
+- `src/code_forge/_advisory_diagnostics.py`:
+  `5c140f1d1266c3d7b50d649f392dc06cfb9017d2`.
+- `src/code_forge/cross_repo_impact.py`:
+  `2f80c2f3c62c8dd07ccdc4165e4face85277f15d`.
+- `tests/test_advisory_diagnostics.py`:
+  `c6869a1c7a7e90749c210e093b760ec734767790`.
+- `tests/test_cross_repo_impact.py`:
+  `7ba58b8494977d563ac288c28c7458deec82e4d1`.
+
+T16's `schema_version=True`, `axis="other"` and repository `future=None`
+controls still assert rejection through the real decoder. T06's final-cap
+removal and extra-hop controls retain their targeted assertions: the output
+count equals the existing cap, and the direct-caller fixture has no infrastructure
+errors and exactly the expected direct finding. The exact selectors, mutations,
+original execution outcomes and retained log hashes remain in the dated records
+below; no new mutation or pytest execution is claimed here.
+
+This closes only the concern that these exact source/test targets drifted
+between the two named revisions. It does not establish whole-repository,
+dependency or environment equivalence, a current-main rerun, exhaustive T06/T16
+coverage, overall G12/G13 qualification, or a physical I/O cap. Metadata
+cap-plus-one disposition and the other retained acceptance obligations remain
+separate. No gate or issue status is changed.
+
+## 2026-11-17 bounded history-reader evidence and limited owner acceptance for #527
+
+Related to [#527](https://github.com/HouMinXi/forge/issues/527), parent #33
+and shared evidence #441. This records a limited decision on the existing
+CLI/MCP diagnostic and scope history readers, not a new interface or support domain.
+
+The reviewed product/test revision is
+`d8810a212c79c62f6bce9c1b7e404e33696be8f1`.
+The prior independent review directly consumed execution receipts from
+[Linux run 43906002270](https://github.com/HouMinXi/forge/actions/runs/43906002270)
+and checked the 171 selected nodes in five history-reader modules against
+identity manifest blob `4d72c843bf1bc5cbd3a0c57abacb8ad149cdbc02`.
+The recorded nodes executed successfully without skips. This records that
+existing CI evidence review, not a new local run, and does not reassign the
+result to this later documentation revision.
+
+The existing entry table and the G04/G09 historical-entry node map remain
+authoritative. This evidence includes fresh CLI reads, the tested real MCP
+stdio restart paths, independent history configuration, and controlled
+cancellation/shutdown drain behavior. The tested history transport is not
+qualification of all live review SDK/provider paths.
+
+On 2026-11-17 the owner explicitly accepted this bounded historical-read
+result after the limits were presented in the Forge project chat. There is
+no public decision permalink; private message identifiers are not published.
+
+Tickets and basenames remain caller-trusted selectors, not signatures,
+same-UID authentication or independent source identity. Cancellation/drain
+evidence does not establish a hard I/O deadline. This decision grants no
+all-storage-domain or all-SDK qualification, source/graph freshness,
+current-run credit, review recovery or automatic retry authority.
+
+The selected execution-evidence gap and this limited owner decision are
+recorded, without promoting whole G/T gates. G13 final acceptance,
+metadata cap-plus-one disposition and other retained obligations remain
+separate. #33 and #441 remain open; no issue closure is authorized.
+
+
+## 2026-11-16 scope-live evidence and limited owner acceptance for #526
+
+Related: [#526](https://github.com/HouMinXi/forge/issues/526), parent #33 and
+shared evidence #441. This reviews existing behavior and records its limited acceptance; it is not
+implementation, support-domain expansion or final acceptance of #33 or #441.
+
+The recorded scope-live decision remains bound to product/test
+`2b2ac9fc18285f78acf5503ded830d256b3a99ff` and [#507](https://github.com/HouMinXi/forge/pull/507).
+Direct Git blob comparison with `d8810a212c79c62f6bce9c1b7e404e33696be8f1`
+found identical bytes for `src/code_forge/cross_repo_impact.py`,
+`src/code_forge/_advisory_diagnostics.py`, `src/code_forge/_query_scope_receipt.py`,
+the four test modules below and `docs/cross-repo-query-scope-v1.md`.
+This is scoped source identity, not whole-repository or environment equivalence.
+
+At that exact later revision, [Linux run 43906002270](https://github.com/HouMinXi/forge/actions/runs/43906002270)
+completed successfully. Its published execution receipts were directly read,
+not inferred from collection or aggregate green. Public IDs were resolved using
+that revision's `scripts/ci_public_test_identities.json` blob
+`4d72c843bf1bc5cbd3a0c57abacb8ad149cdbc02` and the actual
+`ci_private_transport.py::_identities` mapping:
+
+- `tests/test_cross_repo_query_summary.py`: 39 nodes, shard 0,
+  artifact `14246711664` (`linux-shard-0-evidence`).
+- `tests/test_scope_receipt_host.py`: 43 nodes, shard 1,
+  artifact `14246941253` (`linux-shard-1-evidence`).
+- `tests/test_cross_repo_scope_snapshot.py`: 35 nodes, and
+  `tests/test_query_scope_receipt.py`: 51 nodes, shard 2,
+  artifact `14245553883` (`linux-shard-2-evidence`).
+
+All 168 manifest nodes in these four modules appeared in collected identities and had passed setup,
+call and teardown reports, with no missing target node, target skip, xfail or error.
+Each receipt named the exact revision above and exit status 0. This includes all
+four `test_actual_cli_mcp_child_transports_query_summary` parameterizations
+(PASS/FAIL × immediate/background), and all four
+`test_named_target_summary_preserves_natural_gate_and_receipt_bytes`
+parameterizations (False/True × PASS/FAIL). These eight are included in the 39,
+not additional tests. This review consumed existing CI; it did not rerun tests.
+
+This supports the existing bounded distinctions: registration occurrences including
+duplicates, unknown/not-reached versus established empty, successful zero-caller
+queries, partial failures, independent scope receipt consumption and the tested
+text/CLI-child transports. Completed queries are not overall analysis success or
+complete impact coverage. Missing registry retains existing empty-scope discovery
+semantics; absence of a receipt remains unknown. Historical retrieval, whole live
+SDK/provider recovery, graph freshness, multi-hop impact and final G12/G13
+acceptance are not established by these 168 controls. Earlier execution and
+negative-control records retain their original revisions.
+
+The execution-evidence gap for this selected slice at the fixed reviewed revision
+is resolved.
+On 2026-11-16, the owner explicitly accepted the existing registered-scope live
+summary and counts after the stated limits were presented in the Forge project
+chat. Counts include repeated registrations; unknown is not zero, and completed
+queries do not establish whole-repository coverage or overall analysis success.
+This acceptance excludes multi-hop impact and all-real-SDK/provider qualification.
+The reviewed product/test revision remains the exact revision above; this later
+decision record does not reassign execution evidence to a new source revision.
+There is no public decision permalink; no private message identifier is exposed.
+
+This records the limited acceptance decision for this selected #526 slice, not the
+parent roadmap or G13 final acceptance. #33 and #441 remain open. No automatic
+issue closure, broader support, metadata cap-plus-one approval, or disposition
+of historical #443/#444 candidates is authorized by this decision.
+
 ## 2026-11-16 T16 three selector-specific negative controls
 
 Executed revision remains `f21f2cef6c0907778e843a2289cff9ddfcc0b0e4`,
@@ -3013,7 +3585,7 @@ tests/test_cross_repo_persistent_diagnostic.py::test_surrogate_registry_alias_pr
 
 ##### G04/G09 separate historical entries
 
-Oracle: explicitly selected caller-trusted saved context, fixed historical projection/current_run_credit=false, actual SDK/stdio child restarts, independently configured roots and exact cancellation/drain ownership. Limits: these additional history entries are not original live T20 or current-review credentials; a ticket basename is not independent origin authentication. Current runtime NOT_RUN; scope-live count semantics received separate limited owner approval on 2026-11-14 above, without expanding v1 or granting execution credit.
+Oracle: explicitly selected caller-trusted saved context, fixed historical projection/current_run_credit=false, actual SDK/stdio child restarts, independently configured roots and exact cancellation/drain ownership. Limits: these additional history entries are not original live T20 or current-review credentials; a ticket basename is not independent origin authentication. The original mapping recorded Current runtime NOT_RUN. Execution evidence and limited owner acceptance for the selected history-reader slice are now recorded in the 2026-11-17 #527 supplement above; unlisted controls and broader guarantees retain their separate status. Scope-live count semantics received separate limited owner approval on 2026-11-14 above, without expanding v1 or granting execution credit.
 
 <details>
 <summary>Exact static parameter identities (execution status: exact dated supplements; otherwise NOT_RUN)</summary>

@@ -12,6 +12,7 @@ import struct
 import sys
 import time
 from types import SimpleNamespace
+import tomllib
 import zipfile
 
 import pytest
@@ -102,6 +103,24 @@ def private_case(tmp_path, gate, source, *, raw=None):
     return root, private, tmp_path / "public", raw
 
 
+def _pinned_ruff(source):
+    dev = tomllib.loads(source["files"]["pyproject.toml"].decode())["project"]["optional-dependencies"][
+        "dev"
+    ]
+    pins = [item for item in dev if item.startswith("ruff==")]
+    assert len(pins) == 1, pins
+    return pins[0]
+
+
+def _unreviewed_ruff_pins(pinned):
+    name, _, version = pinned.partition("==")
+    major, minor, patch = version.split(".")[:3]
+    older = f"{name}=={major}.{minor}.{max(0, int(patch) - 1)}"
+    newer = f"{name}=={major}.{minor}.{int(patch) + 1}"
+    assert pinned not in (older, newer)
+    return older, newer
+
+
 def test_closed_member_map_metadata_and_record_are_public_source_derived(gate, source):
     members = gate.expected_members(source)
     assert [name for name, _, _ in members] == [
@@ -117,10 +136,16 @@ def test_closed_member_map_metadata_and_record_are_public_source_derived(gate, s
         gate.DIST_INFO + "/RECORD",
     ]
     contents = {name: data for name, data, _ in members}
+    metadata = contents[gate.DIST_INFO + "/METADATA"]
     assert contents[gate.DIST_INFO + "/licenses/LICENSE"] == source["files"]["LICENSE"]
-    assert contents[gate.DIST_INFO + "/METADATA"].split(b"\n\n", 1)[1] == source["files"]["README.md"]
+    assert metadata.split(b"\n\n", 1)[1] == source["files"]["README.md"]
     assert b"Generator: setuptools (84.2.1)\n" in contents[gate.DIST_INFO + "/WHEEL"]
-    assert b"Dynamic: license-file\n" in contents[gate.DIST_INFO + "/METADATA"]
+    assert b"Dynamic: license-file\n" in metadata
+    pinned = _pinned_ruff(source)
+    assert gate.REQUIREMENTS[pinned] == pinned
+    assert [line for line in metadata.split(b"\n") if line.startswith(b"Requires-Dist: ruff")] == [
+        b"Requires-Dist: " + pinned.encode() + b'; extra == "dev"'
+    ]
     assert contents[gate.DIST_INFO + "/RECORD"].endswith((gate.DIST_INFO + "/RECORD,,\n").encode())
     assert all(CANARY.encode() not in data for _, data, _ in members)
 
@@ -303,8 +328,12 @@ def test_unreviewed_source_layout_is_rejected(gate, source, path):
 
 def test_unreviewed_backend_or_dependency_metadata_fails_closed(gate, source):
     original = source["files"]["pyproject.toml"]
+    pinned = _pinned_ruff(source)
+    older, newer = _unreviewed_ruff_pins(pinned)
     for old, new in (
         (b"pyyaml>=6.0", b"unreviewed>=1"),
+        (pinned.encode(), older.encode()),
+        (pinned.encode(), newer.encode()),
         (b"semgrep>=1.176,<1.183", b"semgrep>=1.176,<1.184"),
         (b"semgrep>=1.176,<1.186", b"semgrep>=1.176,<1.187"),
         (b"platform_system != 'Darwin' or", b"platform_system != 'Darwin' and"),

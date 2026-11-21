@@ -1050,3 +1050,27 @@ def test_all_actual_send_paths_normalize_late_admission_without_recovery(
     assert host.attempts[-1].finished and not host.attempts[-1].entered
     assert host.attempts[-1].captured is None
     assert host.events[-1][2]["error_class"] == "SendDeadlineBeforeNetwork"
+
+
+def test_an_elapsed_budget_stops_before_a_ticket_is_created():
+    """A ticket submitted past its deadline can only expire, so refuse it first."""
+    starts = []
+
+    class Scope:
+        def start(self, request, **options):
+            starts.append(options["deadline"])
+            return None
+
+    parent = SimpleNamespace(
+        _deadline=time.monotonic() - 0.05,
+        _active=None,
+        _opens=0,
+        _transport=None,
+        scope=Scope(),
+        cause="initial",
+        backend_name="openai",
+        model="test-model",
+    )
+    with pytest.raises(invocation_send_audit.SendDeadlineBeforeNetwork):
+        invocation_send_audit._SendOpener(parent).open(object(), timeout=5.0)
+    assert starts == [], "an expired budget must not create an audit ticket"
