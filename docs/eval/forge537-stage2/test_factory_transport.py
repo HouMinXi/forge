@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import http.client
 import io
 import json
+import os
 import subprocess
 import sys
 from unittest.mock import patch
@@ -139,6 +140,19 @@ def test_actual_cli_subprocess_outlet_capped(tmp_path, monkeypatch, capsys, prox
     from code_forge.cli import main
     from code_forge.trust import record_trust
     import yaml
+
+    empty_git_dir = tmp_path / "empty-git"
+    empty_git_dir.mkdir()
+    # Share the same Git isolation with fixture setup and CLI subprocesses.
+    for name in tuple(os.environ):
+        if name.startswith("GIT_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_TEMPLATE_DIR", str(empty_git_dir))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(empty_git_dir))
 
     def git(*args):
         subprocess.run(["git", *args], cwd=repo, capture_output=True, check=True)

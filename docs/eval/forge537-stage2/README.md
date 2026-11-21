@@ -1,44 +1,56 @@
-# Forge #537 Stage 2: local provider smoke
+# Forge #537 Stage 2: provider smoke archive
 
-Status: draft experiment, not a production feature or a merge recommendation.
-The experiment exercises a real configured provider when its operator asks for
-one run. It runs **on your workstation**, but the inner Forge mode is explicitly
-`ci` with the subprocess outlet. This is not a Forge LOCAL three-clean-round
-run, a hosted GitHub Actions measurement, or a comparison with MCP.
+## Stage 2 disposition
 
-## What the experiment measures
+Stage 2 is closed. Keep **A** as the default. Do not rerun the provider smoke
+or the four-case pilot, and do not start **C₀**. The commands in this archive
+are offline checks with synthetic replies and mock transport.
 
-- Control **A** renders the shared L1–L5 card block. Variant **B** removes only
-  cards not assigned to that pass. Rules, 1/2/2 assignments, ordering, source
-  evidence, grouping, and response contract stay fixed. Before each B send,
-  verify equality against the corresponding A prompt after only that deletion.
-- The candidate is one generated, committed Python change in a disposable
-  repository, not the current checkout or a real project diff. The two arms
-  start with separate Forge state. This version pins
-  `a72dc5a990194494c875fac7b783436b30ed272d`, the Stage 1 merge, to avoid
-  moving the control when main changes.
-- Each arm gets one attempt per pass. Allow at most six model POST attempts
-  from Forge to the explicitly pinned HTTPS host and path; count failed
-  attempts and refuse retries, redirects, and other AI requests. This is a
-  guard at Forge's stdlib HTTP request boundary, not a general machine network
-  policy or a cap on gateway-internal routing.
-- Both arms use the `agnes-cn` alias/model and one output-limit field of
-  exactly 131,072 tokens per request. The wire check is independent of the
-  profile check. Start B only if all three A replies cleared the fixture's
-  L1 factory schema and excerpt checks. A rejected pass can still have usage.
-- Capture only aggregate metadata: admitted attempts, validated slots,
-  per-pass usage (including cache when reported), and per-arm elapsed time.
-  Missing usage is `null`, not zero. A `l1-only-smoke` result is not a
-  Forge PASS or receipt; non-L1 stages can fail because their requests are
-  intentionally refused. There is no quality or billing conclusion from one
-  synthetic sample. Do not count this toward LOCAL acceptance or change a gate.
+The later, separate four-case workstation pilot had 24 validated replies.
+After deduplication, both arms caught the same three known defects and
+neither reported a finding on the clean case. B used 2,192 fewer input
+tokens (15.0%) but 7,790 more output tokens, a net increase of 5,598
+(16.2%). These usage counts describe synthetic cases. They do not establish
+cost or recall on real changes. The paired runner was separate from this PR.
 
-## Prepare a disposable checkout
+See the [locked assessment and reveal](https://github.com/HouMinXi/forge/pull/547#issuecomment-7036791249)
+and [recorded decision](https://github.com/HouMinXi/forge/pull/547#stage-2-disposition).
+Production review continues under the frozen
+[Stage 1 contract](https://github.com/HouMinXi/forge/issues/537#issuecomment-6999075145).
 
-Run from this PR checkout with Git, Python 3.12+, Ruff, and Forge's declared
-development dependencies available. Use an environment without custom Git
-hooks or trace/debug settings. The patch is experiment input, not a source
-change in this PR. Leave it out of your ordinary checkout.
+## What the original smoke measured
+
+The workstation smoke ran Forge in `ci` mode with the subprocess outlet.
+Its `l1-only-smoke` result records fixture validation. Forge PASS and LOCAL
+three-clean-round acceptance require separate review evidence.
+
+- Control **A** rendered the shared L1–L5 card block. Variant **B** removed
+  only cards outside the assigned pass. Rules, 1/2/2 assignments, ordering,
+  source evidence, grouping, and the response contract stayed fixed. The
+  comparison checked each B prompt against its A counterpart after removing
+  only those cards.
+- The input was one generated, committed Python change in a disposable
+  repository. The arms began with separate Forge state and used Stage 1
+  merge `a72dc5a990194494c875fac7b783436b30ed272d` as the control.
+- The fixture allowed one attempt per pass and at most six model POST
+  attempts at Forge's HTTP request boundary. The cap counted failed
+  attempts and refused retries, redirects, and other AI requests. Its
+  coverage ended at Forge's transport before any gateway-internal routing.
+- Both arms used the historical `agnes-cn` alias and one output-limit field
+  of 131,072 tokens per request. The fixture checked the wire body
+  independently of the profile. B could start after all three A replies
+  cleared the L1 factory schema and excerpt checks.
+- The recorded metadata covered admitted attempts, validated slots, per-pass
+  usage including cache when reported, and elapsed time per arm. Absent
+  usage appears as `null`. The transport guard could refuse requests from
+  stages outside L1.
+
+## Offline verification
+
+From this archive checkout, use Git, Python 3.12+, Ruff, and the dependencies
+for the focused tests below. Use a network-disabled environment with provider
+credentials absent and custom Git hooks and tracing disabled. The frozen
+overlay is test input for the disposable checkout.
 
 ```sh
 tool="$PWD/docs/eval/forge537-stage2"
@@ -47,87 +59,13 @@ control="$scratch/forge"
 git worktree add --detach "$control" a72dc5a990194494c875fac7b783436b30ed272d
 git -C "$control" apply --check "$tool/experiment-overlay.patch"
 git -C "$control" apply "$tool/experiment-overlay.patch"
-export PYTHONPATH="$control/src:$control:$tool"
-```
 
-Offline checks, from the control worktree:
-
-```sh
-(cd "$control" && env -u FORGE_EXPERIMENT_537_ARM python -m pytest -q \
+(cd "$control" && env -u FORGE_EXPERIMENT_537_ARM \
+  PYTHONPATH="$control/src:$control:$tool" python -m pytest -q \
   tests/test_lens_prompts.py \
-  "$tool/test_overlay.py" "$tool/test_transport_cap.py" "$tool/test_factory_transport.py")
+  "$tool/test_overlay.py" "$tool/test_factory_transport.py")
 ```
 
-## Use your local approved Omni route
-
-Start from a terminal where the credential is already loaded. Do not print
-it, paste it into the PR, or put it into a config file. Use a separate
-`config.yaml` under a private directory and set `FORGE_CONFIG_DIR` to that
-directory for the two commands below. Reuse your **own verified HTTPS** Omni
-base URL (ending in `/v1`, no trailing slash). The exact same URL must be
-supplied as `--expected-base-url`. Do not replace an unsupported route with
-another destination or disable TLS verification.
-
-Example configuration, without any secret value:
-
-```yaml
-backends:
-  agnes-cn:
-    type: api
-    format: openai
-    model: agnes-cn
-    base_url: https://omni.example.invalid/v1
-    api_key_env: OMNIROUTE_API_KEY
-    max_tokens: 131072
-    stream: true
-    timeout_s: 2400
-    headers:
-      x-omniroute-no-cache: "true"
-      x-omniroute-no-memory: "1"
-      x-omniroute-compression: "off"
-```
-
-Set `OMNI_BASE_URL` to the approved URL from the example config after
-substituting your actual URL. The first command only checks local config and
-credential presence; `ready-no-sends` is not an authentication result. If
-you already have an authenticated model-list check for the same origin, use
-it to verify the account and alias before spending requests.
-
-```sh
-python "$tool/run_smoke.py" --expected-base-url "$OMNI_BASE_URL"
-```
-
-Only if preflight reports `ready-no-sends` and you want to spend the agreed
-budget, run this **once**. Do not retry automatically after failure or
-incomplete results, and do not switch models.
-
-```sh
-python "$tool/run_smoke.py" --expected-base-url "$OMNI_BASE_URL" --execute
-```
-
-Share only the one-line JSON summary. No prompt, reply, credential, config
-path, or endpoint is needed. After inspection, remove just this disposable
-worktree. Reverse the experiment patch with
+After inspection, reverse the overlay in that disposable worktree with
 `git -C "$control" apply -R "$tool/experiment-overlay.patch"`, then use
-`git worktree remove "$control"`. Do not force removal if Git reports any
-other changes.
-
-## Stage 2 disposition
-
-Keep **A** as the default. Do not start **C₀** or rerun the four pilot cases.
-The commands above document how the original smoke was run; they are not
-a request to repeat the experiment. No production review settings change.
-
-The later, separate four-case workstation pilot had 24 validated replies.
-After deduplication, both arms caught the same three known defects and
-neither reported a finding on the clean case. B used 2,192 fewer input
-tokens (15.0%) but 7,790 more output tokens, a net increase of 5,598
-(16.2%). These are usage counts for synthetic cases, not a cost estimate
-or evidence of equivalent recall on real changes. The paired runner is
-not included in this PR.
-
-See the [locked assessment and reveal](https://github.com/HouMinXi/forge/pull/547#issuecomment-7036791249)
-and [recorded decision](https://github.com/HouMinXi/forge/pull/547#stage-2-disposition).
-Neither the smoke nor the pilot qualifies a Forge review, changes the
-frozen [Stage 1 contract](https://github.com/HouMinXi/forge/issues/537#issuecomment-6999075145),
-or enables a new production route.
+`git worktree remove "$control"` if Git reports a clean worktree.
