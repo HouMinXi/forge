@@ -113,25 +113,98 @@ def test_falsifier_observation_is_not_relabelled_as_receipt_failure():
     assert "host-receipt-diagnostics" not in line
 
 
-def test_cli_adds_only_human_clarification(monkeypatch, capsys, tmp_path):
-    from code_forge import __version__, cli
+def _invoke_failure(pass_name, error=None):
+    from code_forge.state import record_provider_failure
 
-    state = State(verdict=Verdict.FAIL, findings=[_receipt()])
-    original = copy.deepcopy(state)
-    log = build_sarif_log(state, {}, __version__)
-    prepared = prepare_report_views(
-        prepare_legacy_report(
-            log,
-            stdout=json.dumps(log, ensure_ascii=False, allow_nan=False),
-            stderr=format_summary(state),
-        ),
-        classify_report_records(state),
+    finding = StateFinding(
+        id=f"l1-{pass_name}-invoke-fail",
+        fingerprint=f"invoke-fail-{pass_name}",
+        source="INFRA",
+        disposition=Disposition.CONFIRMED,
+        file="<llm-invoke>",
+        line_range=[0, 0],
+        description="Review response could not be completed",
     )
-    monkeypatch.setattr(cli, "_load_state", lambda path: state)
-    monkeypatch.setattr(cli, "_load_advisories", lambda path: [])
-    cli._emit_ci_output(tmp_path / "state.json", {})
-    output = capsys.readouterr()
-    assert output.out == prepared.stdout + "\n"
-    assert output.err.splitlines()[0] == format_summary(state)
-    assert "host-receipt-diagnostics=1 " in output.err
-    assert state == original
+    if error is not None:
+        record_provider_failure(finding, error, include_private_details=False)
+    return finding
+
+
+def test_cli_adds_only_human_clarification(capsys, tmp_path):
+    from code_forge import __version__, cli
+    from code_forge.llm_invoke import InvalidJSONResponseError, _TruncatedResponse
+    from code_forge.state import Mode, derive_pass_outcomes, load_state, save_state
+
+    protocol = _invoke_failure(
+        "qodo",
+        InvalidJSONResponseError(
+            "API response content is not valid JSON",
+            raw_response="The review completed.",
+            exit_code=0,
+            kind="no_json",
+            retryable=False,
+        ),
+    )
+    truncated = _invoke_failure(
+        "expert",
+        _TruncatedResponse(
+            "Review output reached its configured token limit",
+            content="",
+            usage_data={"prompt_tokens": 64, "completion_tokens": 32},
+            resolved_cap=32,
+            kind="truncated",
+            retryable=False,
+        ),
+    )
+    product = StateFinding(
+        "doc-example",
+        "doc-example",
+        "L1",
+        Disposition.CONFIRMED,
+        "docs/example.md",
+        [7, 7],
+        "The example omits its required input.",
+    )
+    legacy = _invoke_failure("adversarial")
+    cases = [
+        ("receipt", [_receipt()], 1, 0),
+        ("protocol", [protocol], 1, 1),
+        ("capacity", [truncated], 0, 0),
+        ("product", [product], 1, 0),
+        ("legacy", [legacy], 1, 0),
+        ("mixed", [protocol, truncated, product, legacy], 3, 1),
+    ]
+    path = tmp_path / "state.json"
+    for name, findings, products, failures in cases:
+        save_state(State(mode=Mode.CI, verdict=Verdict.FAIL, findings=findings), path)
+        snapshot = path.read_bytes()
+        state = load_state(path)
+        projection = classify_report_records(state)
+        outcomes = derive_pass_outcomes(state.findings)
+        summary = format_summary(state)
+        log = build_sarif_log(state, {}, __version__)
+        prepared = prepare_report_views(
+            prepare_legacy_report(
+                log,
+                stdout=json.dumps(log, ensure_ascii=False, allow_nan=False),
+                stderr=summary,
+            ),
+            projection,
+        )
+        assert projection.product_list_count == products, name
+        assert len(log["runs"][0]["results"]) == products, name
+
+        cli._emit_ci_output(path, {})
+        output = capsys.readouterr()
+        assert output.out == prepared.stdout + "\n", name
+        expected_stderr = [summary, format_classification_line(prepared.report_classification)]
+        if failures:
+            expected_stderr.append(
+                f"code-forge: review service protocol failures={failures} [included in findings]"
+            )
+        assert output.err.splitlines() == expected_stderr, name
+        assert path.read_bytes() == snapshot, name
+        restored = load_state(path)
+        assert restored.verdict is Verdict.FAIL and not restored.converged, name
+        assert classify_report_records(restored) == projection, name
+        assert derive_pass_outcomes(restored.findings) == outcomes, name
