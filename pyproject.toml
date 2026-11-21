@@ -50,8 +50,8 @@ semgrep = [
     # Widen a cap only with scanner and packaging qualification. PATH tools
     # must use the same admitted range; `forge doctor` audits the extra.
     # 1.183 drops Intel macOS binaries, including x86_64 Python under Rosetta.
-    "semgrep>=1.176,<1.183; platform_system == 'Darwin' and platform_machine == 'x86_64'",
-    "semgrep>=1.176,<1.186; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+    "semgrep>=1.176,<1.187; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+    "semgrep>=1.176,<1.187; platform_system != 'Darwin' or platform_machine != 'x86_64'",
 ]
 # Only the corpus GENERATOR needs this -- building tests/eval/swebench from
 # SWE-bench_Verified. The generated corpus is committed, so running an
