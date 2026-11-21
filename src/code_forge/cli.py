@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -3561,7 +3562,18 @@ def _merge_contract_spec(
     backend=None,
     warn_fn=None,
 ) -> str:
-    """Merge contracts.yaml digest with --contract file content.
+    """Merge contracts.yaml digest with --contract file content."""
+    merged, _ = _prepare_contract_spec(yaml_digest, file_content, backend, warn_fn)
+    return merged
+
+
+def _prepare_contract_spec(
+    yaml_digest: str,
+    file_content: str,
+    backend=None,
+    warn_fn=None,
+) -> tuple[str, tuple[str, str]]:
+    """Render the contract and return the resolved --contract body and exemptions.
 
     Optionally summarizes large file content (>4KB bytes) when backend
     is available. The summarization threshold applies to the contract
@@ -3578,8 +3590,9 @@ def _merge_contract_spec(
         warn_fn: Optional callable for warnings.
 
     Returns:
-        Merged contract spec string, or "" if both inputs empty.
+        The merged spec and the two resolved --contract components.
     """
+    effective_content = ""
     do_not_flag = ""
     merged = ""
     if yaml_digest:
@@ -3616,7 +3629,7 @@ def _merge_contract_spec(
         merged += _CONFIRMATION_BIAS_DIRECTIVE
     if do_not_flag:
         merged += _DO_NOT_FLAG_PREAMBLE + "\n" + do_not_flag
-    return merged
+    return merged, (effective_content, do_not_flag)
 
 
 # -- Focus merge + trust-gated gate.yaml read -------------------------------
@@ -4833,12 +4846,26 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
             cwd,
             backend=backend,
         )
-    _contract_spec_a = _merge_contract_spec(
-        _yaml_digest_a,
-        _contract_file_content,
-        backend=backend,
-        warn_fn=warn,
-    )
+    # Without L1 over a diff, only matching L0 tools provide file coverage.
+    coverage_l1_active = engine_choice != "stub" and bool(resolved.git_diff)
+    local_contract_sha256 = None
+    if (
+        mode == Mode.LOCAL
+        and outlet == "subprocess"
+        and resolved.target_kind == "WORKING"
+        and coverage_l1_active
+    ):
+        _contract_spec_a, contract_parts = _prepare_contract_spec(
+            _yaml_digest_a, _contract_file_content, backend=backend, warn_fn=warn
+        )
+        # The empty pair identifies a review that had no effective --contract input.
+        local_contract_sha256 = hashlib.sha256(
+            json.dumps(contract_parts, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    else:
+        _contract_spec_a = _merge_contract_spec(
+            _yaml_digest_a, _contract_file_content, backend=backend, warn_fn=warn
+        )
 
     # Pre-loop context sources (Phase 59-B1/B2): blast radius from graph
     # triage today, MCP fact servers next. gather() runs each source in
@@ -5158,11 +5185,6 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
             file=sys.stderr,
         )
 
-    # Coverage gate inputs: L1 examines every changed file only when it
-    # actually runs over a diff (engine != stub AND a non-empty git diff).
-    # A non-git review or the stub engine leaves L1 inactive, so only L0
-    # tool matches provide per-file coverage.
-    coverage_l1_active = engine_choice != "stub" and bool(resolved.git_diff)
     from .coverage import load_coverage_exempt_patterns
 
     try:
@@ -5302,6 +5324,7 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
                 ctx_contract=bool(_contract_spec_a),
                 ctx_whole_file=bool(_whole_file),
                 ctx_canary=_load_canary_config(args, gate_data) is not None,
+                local_contract_sha256=local_contract_sha256,
                 **({"invocation_audit": ordinary_audit} if ordinary_audit is not None else {}),
             )
             # Keep advice and the final state reload in the same review lock.
@@ -5373,6 +5396,7 @@ def _run_hold_loop(
     ctx_contract=False,
     ctx_whole_file=False,
     ctx_canary=False,
+    local_contract_sha256=None,
     invocation_audit=None,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
@@ -5442,6 +5466,7 @@ def _run_hold_loop(
             ctx_contract=ctx_contract,
             ctx_whole_file=ctx_whole_file,
             ctx_canary=ctx_canary,
+            local_contract_sha256=local_contract_sha256,
             **({"invocation_audit": invocation_audit} if invocation_audit is not None else {}),
         )
         verdict = sm.run()
