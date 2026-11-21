@@ -3440,6 +3440,7 @@ class StateMachine:
 
         # A language with a registered adapter needs the baseline command.
         # Unmapped suffixes still skip without a gate.yaml.
+        from .factories import _MissingMutmutRunner
         from .mutation_dispatch import adapter_for_path
 
         from .mutation import run_mutation, _mutation_outcome
@@ -3611,6 +3612,12 @@ class StateMachine:
                         # is a clean skip in both modes.
                         self._mutation_bound_failure = True
                         self._state.infra_errors.append(_ci_skip_reason(kind, l2_findings))
+            elif (
+                self.mode == Mode.CI
+                and not needs_baseline
+                and type(self.l2_runner) is _MissingMutmutRunner
+            ):
+                self._apply_not_applicable_policy(l2_findings, diff_files)
             elif self.mode == Mode.CI and any(
                 f.id == "MUTATION_SKIPPED"
                 and f.fingerprint

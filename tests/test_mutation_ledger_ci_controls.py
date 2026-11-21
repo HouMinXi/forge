@@ -2430,6 +2430,82 @@ def test_ci_docs_only_switch_off_fails(ci_project, monkeypatch):
     assert "CI: mutation not measured: no mutation adapter covers: README.md" in saved.infra_errors
 
 
+def _ci_with_working_path(project, path, runner):
+    _git(project.root, "add", "--intent-to-add", "--", path)
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("WORKING"),
+        [Path(path)],
+        project.root,
+    )
+    assert review.git_diff
+    machine = _machine(project, runner=runner, review=review)
+    machine.coverage_exempt_patterns = [path]
+    return machine
+
+
+@pytest.mark.parametrize(
+    "path,contents,docs_skip,verdict",
+    [
+        pytest.param("docs/guide.md", "# Guide\n", True, Verdict.PASS, id="allowlisted-doc"),
+        pytest.param("Main.java", "class Main {}\n", True, Verdict.FAIL, id="unmapped-source"),
+        pytest.param("docs/guide.md", "# Guide\n", False, Verdict.FAIL, id="docs-skip-disabled"),
+    ],
+)
+def test_ci_missing_mutmut_applies_docs_policy(
+    ci_project, monkeypatch, path, contents, docs_skip, verdict
+):
+    from code_forge import machine as machine_mod
+
+    p = ci_project
+    assert shutil.which("mutmut") is None
+    monkeypatch.setattr(machine_mod, "CI_DOCS_ONLY_MUTATION_SKIP_PASSES", docs_skip)
+    target = p.root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(contents, encoding="utf-8")
+    machine = _ci_with_working_path(p, path, build_l2_runner(cwd=p.root))
+
+    assert machine.run() is verdict
+    saved = _saved(p, verdict)
+    if verdict is Verdict.FAIL:
+        assert f"CI: mutation not measured: no mutation adapter covers: {path}" in saved.infra_errors
+    assert not p.commands and not p.launches
+
+
+def test_ci_missing_mutmut_applies_doc_symlink_policy(ci_project):
+    p = ci_project
+    assert shutil.which("mutmut") is None
+    path = "docs/guide.md"
+    target = p.root / path
+    target.parent.mkdir()
+    target.with_name("plain.md").write_text("# Guide\n", encoding="utf-8")
+    target.symlink_to("plain.md")
+    machine = _ci_with_working_path(p, path, build_l2_runner(cwd=p.root))
+
+    assert machine.run() is Verdict.FAIL
+    saved = _saved(p, Verdict.FAIL)
+    assert f"CI: mutation not measured: symlinked files are not measured: {path}" in saved.infra_errors
+    assert not p.commands and not p.launches
+
+
+def test_ci_custom_runner_keeps_no_adapter_verdict(ci_project):
+    p = ci_project
+    path = "Main.java"
+    (p.root / path).write_text("class Main {}\n", encoding="utf-8")
+    fallback = build_l2_runner(cwd=p.root)
+
+    def custom_runner(*args, **kwargs):
+        return fallback(*args, **kwargs)
+
+    machine = _ci_with_working_path(p, path, custom_runner)
+
+    assert machine.run() is Verdict.PASS
+    saved = _saved(p, Verdict.PASS)
+    skips = [f for f in saved.findings if f.fingerprint == "mutation-no-adapter"]
+    assert skips and all(f.disposition is Disposition.DISMISSED for f in skips)
+    assert not saved.infra_errors and not p.commands and not p.launches
+
+
 @pytest.mark.parametrize(
     "files",
     [

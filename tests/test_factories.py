@@ -297,6 +297,45 @@ class TestBuildL2Runner:
             assert len(infra) == 1
             assert "not found" in infra[0]
 
+    def test_empty_diff_without_mutmut_returns_no_findings(self):
+        from code_forge.factories import build_l2_runner
+
+        with patch("code_forge.factories.shutil.which", return_value=None):
+            runner = build_l2_runner()
+
+        assert runner([], ["pytest"]) == ([], [])
+
+    @pytest.mark.parametrize(
+        "path", ["docs/configuration.md", "assets/data.unknown"], ids=["docs-only", "unmapped"]
+    )
+    def test_no_adapter_without_mutmut_is_dismissed(self, path):
+        from code_forge.factories import build_l2_runner
+
+        with patch("code_forge.factories.shutil.which", return_value=None):
+            findings, infra = build_l2_runner()([path], ["pytest"])
+
+        assert len(findings) == 1
+        finding = findings[0]
+        assert finding.fingerprint == "mutation-no-adapter"
+        assert finding.id == "MUTATION_SKIPPED"
+        assert finding.source == "MUTANT"
+        assert finding.disposition == Disposition.DISMISSED
+        assert finding.description == "no registered mutation adapter for this diff"
+        assert finding.file == ""
+        assert finding.line_range == []
+        assert infra == []
+
+    def test_python_and_markdown_without_mutmut_still_require_it(self):
+        from code_forge.factories import build_l2_runner
+
+        with patch("code_forge.factories.shutil.which", return_value=None):
+            findings, infra = build_l2_runner()(["docs/configuration.md", "src/app.py"], ["pytest"])
+
+        assert len(findings) == 1
+        assert findings[0].fingerprint == "mutation-unavailable"
+        assert findings[0].disposition == Disposition.CONFIRMED
+        assert infra == ["mutmut not found on PATH"]
+
     def test_typescript_without_mutmut_names_stryker(self):
         """A TypeScript diff must not be reported as a missing mutmut.
 
@@ -307,12 +346,16 @@ class TestBuildL2Runner:
         with patch("code_forge.factories.shutil.which", return_value=None):
             from code_forge.factories import build_l2_runner
 
-            findings, _infra = build_l2_runner()(["src/app.ts"], ["pytest"])
+            findings, infra = build_l2_runner()(["src/app.ts"], ["pytest"])
+        assert len(findings) == 1
         assert findings[0].id == "MUTATION_SKIPPED"
+        assert findings[0].fingerprint == "mutation-other-adapter"
+        assert findings[0].disposition == Disposition.DISMISSED
         assert "js-stryker" in findings[0].description
         assert "mutmut not installed" not in findings[0].description
         assert "mutation run:" in findings[0].description
         assert "scanned " in findings[0].description
+        assert infra == []
 
 
 class TestBuildE2eChecker:
