@@ -15,6 +15,7 @@ until some unrelated review fails.
     forge-provider.py default glm-flash
     forge-provider.py set review-default --base-url https://new.host/anthropic
     forge-provider.py rename old-name new-name
+    forge-provider.py remove glm-flash        # refuses if it is still the default
     forge-provider.py trust [--fix]
     forge-provider.py rollback
 
@@ -1175,6 +1176,112 @@ def cmd_trust(args):
     return 0
 
 
+def remove_backend(path, name, stamp, dry_run, *, require_trust=False):
+    """Delete one backend's block. Returns (did_remove, reason).
+
+    Refuses a block that carries `default: true`: forge would then resolve no
+    default at all and pick whatever else the resolver finds, which is a silent
+    backend change rather than the cleanup the caller asked for. Point the
+    default at the survivor first, then remove.
+
+    Only the block is deleted. The name also appears in comments and in other
+    backends' prose; rewriting those would change meaning the caller never
+    asked to change.
+    """
+    import yaml  # noqa: PLC0415 - validate semantics without reformatting the file
+
+    text = read_config(path)
+    span = find_backend(text, name)
+    if not span:
+        return False, "not declared"
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return False, "invalid YAML; repair the config first"
+    backends = data.get("backends") if isinstance(data, dict) else None
+    if not isinstance(backends, dict) or not isinstance(backends.get(name), dict):
+        return False, "backend is not a mapping"
+    if require_trust:
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
+        from code_forge.trust import (  # noqa: PLC0415
+            is_trusted,
+            is_trusted_focus,
+            is_trusted_lenses,
+        )
+
+        if not (
+            is_trusted(path, data) and is_trusted_focus(path, data) and is_trusted_lenses(path, data)
+        ):
+            return False, "is not trusted; review and authorize the config before removal"
+    # Match the resolver's truth test, including YAML's yes/on spellings.
+    if backends[name].get("default", False):
+        return False, "is the review default; move the default first"
+
+    block = backends_block(text)
+    if not block:
+        return False, "no backends block"
+    lo, hi = block
+    key = re.search(rf"^([ \t]+){re.escape(name)}:(?=[ \t]*\r?$)", text[lo:hi], re.MULTILINE)
+    if not key:
+        return False, "key line did not match"
+
+    start = lo + key.start()
+    new_text = text[:start] + text[span[1] :]
+    if new_text == text:
+        return False, "nothing to remove"
+    if not list_backends(new_text):
+        return False, "would leave no backends; delete the file's block by hand if that is intended"
+    try:
+        remaining = yaml.safe_load(new_text)
+    except yaml.YAMLError:
+        return False, "removal would leave invalid YAML"
+    expected = {**data, "backends": {key: value for key, value in backends.items() if key != name}}
+    if remaining != expected:
+        return False, "removal would change surviving config values"
+    if not dry_run:
+        backup(path, stamp)
+        write_config(path, new_text)
+    return True, None
+
+
+def cmd_remove(args):
+    """Delete a backend from every config that declares it."""
+    stamp = dt.datetime.now().astimezone().strftime(BACKUP_FMT)
+    configs = find_configs()
+    removed = []
+    refused = []
+    declared = 0
+
+    for path in configs:
+        text = read_config(path)
+        if not find_backend(text, args.name):
+            continue
+        declared += 1
+        did, why = remove_backend(
+            path, args.name, stamp, args.dry_run, require_trust=path != USER_CONFIG
+        )
+        if did:
+            removed.append(path)
+            print(f"  {path}")
+        else:
+            refused.append((path, why))
+            print(f"  skipped {path}: {why}", file=sys.stderr)
+
+    if declared == 0:
+        print(f"no config declares '{args.name}'", file=sys.stderr)
+        return 1
+
+    verb = "would remove" if args.dry_run else "removed"
+    print(f"\n{verb} '{args.name}' from {len(removed)} of {declared} declaring file(s)")
+    report_trust(reseal_trust(removed, args.dry_run), args.dry_run)
+    if not args.dry_run and removed:
+        print(f"backups: <file>{stamp}")
+    if refused:
+        print(f"{len(refused)} file(s) kept it; see the reasons above", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_rename(args):
     """Rename a backend everywhere, carrying its default flag and trust."""
     stamp = dt.datetime.now().astimezone().strftime(BACKUP_FMT)
@@ -1292,6 +1399,10 @@ def main():
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_default)
 
+    p = sub.add_parser("remove", help="delete a backend everywhere")
+    p.add_argument("name")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(fn=cmd_remove)
     p = sub.add_parser("rename", help="rename a backend everywhere")
     p.add_argument("old")
     p.add_argument("new")

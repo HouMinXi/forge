@@ -1097,3 +1097,438 @@ def test_probe_rejects_non_http_scheme_before_io(url, monkeypatch):
 
     monkeypatch.setattr(fp.urllib.request, "Request", no_io)
     assert fp.probe(url, "m", "k", "openai") == (False, "provider probe requires an http or https URL")
+
+
+class TestRemoveBackend:
+    """Removing a dead entry must not touch its neighbours or a live default."""
+
+    def test_deletes_the_block_and_keeps_the_sibling(self, gate):
+        original = gate.read_text()
+        did, why = fp.remove_backend(gate, "beta", ".bak-test", dry_run=False)
+        assert did and why is None
+        body = gate.read_text()
+        assert "beta:" not in body
+        # Everything that belonged to the survivor survives byte for byte: a removal
+        # that dropped alpha's fields or its default flag would pass a name check.
+        assert body == original.split("  beta:")[0]
+        assert yaml.safe_load(body)["backends"]["alpha"]["default"] is True
+        # The backup holds the pre-removal bytes.
+        backups = sorted(gate.parent.glob(gate.name + ".bak-test"))
+        assert len(backups) == 1
+        assert backups[0].read_text() == original
+
+    def test_refuses_the_review_default(self, gate):
+        before = gate.read_bytes()
+        did, why = fp.remove_backend(gate, "alpha", ".bak-test", dry_run=False)
+        assert did is False
+        assert "default" in why
+        # A refusal must leave the file byte-identical and write no backup: a handler
+        # that removes fields first and refuses afterwards would pass a name check.
+        assert gate.read_bytes() == before
+        assert list(gate.parent.glob(gate.name + ".bak-test")) == []
+
+    @pytest.mark.parametrize("spelling", ["true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON"])
+    @pytest.mark.parametrize("separator", [":", " :"])
+    def test_refuses_the_default_whatever_its_case(self, tmp_path, spelling, separator):
+        p = tmp_path / "gate.yaml"
+        p.write_text(
+            "backends:\n"
+            "  solo:\n"
+            "    type: api\n"
+            "    format: openai\n"
+            '    base_url: "https://solo.example/v1"\n'
+            "    model: solo-model\n"
+            f"    default{separator} {spelling}\n"
+            "  spare:\n"
+            "    type: api\n"
+            "    format: openai\n"
+            '    base_url: "https://spare.example/v1"\n'
+            "    model: spare-model\n"
+        )
+        before = p.read_bytes()
+        did, why = fp.remove_backend(p, "solo", ".bak-test", dry_run=False)
+        assert did is False and "default" in why
+        assert p.read_bytes() == before
+
+    @pytest.mark.parametrize("key", ["headers", "top-level"])
+    def test_refuses_to_break_a_surviving_alias(self, tmp_path, key):
+        p = tmp_path / "gate.yaml"
+        if key == "headers":
+            value = (
+                "backends:\n  drop:\n    headers: &shared\n      User-Agent: agent\n"
+                "  keep:\n    model: keep\n    headers: *shared\n"
+            )
+        else:
+            value = (
+                "backends:\n  drop:\n    headers: &shared\n      User-Agent: agent\n"
+                "  keep:\n    model: keep\nother: *shared\n"
+            )
+        p.write_text(value)
+        before = p.read_bytes()
+        did, why = fp.remove_backend(p, "drop", ".bak-test", dry_run=False)
+        assert did is False and "YAML" in why
+        assert p.read_bytes() == before
+        assert not p.with_name("gate.yaml.bak-test").exists()
+
+    def test_nested_default_does_not_make_a_backend_the_default(self, gate):
+        original = gate.read_text().replace(
+            "      User-Agent:", "      default: true\n      User-Agent:"
+        )
+        gate.write_text(original)
+        did, why = fp.remove_backend(gate, "beta", ".bak-test", dry_run=False)
+        assert did and why is None
+        assert gate.read_text() == original.split("  beta:")[0]
+
+    def test_refuses_a_default_marked_with_an_inline_comment(self, tmp_path):
+        p = tmp_path / "gate.yaml"
+        p.write_text(
+            "backends:\n"
+            "  solo:\n"
+            "    type: api\n"
+            "    format: openai\n"
+            '    base_url: "https://solo.example/v1"\n'
+            "    model: solo-model\n"
+            "    default: true  # the active one\n"
+            "  spare:\n"
+            "    type: api\n"
+            "    format: openai\n"
+            '    base_url: "https://spare.example/v1"\n'
+            "    model: spare-model\n"
+        )
+        before = p.read_bytes()
+        did, why = fp.remove_backend(p, "solo", ".bak-test", dry_run=False)
+        assert did is False
+        assert "default" in why
+        assert p.read_bytes() == before
+
+    def test_refuses_to_empty_the_mapping(self, tmp_path):
+        p = tmp_path / "gate.yaml"
+        p.write_text(
+            "backends:\n"
+            "  only:\n"
+            "    type: api\n"
+            "    format: openai\n"
+            '    base_url: "https://only.example/v1"\n'
+            "    model: only-model\n"
+        )
+        before = p.read_bytes()
+        did, why = fp.remove_backend(p, "only", ".bak-test", dry_run=False)
+        assert did is False
+        assert "no backends" in why
+        assert p.read_bytes() == before
+
+    def test_second_run_reports_nothing_declared(self, gate):
+        fp.remove_backend(gate, "beta", ".bak-test", dry_run=False)
+        did, why = fp.remove_backend(gate, "beta", ".bak-test", dry_run=False)
+        assert did is False
+        assert why == "not declared"
+
+    def test_dry_run_leaves_the_file_and_makes_no_backup(self, gate):
+        before = gate.read_bytes()
+        did, _ = fp.remove_backend(gate, "beta", ".bak-test", dry_run=True)
+        assert did is True
+        assert gate.read_bytes() == before
+        assert list(gate.parent.glob(gate.name + ".bak-test")) == []
+
+
+class TestRemoveCommand:
+    """The parser must actually dispatch, and partial success must say so."""
+
+    def _run(self, monkeypatch, paths, argv):
+        from code_forge.trust import record_trust
+
+        self.sealed = []
+        for path in paths:
+            record_trust(path, yaml.safe_load(path.read_text()))
+        monkeypatch.setattr(fp, "find_configs", lambda: list(paths))
+
+        def record(edited, dry_run):
+            self.sealed.append((list(edited), dry_run))
+            return len(edited)
+
+        monkeypatch.setattr(fp, "reseal_trust", record)
+        monkeypatch.setattr(sys, "argv", ["forge-provider.py", *argv])
+        return fp.main()
+
+    def test_main_dispatches_remove(self, tmp_path, monkeypatch):
+        gate = tmp_path / "gate.yaml"
+        gate.write_text(GATE)
+        rc = self._run(monkeypatch, [gate], ["remove", "beta"])
+        assert rc == 0
+        assert "beta:" not in gate.read_text()
+        # Trust is re-sealed for exactly the file this run edited, with dry_run False;
+        # a missing or over-broad re-seal is invisible to the file assertions above.
+        assert self.sealed == [([gate], False)]
+
+    def test_main_dry_run_writes_nothing(self, tmp_path, monkeypatch):
+        gate = tmp_path / "gate.yaml"
+        gate.write_text(GATE)
+        before = gate.read_bytes()
+        rc = self._run(monkeypatch, [gate], ["remove", "beta", "--dry-run"])
+        assert rc == 0
+        assert gate.read_bytes() == before
+        assert self.sealed == [([gate], True)]
+
+    def test_removes_every_eligible_file(self, tmp_path, monkeypatch, capsys):
+        first = tmp_path / "a" / "gate.yaml"
+        second = tmp_path / "b" / "gate.yaml"
+        for p in (first, second):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(GATE)
+        rc = self._run(monkeypatch, [first, second], ["remove", "beta"])
+        assert rc == 0
+        assert "beta:" not in first.read_text()
+        assert "beta:" not in second.read_text()
+        # Both edited files are re-sealed, in discovery order: a command that stopped
+        # after the first eligible config would leave the second pointing at a name
+        # that no longer resolves, with nothing on screen to say so.
+        assert self.sealed == [([first, second], False)]
+
+    def test_no_declaring_config_exits_nonzero(self, tmp_path, monkeypatch, capsys):
+        absent = tmp_path / "gate.yaml"
+        absent.write_text("backends:\n  other:\n    model: x\n")
+        rc = self._run(monkeypatch, [absent], ["remove", "ghost"])
+        assert rc == 1
+        assert "no config declares" in capsys.readouterr().err
+        assert absent.read_text() == "backends:\n  other:\n    model: x\n"
+
+    @pytest.mark.parametrize("already_trusted", [False, True])
+    @pytest.mark.parametrize("change", ["endpoint", "review_focus", "review_lenses"])
+    def test_refuses_to_authorize_an_untrusted_survivor(
+        self, tmp_path, monkeypatch, already_trusted, change
+    ):
+        from code_forge.trust import is_trusted, record_trust
+
+        gate = tmp_path / ".code-forge" / "gate.yaml"
+        gate.parent.mkdir()
+        gate.write_text(GATE)
+        if already_trusted:
+            record_trust(gate, yaml.safe_load(gate.read_text()))
+        changed = {
+            "endpoint": GATE.replace("alpha.example", "attacker.example"),
+            "review_focus": GATE + "review_focus: unapproved instructions\n",
+            "review_lenses": GATE + "review_lenses: true\n",
+        }[change]
+        gate.write_text(changed)
+        before = gate.read_bytes()
+        from code_forge.trust import is_trusted_focus, is_trusted_lenses
+
+        def accepted():
+            data = yaml.safe_load(gate.read_text())
+            return (
+                is_trusted(gate, data) and is_trusted_focus(gate, data) and is_trusted_lenses(gate, data)
+            )
+
+        assert not accepted()
+        monkeypatch.setattr(fp, "find_configs", lambda: [gate])
+        monkeypatch.setattr(sys, "argv", ["forge-provider.py", "remove", "beta"])
+        assert fp.main() == 1
+        assert gate.read_bytes() == before
+        assert not list(gate.parent.glob("gate.yaml.bak-provider-*"))
+        assert not accepted()
+
+    def test_trusted_removal_reseals_the_surviving_backend(self, tmp_path, monkeypatch):
+        from code_forge.trust import is_trusted, record_trust
+
+        gate = tmp_path / ".code-forge" / "gate.yaml"
+        gate.parent.mkdir()
+        gate.write_text(GATE)
+        record_trust(gate, yaml.safe_load(gate.read_text()))
+        monkeypatch.setattr(fp, "find_configs", lambda: [gate])
+        monkeypatch.setattr(sys, "argv", ["forge-provider.py", "remove", "beta"])
+        assert fp.main() == 0
+        assert yaml.safe_load(gate.read_text())["backends"] == {
+            "alpha": yaml.safe_load(GATE)["backends"]["alpha"]
+        }
+        assert is_trusted(gate, yaml.safe_load(gate.read_text()))
+
+    def test_user_config_needs_no_repo_trust(self, tmp_path, monkeypatch):
+        gate = tmp_path / "config.yaml"
+        gate.write_text(GATE)
+        monkeypatch.setattr(fp, "USER_CONFIG", gate)
+        monkeypatch.setattr(fp, "find_configs", lambda: [gate])
+        monkeypatch.setattr(sys, "argv", ["forge-provider.py", "remove", "beta"])
+        assert fp.main() == 0
+        assert yaml.safe_load(gate.read_text())["backends"] == {
+            "alpha": yaml.safe_load(GATE)["backends"]["alpha"]
+        }
+
+    def test_partial_success_exits_nonzero(self, tmp_path, monkeypatch, capsys):
+        removable = tmp_path / "a" / "gate.yaml"
+        defaulted = tmp_path / "b" / "gate.yaml"
+        absent = tmp_path / "c" / "gate.yaml"
+        for p in (removable, defaulted):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(GATE)
+        # In the second file beta is the default, so the removal must be refused there.
+        defaulted.write_text(
+            GATE.replace("    default: true\n", "", 1).replace(
+                "    model: beta-model\n", "    model: beta-model\n    default: true\n", 1
+            )
+        )
+        absent.parent.mkdir(parents=True, exist_ok=True)
+        absent.write_text("backends:\n  other:\n    model: x\n")
+
+        before_defaulted = defaulted.read_bytes()
+        before_absent = absent.read_bytes()
+        rc = self._run(monkeypatch, [removable, defaulted, absent], ["remove", "beta"])
+        assert rc == 1
+        captured = capsys.readouterr()
+        out, err = captured.out, captured.err
+        # The summary must say what actually happened: one removal out of the two
+        # declaring files, and the non-declaring file must not inflate the denominator.
+        assert "from 1 of 2 declaring file(s)" in out
+        assert str(removable) in out
+        assert str(absent) not in out
+        assert "kept it" in err
+        assert str(defaulted) in err
+        assert "beta:" not in removable.read_text()
+        assert "beta:" in defaulted.read_text()
+        # Only the edited file is re-sealed; passing every declaring file would
+        # authorize a gate this run refused to touch.
+        assert self.sealed == [([removable], False)]
+        assert defaulted.read_bytes() == before_defaulted
+        assert absent.read_bytes() == before_absent
+
+
+class TestRemoveMiddleBlock:
+    """A removal that truncates from the target onward must not pass."""
+
+    THREE = (
+        "backends:\n"
+        "  first:\n"
+        "    type: api\n"
+        "    format: openai\n"
+        '    base_url: "https://first.example/v1"\n'
+        "    model: first-model\n"
+        "  middle:\n"
+        "    type: api\n"
+        "    format: openai\n"
+        '    base_url: "https://middle.example/v1"\n'
+        "    model: middle-model\n"
+        "  last:\n"
+        "    type: api\n"
+        "    format: openai\n"
+        '    base_url: "https://last.example/v1"\n'
+        "    model: last-model\n"
+    )
+
+    def test_keeps_both_survivors_in_order(self, tmp_path):
+        p = tmp_path / "gate.yaml"
+        p.write_text(self.THREE)
+        did, why = fp.remove_backend(p, "middle", ".bak-test", dry_run=False)
+        assert did and why is None
+        # The whole text, not just names: dropping a field from either survivor,
+        # reordering them or reflowing whitespace would change meaning or diff noise.
+        expected = self.THREE.split("  middle:")[0] + "  last:" + self.THREE.split("  last:", 1)[1]
+        assert p.read_text() == expected
+        assert list(yaml.safe_load(p.read_text())["backends"]) == ["first", "last"]
+
+
+class TestRemoveLeavesProseAlone:
+    """The name also appears in comments; deleting it there changes meaning."""
+
+    FIXTURE = (
+        "backends:\n"
+        "  # keeper: do not confuse with ghost\n"
+        "  keeper:\n"
+        "    type: api\n"
+        "    format: openai\n"
+        '    base_url: "https://keeper.example/v1"\n'
+        "    model: keeper-model\n"
+        "    # ghost used to live here; see the review log\n"
+        "  ghost:\n"
+        "    type: api\n"
+        "    format: openai\n"
+        '    base_url: "https://ghost.example/v1"\n'
+        "    model: ghost-model\n"
+    )
+
+    def test_comments_naming_the_backend_survive(self, tmp_path):
+        p = tmp_path / "gate.yaml"
+        p.write_text(self.FIXTURE)
+        did, why = fp.remove_backend(p, "ghost", ".bak-test", dry_run=False)
+        assert did and why is None
+        body = p.read_text()
+        assert "ghost:" not in body
+        assert "# keeper: do not confuse with ghost" in body
+        assert "# ghost used to live here; see the review log" in body
+
+
+class TestRemoveFirstBlock:
+    """Removing the first entry must not eat the `backends:` header."""
+
+    FIXTURE = TestRemoveMiddleBlock.THREE
+
+    def test_header_and_following_blocks_survive(self, tmp_path):
+        p = tmp_path / "gate.yaml"
+        p.write_text(self.FIXTURE)
+        did, why = fp.remove_backend(p, "first", ".bak-test", dry_run=False)
+        assert did and why is None
+        body = p.read_text()
+        assert body.startswith("backends:\n  middle:")
+        expected = "backends:\n  middle:" + self.FIXTURE.split("  middle:", 1)[1]
+        assert body == expected
+        parsed = yaml.safe_load(body)
+        assert list(parsed["backends"]) == ["middle", "last"]
+
+
+class TestRemovePreservesLaterSections:
+    """The backends mapping is not always the end of the file."""
+
+    FIXTURE = (
+        "backends:\n"
+        "  keep:\n"
+        "    type: api\n"
+        "    format: openai\n"
+        '    base_url: "https://keep.example/v1"\n'
+        "    model: keep-model\n"
+        "  drop:\n"
+        "    type: api\n"
+        "    format: openai\n"
+        '    base_url: "https://drop.example/v1"\n'
+        "    model: drop-model\n"
+        "\n"
+        "retry:\n"
+        "  max_attempts: 5\n"
+        "  initial_delay_s: 2.0\n"
+    )
+
+    def test_later_sections_survive(self, tmp_path):
+        p = tmp_path / "gate.yaml"
+        p.write_text(self.FIXTURE)
+        did, why = fp.remove_backend(p, "drop", ".bak-test", dry_run=False)
+        assert did and why is None
+        body = p.read_text()
+        assert "drop:" not in body
+        assert body.endswith("retry:\n  max_attempts: 5\n  initial_delay_s: 2.0\n")
+        parsed = yaml.safe_load(body)
+        assert list(parsed["backends"]) == ["keep"]
+        assert parsed["retry"]["max_attempts"] == 5
+
+
+class TestRemoveWithExplicitFalseDefault:
+    """`default: false` is a normal field, not a reason to refuse."""
+
+    def test_removes_a_backend_marked_default_false(self, tmp_path):
+        p = tmp_path / "gate.yaml"
+        p.write_text(
+            "backends:\n"
+            "  keeper:\n"
+            "    type: api\n"
+            "    format: openai\n"
+            '    base_url: "https://keeper.example/v1"\n'
+            "    model: keeper-model\n"
+            "    default: true\n"
+            "  spare:\n"
+            "    type: api\n"
+            "    format: openai\n"
+            '    base_url: "https://spare.example/v1"\n'
+            "    model: spare-model\n"
+            "    default: false\n"
+        )
+        did, why = fp.remove_backend(p, "spare", ".bak-test", dry_run=False)
+        assert did and why is None
+        body = p.read_text()
+        assert "spare:" not in body
+        assert "keeper:" in body
