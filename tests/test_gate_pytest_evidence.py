@@ -109,7 +109,9 @@ def capture_run(
     if env:
         child_env.update(env)
     selected = shutil.which("python3", path=child_env["PATH"])
-    if selected and Path(selected).resolve() == Path(sys.executable).resolve():
+    # Venv launchers and a physical interpreter may resolve to the same binary
+    # while loading different sites. Preserve the explicitly selected runtime.
+    if selected and Path(selected).absolute() == Path(sys.executable).absolute():
         site = str(Path(pytest.__file__).parents[1])
         inherited = child_env.get("PYTHONPATH", "")
         if site not in inherited.split(os.pathsep):

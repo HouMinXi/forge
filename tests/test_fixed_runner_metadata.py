@@ -10,7 +10,6 @@ import socket
 import struct
 import subprocess
 import sys
-import tempfile
 import time
 import types
 
@@ -304,27 +303,61 @@ def test_real_pidfd_detects_dead_ordinary_process():
         os.close(fd)
 
 
-def test_file_identity_rejects_links_writable_and_size():
-    with tempfile.TemporaryDirectory(dir=PATH.parents[1]) as directory:
-        root = Path(directory)
-        file = root / "source"
-        file.write_bytes(b"source")
-        assert p.file_bytes(file, os.getuid(), 6)[0] == b"source"
-        link = root / "link"
-        link.symlink_to(file)
-        for candidate, limit in [(link, 6), (file, 5)]:
-            with pytest.raises(p.Stop):
-                p.file_bytes(candidate, os.getuid(), limit)
-        file.chmod(0o666)
+@pytest.fixture
+def source_directory(tmp_path, monkeypatch):
+    """Keep file IO real while isolating unrelated host ancestor permissions."""
+    ancestors = frozenset(tmp_path.parents)
+    original = Path.stat
+
+    def controlled_stat(path, *args, **kwargs):
+        info = original(path, *args, **kwargs)
+        if path in ancestors:
+            fields = list(info)
+            fields[0] = info.st_mode & ~0o022
+            fields[4] = os.getuid()
+            return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(Path, "stat", controlled_stat)
+    return tmp_path
+
+
+def test_file_identity_rejects_links_writable_and_size(source_directory):
+    root = source_directory
+    file = root / "source"
+    file.write_bytes(b"source")
+    assert p.file_bytes(file, os.getuid(), 6)[0] == b"source"
+    link = root / "link"
+    link.symlink_to(file)
+    for candidate, limit in [(link, 6), (file, 5)]:
         with pytest.raises(p.Stop):
-            p.file_bytes(file, os.getuid(), 6)
+            p.file_bytes(candidate, os.getuid(), limit)
+    file.chmod(0o666)
+    with pytest.raises(p.Stop):
+        p.file_bytes(file, os.getuid(), 6)
+    file.chmod(0o600)
+    root.chmod(0o770)
+    with pytest.raises(p.Stop, match="source"):
+        p.file_bytes(file, os.getuid(), 6)
 
 
 def test_source_tree_binds_only_fixed_regular_files(monkeypatch):
-    payload = b"fixture source"
-    blob = hashlib.sha1(b"blob 14\0" + payload, usedforsecurity=False).hexdigest()
-    calls = []
-    monkeypatch.setattr(p, "file_bytes", lambda *args: (payload, (1, 2, stat.S_IFREG | 0o644)))
+    payloads = {p.SOURCE: b"fixture source", p.WORKFLOW: b"fixture workflow"}
+    blobs = {
+        name: hashlib.sha1(
+            b"blob " + str(len(payload)).encode() + b"\0" + payload,
+            usedforsecurity=False,
+        ).hexdigest()
+        for name, payload in payloads.items()
+    }
+    calls, reads = [], []
+
+    def file_bytes(path, owner, limit):
+        name = path.relative_to(p.ROOT).as_posix()
+        reads.append(name)
+        return payloads[name], (1, 2, stat.S_IFREG | 0o644)
+
+    monkeypatch.setattr(p, "file_bytes", file_bytes)
 
     def ordinary(argv, env, cwd, deadline=None, *, operation):
         calls.append(argv)
@@ -332,10 +365,15 @@ def test_source_tree_binds_only_fixed_regular_files(monkeypatch):
         assert "core.fsmonitor=false" in argv
         if "rev-parse" in argv:
             return b"a" * 40 + b"\n"
-        return b"".join(f"100644 blob {blob}\t{name}\0".encode() for name in (p.SOURCE, p.WORKFLOW))
+        return b"".join(
+            f"100644 blob {blobs[name]}\t{name}\0".encode() for name in (p.SOURCE, p.WORKFLOW)
+        )
 
     monkeypatch.setattr(p, "ordinary", ordinary)
-    assert set(p.source_snapshot("a" * 40)) == {p.SOURCE, p.WORKFLOW}
+    assert p.source_snapshot("a" * 40) == {
+        name: hashlib.sha256(payload).hexdigest() for name, payload in payloads.items()
+    }
+    assert sorted(reads) == sorted(payloads)
     assert len(calls) == 2 and all("diff" not in call and "status" not in call for call in calls)
 
 
@@ -519,24 +557,24 @@ def test_known_name_pattern_on_ordinary_temporary_file(tmp_path, name, line, mat
     assert result.stdout == result.stderr == b""
 
 
-def test_actual_file_change_during_read_is_rejected(monkeypatch):
-    with tempfile.TemporaryDirectory(dir=PATH.parents[1]) as directory:
-        file = Path(directory) / "source"
-        file.write_bytes(b"original")
-        original_read = p.os.read
-        changed = False
+def test_actual_file_change_during_read_is_rejected(monkeypatch, source_directory):
+    file = source_directory / "source"
+    file.write_bytes(b"original")
+    original_read = p.os.read
+    changed = False
 
-        def read(fd, count):
-            nonlocal changed
-            data = original_read(fd, count)
-            if not changed:
-                changed = True
-                file.write_bytes(b"modified")
-            return data
+    def read(fd, count):
+        nonlocal changed
+        data = original_read(fd, count)
+        if not changed:
+            changed = True
+            file.write_bytes(b"modified")
+        return data
 
-        monkeypatch.setattr(p.os, "read", read)
-        with pytest.raises(p.Stop, match="changed"):
-            p.file_bytes(file, os.getuid(), 20)
+    monkeypatch.setattr(p.os, "read", read)
+    with pytest.raises(p.Stop, match="changed"):
+        p.file_bytes(file, os.getuid(), 20)
+    assert changed
 
 
 def test_tool_drift_after_reads_is_not_observed(fixture_observer, monkeypatch):

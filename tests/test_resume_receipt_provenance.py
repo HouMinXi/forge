@@ -2587,6 +2587,7 @@ def test_real_hold_confirmation_finalizes_unavailable_frozen_attempt(review_work
         ], []
 
     first = _machine(root, monkeypatch, rounds=4)
+    first.local_contract_sha256 = hashlib.sha256(b"guide requirement before HOLD").hexdigest()
     first.autofixer = NoChangeAutoFixer()
     first.l0_runner = recurrent_l0
     assert first.run() == Verdict.PENDING
@@ -2601,9 +2602,14 @@ def test_real_hold_confirmation_finalizes_unavailable_frozen_attempt(review_work
     assert "actual-unfixed-product" in held.promoted_fingerprints
     assert held.findings[0].disposition == Disposition.CONFIRMED
     frozen = _machine(root, monkeypatch, rounds=1, payload=lambda *args: pytest.fail("frozen dispatch"))
+    frozen.local_contract_sha256 = hashlib.sha256(b"guide requirement after HOLD").hexdigest()
     assert frozen.run() == Verdict.ESCALATED
     state = load_state(path)
     assert state.round_history[:-1] == prefix
+    assert state.findings == held.findings
+    assert state.promoted_fingerprints == held.promoted_fingerprints
+    assert state.fix_attempts == held.fix_attempts
+    assert state.hold_reason == held.hold_reason
     row = state.round_history[-1]
     assert row["clean_credit_action"] == "unavailable"
     assert set(row["phase_status"].values()) == {"not_run"}

@@ -613,6 +613,7 @@ class SnapshotTests(unittest.TestCase):
             with (
                 patch.object(p, "ordinary_identity"),
                 patch.object(p, "metadata", return_value=base),
+                patch.object(p.Path, "resolve", autospec=True, side_effect=lambda path, **kw: path),
                 patch.object(p.C, "CDLL"),
                 patch.object(p, "Bus", return_value=Counter()),
                 patch.object(p, "verified_channel", return_value=nullcontext((None, recheck, {}))),

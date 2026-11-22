@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from code_forge import EXIT_PASS, EXIT_FAIL
+from code_forge import EXIT_FAIL
 
 pytestmark = pytest.mark.skipif(
     not shutil.which("shellcheck"),
@@ -124,11 +124,11 @@ class TestIntegrationFail:
         assert state["verdict"] == "FAIL"
 
 
-class TestIntegrationPass:
-    """Test: clean code produces PASS."""
+class TestIntegrationUnmeasuredMutation:
+    """Clean lint cannot claim CI success without mutation measurement."""
 
-    def test_pass_on_clean_code(self, tmp_path, monkeypatch):
-        """Modify tracked file with clean code -> PASS."""
+    def test_clean_shellcheck_still_fails(self, tmp_path, monkeypatch):
+        """Clean ShellCheck output still fails the unmeasured Shell gate."""
         repo = tmp_path / "repo"
         repo.mkdir()
         repo_str = str(repo)
@@ -155,22 +155,27 @@ class TestIntegrationPass:
         from code_forge.cli import main
 
         exit_code = main()
-        assert exit_code == EXIT_PASS
+        assert exit_code == EXIT_FAIL
 
         state_path = os.path.join(repo_str, ".code-forge", "state.json")
         assert os.path.isfile(state_path)
         with open(state_path, encoding="utf-8") as f:
             state = json.load(f)
-        assert state["verdict"] == "PASS"
+        assert state["verdict"] == "FAIL"
+        assert state["infra_errors"] == [
+            "CI: mutation not measured: no mutation adapter covers: hello.sh"
+        ]
+        assert all(item["source"] == "MUTANT" for item in state["findings"])
+        assert {item["fingerprint"] for item in state["findings"]} == {"mutation-no-adapter"}
 
 
 class TestIntegrationBaseline:
     """Test: pre-existing violations in committed code not shown."""
 
     def test_baseline_preexisting_not_shown(self, tmp_path, monkeypatch):
-        """Pre-existing violations in committed file -> PASS.
+        """Pre-existing lint is absent; unmeasured Shell still blocks CI.
 
-        02-05: use --head INDEX instead of --staged.
+        INDEX review selects only the newly staged clean script.
         """
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -216,7 +221,15 @@ class TestIntegrationBaseline:
         from code_forge.cli import main
 
         exit_code = main()
-        assert exit_code == EXIT_PASS
+        assert exit_code == EXIT_FAIL
+        with open(repo / ".code-forge/state.json", encoding="utf-8") as f:
+            state = json.load(f)
+        assert state["infra_errors"] == [
+            "L2: invalid bound mutation measurement "
+            "(skips=mutation-no-adapter; detail=no registered mutation adapter for this diff)"
+        ]
+        assert all(item["source"] == "MUTANT" for item in state["findings"])
+        assert {item["fingerprint"] for item in state["findings"]} == {"mutation-no-adapter"}
 
 
 class TestIntegrationState:

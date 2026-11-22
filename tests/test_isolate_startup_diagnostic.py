@@ -475,7 +475,10 @@ def test_start_failure_with_a_busy_cgroup_waits_once(plain_root, monkeypatch):
     )
     assert type(info.value) is IsolationError
     assert str(info.value).startswith("payload process was not placed in the run cgroup")
-    assert info.value.__notes__[:-1] == ["%s: %s" % (detail, sup.cgroup_path)]
+    tagged = isolate._printable(
+        "%s: %s%s" % (detail, isolate._root_tag(sup.cgroup_path), sup.cgroup_path)
+    )[:400]
+    assert info.value.__notes__[:-1] == [tagged]
     assert info.value.__notes__[-1].startswith("sandbox startup evidence: startup_ns=")
     assert sup.cleanup_error == detail
     assert len(rmdir_calls) == 1
@@ -717,10 +720,66 @@ def test_cgroup_still_present_at_deadline_is_reported(tmp_path, monkeypatch, err
         error.errno,
     )
     assert sup.cleanup_error == detail
-    assert str(info.value) == "%s: %s" % (detail, sup.cgroup_path)
+    # The message carries the cgroup path after the detail, cut to 400
+    # characters, so the expectation must be cut the same way rather than
+    # assuming the host's temporary directory is short.
+    note = isolate._printable(
+        "%s: %s%s" % (detail, isolate._root_tag(sup.cgroup_path), sup.cgroup_path)
+    )[:400]
+    assert str(info.value) == note
     assert isinstance(info.value, IsolationError)
     # One attempt before the deadline check, one retry, then the deadline.
     assert calls == [sup.cgroup_path, sup.cgroup_path]
+
+
+def test_probe_cleanup_receipts_stay_distinct_across_masked_roots(tmp_path, monkeypatch):
+    # The probe-cleanup message names the probe cgroup, so it needs its own
+    # host-independent check: an ASCII base hides the tag entirely.
+    seen = []
+    for name in ("\u79d1\u7814\u6240", "\u6d4b\u8bd5\u5ba4"):
+        root = tmp_path / name
+        root.mkdir()
+        check = _probe(root, monkeypatch, False, OSError(errno.EBUSY, "Device or resource busy"))
+        probe_path = str(root / ".forge-probe-fixed")
+        monkeypatch.setattr(isolate.tempfile, "mkdtemp", lambda _p=probe_path, **k: _p)
+        with pytest.raises(isolate.IsolationUnavailable) as info:
+            check()
+        # The probe failure is a note on the error that was already on its way.
+        assert isolate._root_tag(probe_path) in info.value.__notes__[0]
+        seen.append(isolate._root_tag(probe_path))
+    assert seen[0] != seen[1]
+
+
+def test_undecodable_cgroup_file_receipts_stay_distinct_across_masked_roots(tmp_path):
+    # _read names the file it could not decode; two masked names must not read
+    # the same in the receipt.
+    seen = []
+    for name in ("\u79d1\u7814\u6240", "\u6d4b\u8bd5\u5ba4"):
+        path = tmp_path / name / "cgroup.procs"
+        path.parent.mkdir()
+        path.write_bytes(b"\xff\xfe")
+        with pytest.raises(isolate.IsolationUnavailable) as info:
+            isolate._read(str(path))
+        assert isolate._root_tag(str(path)) in info.value.detail
+        seen.append((isolate._root_tag(str(path)), info.value.detail))
+    assert seen[0][0] != seen[1][0]
+    assert seen[0][1] != seen[1][1]
+
+
+def test_run_cgroup_cleanup_receipts_stay_distinct_across_masked_roots(tmp_path, monkeypatch):
+    # Two runs whose cgroup paths differ only in masked characters must not
+    # produce the same cleanup receipt.
+    monkeypatch.setattr(isolate, "shutil", SimpleNamespace(which=lambda name: "/usr/bin/bwrap"))
+    details = []
+    for name in ("\u79d1\u7814\u6240", "\u6d4b\u8bd5\u5ba4"):
+        (tmp_path / name).mkdir(parents=True, exist_ok=True)
+        sup, _ = _removal(tmp_path / name, monkeypatch, [OSError(errno.EBUSY, "busy")] * 5)
+        sup.cgroup_path = os.path.join(str(tmp_path), name, "forge-run")
+        with pytest.raises(CgroupCleanupError) as info:
+            sup._remove_cgroup()
+        assert isolate._root_tag(sup.cgroup_path) in str(info.value)
+        details.append((isolate._root_tag(sup.cgroup_path), str(info.value)))
+    assert details[0][0] != details[1][0]
 
 
 def test_cleanup_error_is_bounded_and_printable(tmp_path, monkeypatch):
@@ -734,7 +793,16 @@ def test_cleanup_error_is_bounded_and_printable(tmp_path, monkeypatch):
 
     message = str(info.value)
     assert len(message) == 400
-    assert message.startswith(sup.cleanup_error + ": " + str(tmp_path) + "/?[31mppp")
+    assert sup.cleanup_error is not None
+    expected = isolate._printable(
+        sup.cleanup_error
+        + ": "
+        + isolate._root_tag(sup.cgroup_path)
+        + str(tmp_path)
+        + "/?[31m"
+        + "p" * 600
+    )[:400]
+    assert message == expected
     assert all(" " <= ch <= "~" for ch in message)
     assert isinstance(info.value.__cause__, odd)
 
@@ -760,7 +828,12 @@ def test_cleanup_error_keeps_type_and_errno_ahead_of_a_long_path(tmp_path, monke
     )
     message = str(info.value)
     assert len(message) == 400
-    assert message.startswith(detail + ": " + str(tmp_path) + "/ppp")
+    assert (
+        message
+        == isolate._printable(
+            detail + ": " + isolate._root_tag(sup.cgroup_path) + str(tmp_path) + "/" + "p" * 600
+        )[:400]
+    )
 
 
 def test_absent_cgroup_counts_as_removed(tmp_path, monkeypatch):
@@ -977,16 +1050,35 @@ def test_interrupt_while_noting_never_replaces_the_error():
 # --- probe cleanup ----------------------------------------------------------
 
 
-def _probe(tmp_path, monkeypatch, exists, rmdir_error):
+def _long_child(tmp_path, wanted=250):
+    """A child name that keeps the whole path inside a safe length.
+
+    The probe diagnostics are bounded at 200 and 400 characters, so the tests
+    need a path longer than the bound. How much room is left depends on where
+    pytest put its temporary root: a host that already sits near PATH_MAX leaves
+    none, and adding a child there would fail for reasons unrelated to the code.
+    """
+    room = 3800 - len(os.fsencode(tmp_path)) - 2
+    if room < 8:
+        pytest.skip("temporary root leaves no room for a child name")
+    return "r" * min(wanted, room)
+
+
+def _probe(tmp_path, monkeypatch, exists, rmdir_error, create_error=None):
     monkeypatch.setattr(isolate, "shutil", SimpleNamespace(which=lambda name: "/usr/bin/bwrap"))
     monkeypatch.setattr(
         isolate,
         "subprocess",
         SimpleNamespace(
-            run=lambda *a, **k: SimpleNamespace(stdout="cgroup2fs\n"),
+            run=lambda *a, **k: SimpleNamespace(stdout="cgroup2fs\n", stderr="", returncode=0),
             SubprocessError=isolate.subprocess.SubprocessError,
         ),
     )
+
+    if create_error is not None:
+        monkeypatch.setattr(
+            isolate.tempfile, "mkdtemp", lambda **kwargs: (_ for _ in ()).throw(create_error)
+        )
 
     def rmdir(path):
         if rmdir_error is not None:
@@ -1005,47 +1097,516 @@ def _probe(tmp_path, monkeypatch, exists, rmdir_error):
 
 
 def test_probe_cgroup_left_behind_is_reported(tmp_path, monkeypatch):
+    removed = []
     check = _probe(tmp_path, monkeypatch, True, OSError(errno.EBUSY, "Device or resource busy"))
+    failing_rmdir = isolate.os.rmdir
 
+    def record_failure(path):
+        removed.append(path)
+        return failing_rmdir(path)
+
+    monkeypatch.setattr(isolate.os, "rmdir", record_failure)
     with pytest.raises(isolate.IsolationUnavailable) as info:
         check()
 
     assert info.value.reason == "probe_cleanup_failed"
-    assert re.fullmatch(
-        r"probe cgroup was not removed \(type=OSError errno=%d\): %s/\.forge-probe-\w+"
-        % (errno.EBUSY, re.escape(str(tmp_path))),
-        info.value.detail,
+    assert len(removed) == 1
+    assert re.fullmatch(re.escape(str(tmp_path)) + r"/\.forge-probe-\w+", removed[0])
+    expected = "probe cgroup was not removed (type=OSError errno=%d): %s%s" % (
+        errno.EBUSY,
+        isolate._root_tag(removed[0]),
+        removed[0],
     )
-    assert len(info.value.detail) <= 200
+    assert info.value.detail == isolate._printable(expected)[:200]
 
 
 def test_probe_cleanup_report_is_bounded(tmp_path, monkeypatch):
-    # The detail is cut to 200 characters; the 250-character path comes after
-    # the error type and errno, so the cut takes only the path's end.
-    root = tmp_path / ("r" * 250)
+    # The detail is cut to 200 characters; the long path comes after the error
+    # type and errno, so the cut takes only the path's end. The child name is
+    # sized against the remaining path budget, so the test does not depend on
+    # how deep the host's temporary directory already is.
+    head = "probe cgroup was not removed (type=OSError errno=%d): " % errno.EBUSY
+    root = tmp_path / _long_child(tmp_path)
     root.mkdir()
     check = _probe(root, monkeypatch, True, OSError(errno.EBUSY, "Device or resource busy"))
+    # Pin the probe path so the identity tag is knowable; the message names the
+    # probe cgroup, not the root it sits under.
+    probe_path = str(root / ".forge-probe-fixed")
+    monkeypatch.setattr(isolate.tempfile, "mkdtemp", lambda **kwargs: probe_path)
 
     with pytest.raises(isolate.IsolationUnavailable) as info:
         check()
 
-    head = "probe cgroup was not removed (type=OSError errno=%d): " % errno.EBUSY
     assert len(info.value.detail) == 200
-    assert info.value.detail == (head + str(root))[:200]
+    assert (
+        info.value.detail == isolate._printable(head + isolate._root_tag(probe_path) + probe_path)[:200]
+    )
+
+
+def test_masked_root_receipts_stay_distinct_whatever_the_host(tmp_path, monkeypatch):
+    # CI runs with an ASCII base, so a case that only masks through tmp_path
+    # proves nothing there. The masked name is built explicitly and both the
+    # root diagnostic and the run-cgroup cleanup message must carry a tag.
+    monkeypatch.setattr(isolate, "shutil", SimpleNamespace(which=lambda name: "/usr/bin/bwrap"))
+    assert isolate._root_tag("ascii-only") == ""
+    assert isolate._root_tag("\u79d1\u7814\u6240") != isolate._root_tag("\u6d4b\u8bd5\u5ba4")
+    from pathlib import Path as _Path
+
+    assert isolate._root_tag(_Path("/x/\u79d1")) == isolate._root_tag("/x/\u79d1")
+
+    for name in ("\u79d1\u7814\u6240", "\u6d4b\u8bd5\u5ba4"):
+        masked = tmp_path / name
+        masked.mkdir()
+        failed = SimpleNamespace(
+            stdout="",
+            stderr="stat: cannot statx '%s': Permission denied" % masked,
+            returncode=1,
+        )
+        monkeypatch.setattr(
+            isolate,
+            "subprocess",
+            SimpleNamespace(
+                run=lambda *a, _f=failed, **k: _f,
+                SubprocessError=isolate.subprocess.SubprocessError,
+            ),
+        )
+        with pytest.raises(isolate.IsolationUnavailable) as raised:
+            isolate.verify_isolation_support(str(masked))
+        tag = isolate._root_tag(str(masked))
+        assert tag and tag in raised.value.detail
+
+    # A control character is masked by _printable too, so it needs the tag even
+    # though it is ASCII.
+    assert isolate._root_tag("a\x1bb") != ""
+
+
+def test_root_diagnostics_keep_their_cause_at_a_long_path(tmp_path, monkeypatch):
+    # Every root-level diagnostic carries its cause before the path, so the
+    # 200-character cut can shorten the path but never erase why it failed.
+    root = tmp_path / _long_child(tmp_path)
+    root.mkdir()
+    monkeypatch.setattr(isolate, "shutil", SimpleNamespace(which=lambda name: "/usr/bin/bwrap"))
+    timeout_cls = isolate.subprocess.TimeoutExpired
+
+    def stubbed(stdout):
+        monkeypatch.setattr(
+            isolate,
+            "subprocess",
+            SimpleNamespace(
+                run=lambda *a, **k: SimpleNamespace(stdout=stdout, stderr="", returncode=0),
+                SubprocessError=isolate.subprocess.SubprocessError,
+            ),
+        )
+
+    stubbed("ext4\n")
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert "not on a cgroup2 mount" in raised.value.detail
+    assert "ext4" in raised.value.detail
+    assert len(raised.value.detail) <= 200
+
+    # A silent success has nothing to report, and saying "got ''" hides that.
+    stubbed("")
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert "reported no filesystem type" in raised.value.detail
+    assert len(raised.value.detail) <= 200
+
+    stubbed("cgroup2fs\n")
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root / "absent"))
+    # A path that is absent and a path that is a file are different faults.
+    assert "does not exist" in raised.value.detail
+    assert isolate._printable(str(root / "absent"))[:80] in raised.value.detail
+    assert len(raised.value.detail) <= 200
+
+    present_file = root / "not-a-dir"
+    present_file.write_text("x")
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(present_file))
+    assert "is not a directory" in raised.value.detail
+    assert len(raised.value.detail) <= 200
+
+    # A timeout's own text carries the whole command line, so this is the case
+    # where a path-first message would lose the reason behind the path.
+    timeout = timeout_cls(cmd=["stat", "-fc", "%T", str(root)], timeout=10)
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: (_ for _ in ()).throw(timeout),
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    head = "cannot stat cgroup root (type=TimeoutExpired errno=none): "
+    assert raised.value.detail.startswith(head)
+    assert len(raised.value.detail) == 200
+
+    # A stub without an exit status is not evidence of success.
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: SimpleNamespace(stdout="cgroup2fs\n", stderr=""),
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith("cannot stat cgroup root (no exit status): ")
+
+    failed = SimpleNamespace(
+        stdout="",
+        # GNU stat puts its path ahead of the reason; the message must lift the
+        # reason out, or the cut at a long root would trade the reason for it.
+        stderr="stat: cannot read file system information for '%s': No such file or directory" % root,
+        returncode=1,
+    )
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: failed,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith(
+        "cannot stat cgroup root (exit 1: No such file or directory): "
+    )
+    assert len(raised.value.detail) == 200
+
+    # A second reason proves the parse reads the reason rather than a literal,
+    # and the reason a bounded message carries must never be the path itself.
+    denied = SimpleNamespace(
+        stdout="",
+        stderr="stat: cannot read file system information for '%s': Permission denied" % root,
+        returncode=1,
+    )
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: denied,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 1: Permission denied): ")
+    assert isolate._printable(str(root))[:40] not in raised.value.detail.split("): ")[0]
+
+    # stderr that says nothing falls back to the exit status instead of a blank.
+    silent = SimpleNamespace(stdout="", stderr="", returncode=2)
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: silent,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 2: exit 2): ")
+
+    # Output that is not UTF-8 must surface as this error, not as a decode crash
+    # escaping the caller's except IsolationUnavailable.
+    undecodable_output = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: (_ for _ in ()).throw(undecodable_output),
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith(
+        "cannot stat cgroup root (type=UnicodeDecodeError errno=none): "
+    )
+
+    # A reason that itself contains ": " separates the two parses: keeping the
+    # text after the quoted path preserves it whole, while taking the last
+    # ": " segment would keep only "bad offset".
+    compound = SimpleNamespace(
+        stdout="",
+        stderr="stat: cannot statx '%s': Invalid argument: bad offset" % root,
+        returncode=1,
+    )
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: compound,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith(
+        "cannot stat cgroup root (exit 1: Invalid argument: bad offset): "
+    )
+
+    # A root whose name contains a quote cannot appear verbatim in coreutils'
+    # message: it switches to double quotes (and above ~300 bytes backslash-
+    # escapes the quote). Here the marker split does not fire, and the
+    # last-segment fallback still yields the reason.
+    quoted_root = root / "a': b"
+    quoted_root.mkdir()
+    quoted = SimpleNamespace(
+        stdout="",
+        stderr='stat: cannot statx "%s": Permission denied' % quoted_root,
+        returncode=1,
+    )
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: quoted,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(quoted_root))
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 1: Permission denied): ")
+
+    # The longer, escaped form: the path no longer appears verbatim at all, so
+    # only the fallback can produce a reason.
+    escaped = SimpleNamespace(
+        stdout="",
+        stderr='stat: cannot read file system information for "%s": Permission denied'
+        % str(quoted_root).replace("'", "\\'"),
+        returncode=1,
+    )
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: escaped,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(quoted_root))
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 1: Permission denied): ")
+
+    # A root that merely prefixes another path on the same line must not be
+    # taken for the separator: only a quoted occurrence counts.
+    sibling = SimpleNamespace(
+        stdout="",
+        stderr="stat: cannot statx '%ssibling': Permission denied" % quoted_root,
+        returncode=1,
+    )
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: sibling,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(quoted_root))
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 1: Permission denied): ")
+
+    # A warning line before the diagnostic must not become the reason.
+    multiline = SimpleNamespace(
+        stdout="",
+        stderr="stat: warning: locale fallback\nstat: cannot statx '%s': No such file or directory"
+        % root,
+        returncode=1,
+    )
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: multiline,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith(
+        "cannot stat cgroup root (exit 1: No such file or directory): "
+    )
+
+    # The tool failing to launch at all has its own diagnostic.
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError(2, "stat")),
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert "FileNotFoundError" in raised.value.detail
+    assert len(raised.value.detail) <= 200
+
+    # A warning printed after the diagnostic must not become the reason: stat's
+    # own line is the one that quotes the root.
+    trailing = SimpleNamespace(
+        stdout="",
+        stderr="stat: cannot statx '%s': No such file or directory\nlocale: warning: fallback" % root,
+        returncode=1,
+    )
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: trailing,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith(
+        "cannot stat cgroup root (exit 1: No such file or directory): "
+    )
+
+    # Two roots that mask to the same printable text must still be told apart
+    # in a receipt, so the message carries a stable tag.
+    ascii_detail = None
+    for name in ("\u79d1\u7814\u6240", "\u6d4b\u8bd5\u5ba4"):
+        masked_root = root / name
+        masked_root.mkdir()
+        missing = SimpleNamespace(
+            stdout="",
+            stderr="stat: cannot statx '%s': Permission denied" % masked_root,
+            returncode=1,
+        )
+        monkeypatch.setattr(
+            isolate,
+            "subprocess",
+            SimpleNamespace(
+                run=lambda *a, _m=missing, **k: _m,
+                SubprocessError=isolate.subprocess.SubprocessError,
+            ),
+        )
+        with pytest.raises(isolate.IsolationUnavailable) as raised:
+            isolate.verify_isolation_support(str(masked_root))
+        located = re.search(r"#([0-9a-f]{16}) ", raised.value.detail)
+        assert located, raised.value.detail
+        current = located.group(1)
+        assert current != ascii_detail, (current, ascii_detail)
+        ascii_detail = current
+
+    # A warning that merely mentions the root, printed after a diagnostic that
+    # also mentions it, must not displace the diagnostic.
+    two_lines = SimpleNamespace(
+        stdout="",
+        stderr="stat: cannot statx '%s': No such file or directory\n"
+        "hint: check '%s' for a stale mount" % (root, root),
+        returncode=1,
+    )
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: two_lines,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith(
+        "cannot stat cgroup root (exit 1: No such file or directory): "
+    )
+
+    # A reason that mentions the root again must still read as a reason: nothing
+    # of the message may be rewritten into a placeholder that reaches a receipt.
+    twice = SimpleNamespace(
+        stdout="",
+        stderr="stat: cannot statx '%s': Permission denied for '%s'" % (root, root),
+        returncode=1,
+    )
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: twice,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 1: Permission denied for ")
+    assert "<cgroup-root>" not in raised.value.detail
+
+    # stderr that carries only the path falls back to the exit status.
+    path_only = SimpleNamespace(stdout="", stderr="stat: '%s'" % root, returncode=1)
+    monkeypatch.setattr(
+        isolate,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *a, **k: path_only,
+            SubprocessError=isolate.subprocess.SubprocessError,
+        ),
+    )
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate.verify_isolation_support(str(root))
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 1: exit 1): ")
+
+    undecodable = root / "memory.max"
+    undecodable.write_bytes(b"\xff\xfe")
+    with pytest.raises(isolate.IsolationUnavailable) as raised:
+        isolate._read(str(undecodable))
+    assert "not UTF-8 decodable" in raised.value.detail
+    assert "UnicodeDecodeError" in raised.value.detail
+    assert len(raised.value.detail) <= 200
+
+
+def test_probe_creation_failure_is_bounded(tmp_path, monkeypatch):
+    # Creating the probe can fail on a deep path. The message keeps the cause
+    # first and the path last, so the cut cannot erase the error type, and the
+    # child name is sized against the remaining budget so the test itself does
+    # not depend on how deep the host's temporary directory already is.
+    root = tmp_path / _long_child(tmp_path)
+    root.mkdir()
+    boom = OSError(errno.ENAMETOOLONG, "File name too long")
+    check = _probe(root, monkeypatch, False, None, create_error=boom)
+
+    with pytest.raises(isolate.IsolationUnavailable) as info:
+        check()
+
+    head = "cannot create child cgroup (type=OSError errno=%d): " % errno.ENAMETOOLONG
+    assert info.value.detail.startswith(head + isolate._root_tag(str(root)))
+    budget = 200 - len(head) - len(isolate._root_tag(str(root)))
+    assert isolate._printable(str(root))[:budget] in info.value.detail
+    assert len(info.value.detail) == 200
 
 
 def test_probe_cleanup_failure_is_a_note_on_the_probe_error(tmp_path, monkeypatch):
+    removed = []
     check = _probe(tmp_path, monkeypatch, False, OSError(errno.EBUSY, "Device or resource busy"))
+    failing_rmdir = isolate.os.rmdir
 
+    def record(path):
+        removed.append(path)
+        return failing_rmdir(path)
+
+    monkeypatch.setattr(isolate.os, "rmdir", record)
     with pytest.raises(isolate.IsolationUnavailable) as info:
         check()
 
     assert info.value.reason == "isolation_unavailable"
     assert "lacks memory.max" in info.value.detail
+    assert len(removed) == 1
     assert len(info.value.__notes__) == 1
-    assert info.value.__notes__[0].startswith(
-        "probe cgroup was not removed (type=OSError errno=%d): %s/" % (errno.EBUSY, tmp_path)
-    )
+    # The note names the cgroup that survived, cut to the diagnostic limit, so
+    # the assertion must not assume a short temporary directory or plain ASCII
+    # in it. The recorded path is checked against the shape the probe builds,
+    # so an expectation derived from the code's own value cannot pass.
+    assert re.fullmatch(re.escape(str(tmp_path)) + r"/\.forge-probe-\w+", removed[0])
+    head = "probe cgroup was not removed (type=OSError errno=%d): " % errno.EBUSY
+    note = info.value.__notes__[0]
+    assert note == isolate._printable(head + isolate._root_tag(removed[0]) + removed[0])[:200]
 
 
 def test_probe_cgroup_removed_is_silent(tmp_path, monkeypatch):
