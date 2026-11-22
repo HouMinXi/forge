@@ -2,10 +2,17 @@
 
 import copy
 import json
+import sys
+from dataclasses import replace
+from io import BytesIO
+from pathlib import Path
+from types import ModuleType
+from urllib.error import URLError
 
 import pytest
 
 from code_forge.disposition import Disposition
+from code_forge.receipt_provenance import receipt_finding_provenance
 from code_forge.report_presentation import prepare_legacy_report, prepare_report_views
 from code_forge.report_projection import classify_report_records
 from code_forge.sarif import build_sarif_log, format_classification_line, format_summary
@@ -208,3 +215,189 @@ def test_cli_adds_only_human_clarification(capsys, tmp_path):
         assert restored.verdict is Verdict.FAIL and not restored.converged, name
         assert classify_report_records(restored) == projection, name
         assert derive_pass_outcomes(restored.findings) == outcomes, name
+
+
+def _substitute_vertex_io(monkeypatch):
+    # Keep the Vertex adapter and L1 producer real, including error typing.
+    from code_forge import llm_invoke
+
+    for name in (
+        "google",
+        "google.auth",
+        "google.auth.exceptions",
+        "google.auth.transport",
+        "google.auth.transport.requests",
+        "google.oauth2",
+        "google.oauth2.service_account",
+    ):
+        module = ModuleType(name)
+        module.__path__ = []
+        monkeypatch.setitem(sys.modules, name, module)
+        parent, _, child = name.rpartition(".")
+        if parent:
+            setattr(sys.modules[parent], child, module)
+
+    class RefreshError(Exception):
+        pass
+
+    class Credentials:
+        token = "fixture-token"
+        refreshes = 0
+
+        def refresh(self, request):
+            self.refreshes += 1
+            if self.refreshes == 1:
+                raise RefreshError("fixture refresh failed")
+
+    credentials = Credentials()
+    sys.modules["google.auth"].default = lambda *, scopes: (credentials, None)
+    sys.modules["google.auth.exceptions"].DefaultCredentialsError = type(
+        "DefaultCredentialsError", (Exception,), {}
+    )
+    sys.modules["google.auth.exceptions"].RefreshError = RefreshError
+    sys.modules["google.auth.transport.requests"].Request = object
+
+    responses = iter([URLError(ConnectionRefusedError("fixture connection refused")), b"not JSON"])
+
+    def open_url(request, timeout_s):
+        response = next(responses)
+        if isinstance(response, URLError):
+            raise response
+        return BytesIO(response)
+
+    monkeypatch.setattr(llm_invoke, "_open_url", open_url)
+    monkeypatch.setenv("FORGE_L1_SERIAL", "1")
+
+
+@pytest.fixture
+def ci_provider_failure_state(tmp_path, monkeypatch):
+    from code_forge import cli
+    from code_forge.autofix import StubAutoFixer
+    from code_forge.backend import BackendConfig
+    from code_forge.baseline import ResolvedReview
+    from code_forge.factories import build_l1_provider
+    from code_forge.falsify import StubFalsifier
+    from code_forge.machine import StateMachine
+    from code_forge.source import compute_source_hash
+    from code_forge.state import Mode, load_state
+    from tests._outside_gate import outside_gate_root
+
+    _substitute_vertex_io(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    path = Path("docs/example.md")
+    path.parent.mkdir()
+    path.write_text("Run the example.\n", encoding="utf-8")
+    diff = (
+        "diff --git a/docs/example.md b/docs/example.md\n"
+        "--- a/docs/example.md\n+++ b/docs/example.md\n"
+        "@@ -1 +1 @@\n-See the example.\n+Run the example.\n"
+    )
+    resolved = ResolvedReview([path], None, diff, "git")
+    backend = BackendConfig(
+        name="offline", type="api", format="vertex", model="fixture", project_id="fixture"
+    )
+    cli._check_backend_credentials(backend, {})
+    product = StateFinding(
+        "doc-example",
+        "doc-example",
+        "L0",
+        Disposition.CONFIRMED,
+        str(path),
+        [1, 1],
+        "The example omits its required input.",
+    )
+    machine = StateMachine(
+        mode=Mode.CI,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda finding: None,
+        resolved_review=resolved,
+        source_hash=compute_source_hash(git_diff=diff),
+        baseline_spec_repr="offline CI",
+        cwd=tmp_path,
+        test_config_root=outside_gate_root(tmp_path),
+        registry={},
+        l0_runner=lambda *_: ([product], []),
+        l1_provider=build_l1_provider("auto", resolved, backend=backend, max_attempts=1),
+    )
+    assert machine.run() is Verdict.FAIL
+    state_path = tmp_path / ".code-forge" / "state.json"
+    state = load_state(state_path)
+    assert state.verdict is Verdict.FAIL and not state.converged
+    projection = classify_report_records(state)
+    assert projection.classification_complete
+    assert [
+        (
+            record.host_failure_kind,
+            finding.provider_failure["kind"],
+            receipt_finding_provenance(finding)["channel"],
+        )
+        for record in projection.product
+        if (finding := state.findings[record.index]).provider_failure is not None
+    ] == [
+        ("PROVIDER_AUTH", "credentials", "execution"),
+        ("PROVIDER_TRANSPORT", "conn", "execution"),
+        ("PROVIDER_PROTOCOL", "bad_body", "execution"),
+    ]
+    assert any(state.findings[record.index].id == product.id for record in projection.product)
+    return state_path, state
+
+
+@pytest.mark.parametrize("report", ["produced", "product-candidates", "unavailable"])
+def test_cli_counts_only_classified_host_provider_failures(
+    report, ci_provider_failure_state, capsys, monkeypatch, tmp_path
+):
+    from code_forge import __version__, cli, report_presentation
+    from code_forge.state import save_state
+
+    path, state = ci_provider_failure_state
+    if report == "product-candidates":
+        overrides = {"credentials": {"fingerprint": "ambiguous"}, "conn": {"source": "UNTRUSTED"}}
+        for i, finding in enumerate(state.findings):
+            kind = (finding.provider_failure or {}).get("kind")
+            if kind in overrides:
+                state.findings[i] = replace(finding, **overrides[kind])
+        path = tmp_path / "product-candidates.json"
+        save_state(state, path)
+    snapshot = path.read_bytes()
+    capsys.readouterr()
+
+    projection = classify_report_records(state)
+    assert projection.classification_complete
+    if report == "product-candidates":
+        assert [
+            (
+                record.host_failure_kind,
+                receipt_finding_provenance(state.findings[record.index])["channel"],
+            )
+            for record in projection.product
+            if record.host_failure_kind in ("PROVIDER_AUTH", "PROVIDER_TRANSPORT")
+        ] == [("PROVIDER_AUTH", "product"), ("PROVIDER_TRANSPORT", "product")]
+    available = report != "unavailable"
+    if not available:
+        monkeypatch.setattr(report_presentation, "_block_fits", lambda *_: False)
+    log = build_sarif_log(state, {}, __version__)
+    substrate = prepare_legacy_report(
+        log, stdout=json.dumps(log, ensure_ascii=False, allow_nan=False), stderr=format_summary(state)
+    )
+    prepared = prepare_report_views(substrate, projection)
+    assert prepared.report_classification.availability == ("available" if available else "unavailable")
+    expected = prepared.stderr.splitlines() + [
+        format_classification_line(prepared.report_classification)
+    ]
+    labels = {
+        "produced": ("protocol", "transport", "authentication"),
+        "product-candidates": ("protocol",),
+        "unavailable": (),
+    }
+    expected.extend(
+        f"code-forge: review service {label} failures=1 [included in findings]"
+        for label in labels[report]
+    )
+    expected.extend(cli._format_infra_lines(state, state_path=path).splitlines())
+
+    cli._emit_ci_output(path, {})
+    output = capsys.readouterr()
+    assert output.out == prepared.stdout + "\n"
+    assert path.read_bytes() == snapshot
+    assert output.err.splitlines() == expected
