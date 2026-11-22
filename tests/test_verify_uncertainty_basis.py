@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from code_forge.manifest import ManifestTier
 from code_forge.receipt import write_receipts
 from code_forge.state import Disposition, StateFinding
 from code_forge.verify import parse_diff_files, run_verify
@@ -60,6 +61,98 @@ def _verify(root, **kwargs):
         respect_floor=False,
         **kwargs,
     )
+
+
+@pytest.mark.parametrize(
+    ("incomplete", "product", "reason"),
+    [
+        pytest.param(
+            True,
+            False,
+            "pass did not complete: c1p1 status=error -- convergence not established",
+            id="incomplete-only",
+        ),
+        pytest.param(
+            False,
+            True,
+            "unresolved product candidate the host could not verify c1p2 -- convergence not established",
+            id="finding-only",
+        ),
+        pytest.param(
+            True,
+            True,
+            "pass did not complete: c1p1 status=error; "
+            "unresolved product candidate the host could not verify c1p2 -- convergence not established",
+            id="mixed",
+        ),
+    ],
+)
+def test_check8_distinguishes_incomplete_pass_and_unverified_code(tmp_path, incomplete, product, reason):
+    (tmp_path / "mod.py").write_text("value = 1\n", encoding="utf-8")
+    findings = []
+    if incomplete:
+        findings.append(
+            StateFinding(
+                "l1-qodo-invoke-fail",
+                "invoke-fail-qodo",
+                "INFRA",
+                Disposition.CONFIRMED,
+                "<llm-invoke>",
+                [0, 0],
+                "fixture provider detail",
+            )
+        )
+    if product:
+        findings.append(
+            StateFinding(
+                "l1-expert-product",
+                "candidate",
+                "INFRA",
+                Disposition.UNCERTAIN,
+                "mod.py",
+                [1, 1],
+                "fixture product candidate",
+                error="fixture falsification unavailable",
+            )
+        )
+    paths = write_receipts(
+        tmp_path / ".code-forge/receipts",
+        0,
+        findings,
+        "hash",
+        [Path("mod.py")],
+        tmp_path,
+        diff_files=parse_diff_files(DIFF),
+        diff_text=DIFF,
+        reviewer_excerpts=[
+            {
+                "file": "mod.py",
+                "start_line": 1,
+                "end_line": 1,
+                "content": "value = 1",
+                "pass_name": "expert",
+            }
+        ],
+        manifest_tier=ManifestTier.DECLARED,
+    )
+    originals = [path.read_bytes() for path in paths]
+    receipts = [json.loads(raw) for raw in originals]
+    result = _verify(tmp_path, require_convergence=not incomplete)
+    assert (result.passed, result.checks_run, result.checks_passed) == (False, 8, 6)
+    assert result.failure_kind is None
+    assert result.incomplete_passes == ((1,) if incomplete else ())
+    assert result.completion_statuses == (
+        (1, 1, "error" if incomplete else "completed"),
+        (1, 2, "completed"),
+        (1, 3, "completed"),
+    )
+    assert result.unresolved_findings == tuple(
+        (1, receipt["pass"], "hash", json.dumps(finding, sort_keys=True, separators=(",", ":")))
+        for receipt in receipts
+        for finding in receipt["findings"]
+    )
+    assert [path.read_bytes() for path in paths] == originals
+    assert result.reason == reason
 
 
 @pytest.mark.parametrize("hardened", [False, True])

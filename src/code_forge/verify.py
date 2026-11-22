@@ -2256,7 +2256,7 @@ def _run_verify_impl(
                 cp,
             )
     unresolved = []
-    first_label = None
+    finding_summary = ""
     # Healthy CI checks one invocation without claiming convergence. An
     # incomplete role cannot exempt independent findings in any role.
     if require_convergence or incomplete:
@@ -2265,10 +2265,18 @@ def _run_verify_impl(
                 kind = _basis_kind(finding)
                 if kind in (None, "verified"):
                     continue
-                if first_label is None:
-                    first_label = _UNRESOLVED_LABELS[kind]
+                # An unfinished pass already has its own diagnostic. Use the
+                # finding clause for the first candidate or ambiguous legacy row.
+                if not finding_summary and not (
+                    incomplete
+                    and kind == AUTHORITY_INFRA_UNAVAILABLE
+                    and finding.get("source") == "INFRA"
+                    and finding.get("channel") in ("execution", "gate")
+                ):
+                    label = _UNRESOLVED_LABELS[kind]
                     if kind == AUTHORITY_INFRA_UNAVAILABLE:
-                        first_label = unresolved_receipt_label(finding, first_label)
+                        label = unresolved_receipt_label(finding, label)
+                    finding_summary = f"{label} c{r['cycle']}p{r['pass']}"
                 unresolved.append(
                     (
                         r["cycle"],
@@ -2278,20 +2286,17 @@ def _run_verify_impl(
                     )
                 )
     if unresolved:
-        cycle, number, _, _ = unresolved[0]
-        reason = f"{first_label} c{cycle}p{number} -- convergence not established"
+        reason = finding_summary
         if incomplete:
-            # #50: a pass that did not complete (e.g. status=schema_fail) is the
-            # primary diagnostic; name it first. Verdict, failure_kind and the
-            # recorded unresolved findings are unchanged (routing-neutral).
             first = incomplete[0]
             reason = (
-                f"pass did not complete: c{first['cycle']}p{first['pass']} status={first['pass_status']}; "
-                + reason
+                f"pass did not complete: c{first['cycle']}p{first['pass']} status={first['pass_status']}"
             )
+            if finding_summary:
+                reason += f"; {finding_summary}"
         return VerifyResult(
             False,
-            reason,
+            f"{reason} -- convergence not established",
             8,
             cp,
             incomplete_passes=tuple(sorted({r["pass"] for r in incomplete})),
