@@ -271,20 +271,24 @@ def _emit_ci_output(
             and projection.classification_complete
             and prepared.report_classification.availability == "available"
         ):
-            # Use the receipt producer's display provenance and the report's
-            # protocol label together. The legacy counts still include these rows.
+            # Pair the report's provider label with the receipt's display provenance.
             findings = final_state.findings
-            protocol_failures = sum(
-                1
-                for record in projection.product
-                if record.host_failure_kind == "PROVIDER_PROTOCOL"
-                and receipt_finding_provenance(findings[record.index])["channel"] == "execution"
-            )
-            if protocol_failures:
-                print(
-                    f"code-forge: review service protocol failures={protocol_failures} [included in findings]",
-                    file=sys.stderr,
+            for kind, label in (
+                ("PROVIDER_PROTOCOL", "protocol"),
+                ("PROVIDER_TRANSPORT", "transport"),
+                ("PROVIDER_AUTH", "authentication"),
+            ):
+                failures = sum(
+                    1
+                    for record in projection.product
+                    if record.host_failure_kind == kind
+                    and receipt_finding_provenance(findings[record.index])["channel"] == "execution"
                 )
+                if failures:
+                    print(
+                        f"code-forge: review service {label} failures={failures} [included in findings]",
+                        file=sys.stderr,
+                    )
     if loaded_path is not None:
         try:
             if (
