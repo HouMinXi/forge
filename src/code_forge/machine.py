@@ -825,6 +825,7 @@ class StateMachine:
     max_total_rounds: int = 20
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
     clean_round_threshold: int = field(default=DEFAULT_CLEAN_ROUND_THRESHOLD)
+    local_contract_sha256: str | None = field(default=None, kw_only=True)
     advisory_runners: list[AxisRunner] = field(default_factory=list)
     # Phase 53a: execution falsification (EXEC-FALSIFY v1)
     exec_falsify: bool = False
@@ -1865,6 +1866,21 @@ class StateMachine:
             return
         if any(row["round"] == round_index for row in self._state.round_history):
             raise CorruptedStateError("host attempt ID is already reserved")
+        # The restored window identifies the last proved round. Compare its
+        # contract before reserving this attempt, leaving product history intact.
+        earned_cycles = self._state.earned_clean_window["cycles"]
+        if earned_cycles:
+            last_earned_round = earned_cycles[-1]["cycle"] - 1
+            prior_contract_sha256 = next(
+                row.get("local_contract_sha256")
+                for row in reversed(self._state.round_history)
+                if row["round"] == last_earned_round
+            )
+            if prior_contract_sha256 != self.local_contract_sha256:
+                self._reset_clean_credit(settled_host_row=True)
+                progress.emit(
+                    "starting a fresh LOCAL clean window for changed or unrecorded --contract input"
+                )
         self._attempt_findings = None
         self._host_attempt_round = round_index
         self._state.round = round_index
@@ -1878,18 +1894,19 @@ class StateMachine:
         self._falsify_protocol_findings = []
         self._falsify_failed_findings = []
         self._attempt_snapshot = None
-        self._state.round_history.append(
-            {
-                "round": round_index,
-                "source_hash": self.source_hash,
-                "reviewed_repositories": self._state.earned_clean_window["reviewed_repositories"],
-                "clean_credit_action": "pending",
-                "phase_status": dict(self._phase_status),
-                "acquisition_failures": [],
-                "reset_observed": False,
-                "clean_rounds_after": self._state.consecutive_clean_rounds,
-            }
-        )
+        row = {
+            "round": round_index,
+            "source_hash": self.source_hash,
+            "reviewed_repositories": self._state.earned_clean_window["reviewed_repositories"],
+            "clean_credit_action": "pending",
+            "phase_status": dict(self._phase_status),
+            "acquisition_failures": [],
+            "reset_observed": False,
+            "clean_rounds_after": self._state.consecutive_clean_rounds,
+        }
+        if self.local_contract_sha256 is not None:
+            row["local_contract_sha256"] = self.local_contract_sha256
+        self._state.round_history.append(row)
         self._persist_state()
 
     def _start_host_execution(self) -> None:

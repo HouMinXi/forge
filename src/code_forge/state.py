@@ -497,6 +497,12 @@ def validate_round_history(history: list[dict], round_index: int | None = None) 
             continue
         if not HOST_ROUND_FIELDS.issubset(row):
             raise CorruptedStateError("incomplete host round authority")
+        if "local_contract_sha256" in row:
+            contract_sha256 = row["local_contract_sha256"]
+            if not isinstance(contract_sha256, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", contract_sha256
+            ):
+                raise CorruptedStateError("invalid LOCAL contract digest")
         action = row["clean_credit_action"]
         if action not in (
             "pending",
@@ -717,12 +723,21 @@ def earned_history_cycles(state: State, source_hash: str, manifest: dict | None)
     """Reconstruct CLEAN/reset transitions; unfinished reservations earn no credit."""
     validate_round_history(state.round_history, state.round)
     earned = []
+    prior_contract_sha256 = None
     for row in state.round_history:
-        if is_host_round(row):
+        host_round = is_host_round(row)
+        if host_round:
             if row["source_hash"] != source_hash:
                 continue
             if row["reviewed_repositories"] != manifest:
                 raise CorruptedStateError("host round repository scope mismatch")
+        # Contract identity limits the clean window without changing the product
+        # observations the round recorded. Older or unbound callers omit it.
+        contract_sha256 = row.get("local_contract_sha256")
+        if contract_sha256 != prior_contract_sha256:
+            earned.clear()
+            prior_contract_sha256 = contract_sha256
+        if host_round:
             action = row["clean_credit_action"]
             if action == "earned":
                 earned.append(row["round"] + 1)
