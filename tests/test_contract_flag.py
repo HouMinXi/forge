@@ -3,10 +3,12 @@
 """Tests for --contract flag: _load_contract_file, _merge_contract_spec."""
 
 import io
+import json
 import shutil
 import socket
 import subprocess
 import sys
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -95,18 +97,26 @@ def working_contract_review(tmp_path, monkeypatch):
             session.setattr(sys, "argv", ["code-forge", *args])
             return cli.main()
 
-    def review(contract, *, rounds, fault=False, head="WORKING"):
-        body = contract.read_text(encoding="utf-8").strip() if contract else ""
+    def review(contract, *, rounds, fault=False, head="WORKING", summary=None):
+        raw_body = contract.read_text(encoding="utf-8") if contract else ""
+        body = raw_body if summary is None else summary
         observed = []
+        summarized_bodies = []
+        summary_prefix = "Summarize the following contract to its key invariants and residual risks:\n"
 
         def transport(prompt, backend, *args, **kwargs):
             assert backend.base_url == "https://contract-fixture.invalid/v1"
+            if prompt.startswith(summary_prefix):
+                summarized_bodies.append(prompt.removeprefix(summary_prefix))
+                if summary is None:
+                    raise llm_invoke.LLMInvokeError("fixture summary unavailable", retryable=False)
+                return llm_invoke.LLMResult(summary)
             if prompt.startswith(RUNTIME_LIFECYCLE_QUESTION.split("{diff_text}", 1)[0]):
                 return llm_invoke.LLMResult({"surfaces": [], "findings": []})
             role = _reviewer_role(prompt)
             observed.append(role)
             assert ("\n## Design Intent\n" in prompt) is bool(body)
-            assert not body or body in prompt
+            assert not body or f"\n## Design Intent\n{body}{_CONFIRMATION_BIAS_DIRECTIVE}" in prompt
             assert content.strip() in prompt
             if fault and role == "adversarial":
                 raise _acquisition_error("no-json")
@@ -148,6 +158,7 @@ def working_contract_review(tmp_path, monkeypatch):
                 doc,
             )
         assert observed == ["qodo", "expert", "adversarial"] * rounds
+        assert summarized_bodies == ([raw_body] if len(raw_body.encode("utf-8")) > 4096 else [])
         return status, load_state(worktree / ".code-forge/state.json")
 
     def verify():
@@ -205,6 +216,60 @@ def test_working_contract_clean_credit(tmp_path, working_contract_review, case):
         assert working.source_hash == final.source_hash
         assert (status, working.verdict, working.consecutive_clean_rounds) == (4, Verdict.ESCALATED, 1)
         assert verify() == 1
+
+
+_FIRST_CONTRACT_SUMMARY = "Use the published color name."
+
+
+@pytest.mark.parametrize(
+    "restart_summary",
+    [
+        pytest.param(_FIRST_CONTRACT_SUMMARY, id="same-summary"),
+        pytest.param("Keep labels consistent with the headings.", id="changed-summary"),
+        pytest.param(None, id="raw-fallback"),
+    ],
+)
+def test_working_long_contract_clean_credit(tmp_path, working_contract_review, restart_summary):
+    worktree, review, verify, _ = working_contract_review
+    contract = tmp_path / "long-intent.md"
+    raw_body = "示例文档应统一使用已发布的颜色名称。\n" * 100
+    raw_bytes = raw_body.encode("utf-8")
+    assert len(raw_body) <= 4096 < len(raw_bytes)
+    assert not contract.is_relative_to(worktree)
+    contract.write_bytes(raw_bytes)
+
+    def contract_digest(body):
+        encoded = json.dumps([body, ""], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return sha256(encoded).hexdigest()
+
+    status, prior = review(contract, rounds=2, summary=_FIRST_CONTRACT_SUMMARY)
+    assert (status, prior.verdict, prior.consecutive_clean_rounds) == (4, Verdict.ESCALATED, 2)
+    first_digest = contract_digest(_FIRST_CONTRACT_SUMMARY)
+    assert [row["local_contract_sha256"] for row in prior.round_history] == [first_digest] * 2
+    assert [entry["cycle"] for entry in prior.earned_clean_window["cycles"]] == [1, 2]
+    assert verify() == 1
+
+    status, resumed = review(contract, rounds=1, summary=restart_summary)
+    assert contract.read_bytes() == raw_bytes
+    assert resumed.source_hash == prior.source_hash
+    assert resumed.round_history[:-1] == prior.round_history
+    assert all(finding in resumed.findings for finding in prior.findings)
+    assert resumed.round_history[-1]["local_contract_sha256"] == contract_digest(
+        raw_body if restart_summary is None else restart_summary
+    )
+    cycles = [entry["cycle"] for entry in resumed.earned_clean_window["cycles"]]
+    if restart_summary == _FIRST_CONTRACT_SUMMARY:
+        assert (status, resumed.verdict, resumed.consecutive_clean_rounds) == (0, Verdict.PASS, 3)
+        assert cycles == [1, 2, 3]
+        assert verify() == 0
+    else:
+        assert (status, resumed.verdict, resumed.consecutive_clean_rounds) == (4, Verdict.ESCALATED, 1)
+        assert cycles == [3]
+        assert verify() == 1
+        status, final = review(contract, rounds=2, summary=restart_summary)
+        assert (status, final.verdict, final.consecutive_clean_rounds) == (0, Verdict.PASS, 3)
+        assert [entry["cycle"] for entry in final.earned_clean_window["cycles"]] == [3, 4, 5]
+        assert verify() == 0
 
 
 # ---------------------------------------------------------------------------
