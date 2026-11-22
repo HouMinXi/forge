@@ -1273,13 +1273,20 @@ def cmd_remove(args):
 
     verb = "would remove" if args.dry_run else "removed"
     print(f"\n{verb} '{args.name}' from {len(removed)} of {declared} declaring file(s)")
-    report_trust(reseal_trust(removed, args.dry_run), args.dry_run)
+    repo_edits = [path for path in removed if path != USER_CONFIG]
+    sealed = reseal_trust(repo_edits, args.dry_run) if repo_edits else 0
+    report_trust(sealed, args.dry_run)
     if not args.dry_run and removed:
         print(f"backups: <file>{stamp}")
+    unsealed = 0 if args.dry_run else len(repo_edits) - sealed
+    if unsealed:
+        print(
+            f"trust was not updated for {unsealed} repository config file(s) changed by remove",
+            file=sys.stderr,
+        )
     if refused:
         print(f"{len(refused)} file(s) kept it; see the reasons above", file=sys.stderr)
-        return 1
-    return 0
+    return 1 if refused or unsealed else 0
 
 
 def cmd_rename(args):

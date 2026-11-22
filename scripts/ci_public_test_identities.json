@@ -11021,6 +11021,8 @@
     "tests/test_forge_provider.py::TestRemoveCommand::test_refuses_to_authorize_an_untrusted_survivor[review_lenses-False]",
     "tests/test_forge_provider.py::TestRemoveCommand::test_refuses_to_authorize_an_untrusted_survivor[review_lenses-True]",
     "tests/test_forge_provider.py::TestRemoveCommand::test_removes_every_eligible_file",
+    "tests/test_forge_provider.py::TestRemoveCommand::test_reseal_failure_after_write_exits_nonzero[mixed]",
+    "tests/test_forge_provider.py::TestRemoveCommand::test_reseal_failure_after_write_exits_nonzero[single]",
     "tests/test_forge_provider.py::TestRemoveCommand::test_trusted_removal_reseals_the_surviving_backend",
     "tests/test_forge_provider.py::TestRemoveCommand::test_user_config_needs_no_repo_trust",
     "tests/test_forge_provider.py::TestRemoveFirstBlock::test_header_and_following_blocks_survive",

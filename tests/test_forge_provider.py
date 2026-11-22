@@ -1342,6 +1342,56 @@ class TestRemoveCommand:
         }
         assert is_trusted(gate, yaml.safe_load(gate.read_text()))
 
+    @pytest.mark.parametrize("mixed", [False, True], ids=["single", "mixed"])
+    def test_reseal_failure_after_write_exits_nonzero(self, tmp_path, monkeypatch, capsys, mixed):
+        from code_forge import trust
+
+        failed = tmp_path / "code" / "a" / ".code-forge" / "gate.yaml"
+        healthy = tmp_path / "code" / "b" / ".code-forge" / "gate.yaml"
+        user = tmp_path / "config.yaml"
+        repos = [failed, healthy] if mixed else [failed]
+        configs = [*repos, user]
+        original = yaml.safe_load(GATE)
+        for path in configs:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(GATE, encoding="utf-8")
+        record_trust = trust.record_trust
+        for path in repos:
+            record_trust(path, original)
+        old_hash = trust.trust_status(failed, original).stored_hash
+        assert old_hash is not None
+        attempts = []
+
+        def reseal(path, data):
+            attempts.append(path)
+            if path == failed:
+                raise PermissionError("fixture trust store write denied")
+            record_trust(path, data)
+
+        monkeypatch.setattr(trust, "record_trust", reseal)
+        monkeypatch.setattr(fp, "SEARCH_ROOT", tmp_path)
+        monkeypatch.setattr(fp, "USER_CONFIG", user)
+        monkeypatch.setattr(sys, "argv", ["forge-provider.py", "remove", "beta"])
+        rc = fp.main()
+        out, err = capsys.readouterr()
+
+        assert attempts == repos
+        remaining = {"backends": {"alpha": original["backends"]["alpha"]}}
+        for path in configs:
+            assert yaml.safe_load(path.read_text(encoding="utf-8")) == remaining
+            backups = list(path.parent.glob(path.name + ".bak-provider-*"))
+            assert [backup.read_bytes() for backup in backups] == [GATE.encode("utf-8")]
+        failed_status = trust.trust_status(failed, remaining)
+        assert not failed_status.trusted
+        assert failed_status.stored_hash == old_hash
+        if mixed:
+            assert trust.is_trusted(healthy, remaining)
+            assert "re-sealed trust on 1 gate.yaml file(s)" in out
+        assert str(failed) in err
+        assert "backups:" in out
+        assert rc == 1
+        assert "trust was not updated for 1 repository config file(s) changed by remove" in err
+
     def test_user_config_needs_no_repo_trust(self, tmp_path, monkeypatch):
         gate = tmp_path / "config.yaml"
         gate.write_text(GATE)
