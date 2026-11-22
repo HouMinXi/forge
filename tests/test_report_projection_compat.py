@@ -32,7 +32,6 @@ from tests.test_cli_integration import (
     _write_measured_change,
     _write_measured_gate,
     _write_py_file,
-    _write_tools_yaml,
 )
 from tests.test_resume_receipt_provenance import (
     CONTENT,
@@ -272,7 +271,16 @@ def _build_snap(snap: Path, scenario: str):
     snap.mkdir()
     if scenario == "ci_pass_stub":
         _git_init_repo(snap)
-        _write_tools_yaml(snap)
+        tools = snap / ".code-forge" / "tools.yaml"
+        tools.parent.mkdir()
+        tools.write_text(
+            "tools:\n"
+            "  ruff:\n"
+            "    command: ruff check --isolated --output-format=sarif\n"
+            "    output_format: sarif\n"
+            "    file_patterns: ['*.py']\n"
+            "    required: true\n"
+        )
         _write_py_file(snap)
         _write_measured_gate(snap)
         subprocess.run(["git", "add", "-A"], cwd=snap, capture_output=True, check=True)

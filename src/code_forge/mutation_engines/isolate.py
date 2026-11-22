@@ -19,6 +19,7 @@ started from a dedicated long-lived SupervisorThread.  Starting from
 any other thread (including a short-lived one) is refused.
 """
 
+import hashlib
 import os
 import shutil
 import signal
@@ -69,31 +70,137 @@ class CgroupCleanupError(IsolationError):
     timed_out: bool | None = None
 
 
+def _root_tag(cgroup_root: object) -> str:
+    """A stable handle for a path whose printable form may be masked.
+
+    The display bound renders non-ASCII as "?", so two different roots would
+    otherwise produce byte-identical receipts. ASCII paths keep the message
+    exactly as it was: an empty tag changes nothing.
+
+    The digest is unkeyed on purpose and only for paths under the delegated
+    cgroup root, which are not secrets: anyone who can guess such a path can
+    confirm it, which is harmless there. Do not reuse this for a
+    user-controlled identifier; that needs a keyed HMAC with a key id, so an
+    observer cannot confirm a guessed value, and the key has to be configured
+    rather than hard-coded.
+    """
+    raw = str(cgroup_root)
+    if repr(raw).isascii() and _printable(raw) == raw:
+        return ""
+    # 64 bits: the birthday bound puts a 50% collision at about five billion
+    # distinct masked paths, which is far past any corpus this runs against,
+    # and the extra eight characters come out of the visible path on the one
+    # message shape that is truncated.
+    return "#%s " % hashlib.sha256(raw.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+
+
 def verify_isolation_support(cgroup_root: str) -> None:
     """Raise IsolationUnavailable unless the delegated root is usable."""
     if shutil.which("bwrap") is None:
         raise IsolationUnavailable("bubblewrap (bwrap) binary not found")
     try:
-        fs_type = subprocess.run(
+        completed = subprocess.run(
             ["stat", "-fc", "%T", cgroup_root],
             capture_output=True,
             text=True,
             encoding="utf-8",
             timeout=10,
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise IsolationUnavailable("cannot stat cgroup root: %s" % exc) from exc
-    if fs_type != _CGROUP2_MAGIC:
-        raise IsolationUnavailable(
-            "cgroup root %r is not on a cgroup2 mount (got %r)" % (cgroup_root, fs_type)
         )
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
+        # The cause comes first: a timeout's own text carries the command line,
+        # and the cut must not eat the reason behind a long path.
+        raise IsolationUnavailable(
+            _bounded(
+                "cannot stat cgroup root (%s): %s%r"
+                % (_error_detail(exc), _root_tag(cgroup_root), cgroup_root)
+            )
+        ) from exc
+    returncode = getattr(completed, "returncode", None)
+    if returncode is None:
+        raise IsolationUnavailable(
+            _bounded(
+                "cannot stat cgroup root (no exit status): %s%r"
+                % (_root_tag(cgroup_root), cgroup_root)
+            )
+        )
+    if returncode != 0:
+        # stat reports the reason after its own path ("... for '<path>': No such
+        # file or directory"), so a bounded message must lift the reason out
+        # rather than echo the line: the path would otherwise survive and the
+        # reason would be cut.
+        stderr = (getattr(completed, "stderr", "") or "").strip()
+        root_text = str(cgroup_root) if cgroup_root else ""
+        if stderr:
+            lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+            # stat's own diagnostic is the line that quotes the root; a warning
+            # printed before or after it must not become the reason.
+            separator = [
+                line
+                for line in lines
+                if root_text and (root_text + "':" in line or root_text + '":' in line)
+            ]
+            quoting = [
+                line
+                for line in lines
+                if root_text and (root_text + "'" in line or root_text + '"' in line)
+            ]
+            # A line that quotes the root and carries the separator is stat's
+            # own; a hint that merely mentions the root does not qualify.
+            stderr = (separator or quoting or lines or [stderr])[-1]
+        reason = ""
+        if root_text:
+            # Only a quoted occurrence of the root is the separator stat puts
+            # before the reason. Taking the last one keeps a root that merely
+            # prefixes another path on the same line from splitting the reason,
+            # and nothing in the message is rewritten, so no placeholder can
+            # reach a receipt.
+            cut = -1
+            for quote in ("'", '"'):
+                pos = stderr.rfind(root_text + quote)
+                cut = max(cut, pos + len(root_text) + 1 if pos >= 0 else -1)
+            if cut >= 0:
+                tail = stderr[cut:].lstrip()
+                if tail.startswith(":"):
+                    reason = tail[1:].strip()
+        if not reason:
+            reason = stderr.rsplit(": ", 1)[-1].strip() if ": " in stderr else stderr
+        if reason.strip("'\" ") == root_text:
+            # "the reason" being the path itself tells the caller nothing.
+            reason = ""
+        if not reason:
+            reason = "exit %s" % returncode
+        raise IsolationUnavailable(
+            _bounded(
+                "cannot stat cgroup root (exit %s: %s): %s%r"
+                % (returncode, reason, _root_tag(cgroup_root), cgroup_root)
+            )
+        )
+    fs_type = completed.stdout.strip()
+    if fs_type != _CGROUP2_MAGIC:
+        if fs_type:
+            detail = "cgroup root is not on a cgroup2 mount (got %r): %s%r" % (
+                fs_type, _root_tag(cgroup_root), cgroup_root,
+            )
+        else:
+            # A silent success says nothing; reporting "got ''" only hides that.
+            detail = "cgroup root reported no filesystem type: %s%r" % (
+                _root_tag(cgroup_root), cgroup_root,
+            )
+        raise IsolationUnavailable(_bounded(detail))
     if not os.path.isdir(cgroup_root):
-        raise IsolationUnavailable("cgroup root %r is not a directory" % cgroup_root)
+        if os.path.exists(cgroup_root):
+            detail = "cgroup root is not a directory: %s%r" % (_root_tag(cgroup_root), cgroup_root)
+        else:
+            detail = "cgroup root does not exist: %s%r" % (_root_tag(cgroup_root), cgroup_root)
+        raise IsolationUnavailable(_bounded(detail))
     try:
         probe = tempfile.mkdtemp(prefix=".forge-probe-", dir=cgroup_root)
     except OSError as exc:
         raise IsolationUnavailable(
-            "cannot create child cgroup under %r: %s" % (cgroup_root, exc)
+            _bounded(
+                "cannot create child cgroup (%s): %s%s"
+                % (_error_detail(exc), _root_tag(cgroup_root), cgroup_root)
+            )
         ) from exc
     failure: BaseException | None = None
     try:
@@ -115,7 +222,10 @@ def verify_isolation_support(cgroup_root: str) -> None:
             # A probe cgroup left behind is a cleanup failure (#31): report it,
             # without replacing an error that is already on its way out. The
             # path comes last, so a long one cannot cut off the type and errno.
-            detail = _bounded("probe cgroup was not removed (%s): %s" % (_error_detail(exc), probe))
+            detail = _bounded(
+                "probe cgroup was not removed (%s): %s%s"
+                % (_error_detail(exc), _root_tag(probe), probe)
+            )
             cleanup = ProbeCleanupError(detail)
             cleanup.__cause__ = exc
             if failure is None:
@@ -165,7 +275,12 @@ def _read(path: str) -> str:
         with open(path, encoding="utf-8") as fh:
             return fh.read().strip()
     except UnicodeDecodeError as exc:
-        raise IsolationUnavailable("cgroup file %r is not UTF-8 decodable: %s" % (path, exc)) from exc
+        raise IsolationUnavailable(
+            _bounded(
+                "cgroup file is not UTF-8 decodable (%s): %s%r"
+                % (_error_detail(exc), _root_tag(path), path)
+            )
+        ) from exc
 
 
 # Bytes of child startup diagnostic the parent keeps (#31).
@@ -627,7 +742,9 @@ class Supervisor:
         )
         # The path comes last, so a long one cannot cut off the type and errno.
         raise CgroupCleanupError(
-            _printable("%s: %s" % (self.cleanup_error, self.cgroup_path))[:_CLEANUP_MESSAGE_LIMIT]
+            _printable(
+                "%s: %s%s" % (self.cleanup_error, _root_tag(self.cgroup_path), self.cgroup_path)
+            )[:_CLEANUP_MESSAGE_LIMIT]
         ) from last_error
 
     def teardown(self) -> None:

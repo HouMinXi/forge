@@ -272,6 +272,15 @@ def test_original_selection_contract_is_unchanged():
     assert len(ci.DESELECT) == 2
 
 
+def test_deselected_nodes_are_declared_in_the_public_manifest():
+    """A stale deselection id silently stops deselecting anything."""
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads((root / "scripts" / "ci_public_test_identities.json").read_text())
+    nodes = set(manifest["nodes"])
+    missing = sorted(node for node in ci.DESELECT if node not in nodes)
+    assert not missing, missing
+
+
 @pytest.mark.parametrize("kind", ["pass", "skip", "fail", "subtests", "git-guard", "collection-skip"])
 def test_real_pytest_plugin_reports_outcomes_and_final_exit(tmp_path, kind):
     root = Path(__file__).resolve().parents[1]

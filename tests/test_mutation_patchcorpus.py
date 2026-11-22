@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 import stat
-import subprocess
+import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -72,7 +72,7 @@ def _target() -> TargetDeclaration:
         tests=("tests",),
         inputs=(),
         oracle="pytest",
-        command=("/usr/bin/python3", "-m", "pytest", "-q"),
+        command=(str(Path(sys.executable).resolve()), "-m", "pytest", "-q"),
         execution_profile="local",
         environment="host",
         budget=_budget(),
@@ -81,18 +81,20 @@ def _target() -> TargetDeclaration:
 
 
 def _context(tmp_path: Path) -> ExecutionContext:
-    python = "/usr/bin/python3"
-    paths = subprocess.run(
-        [
-            python,
-            "-c",
-            "import json,site; print(json.dumps(site.getsitepackages() + [site.getusersitepackages()]))",
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-        timeout=10,
+    import pluggy
+    import pygments
+    import _pytest
+
+    python = str(Path(sys.executable).resolve())
+    packages = (pytest, _pytest, pluggy, pygments)
+    locations = [module.__file__ for module in packages]
+    assert all(isinstance(location, str) for location in locations)
+    paths = tuple(
+        dict.fromkeys(
+            str(Path(location).resolve().parent.parent)
+            for location in locations
+            if location is not None
+        )
     )
     return ExecutionContext(
         run_id="corpus-" + uuid.uuid4().hex,
@@ -106,7 +108,7 @@ def _context(tmp_path: Path) -> ExecutionContext:
         pids=64,
         workspace_mb=64,
         process_headroom_mb=32,
-        extra_python_paths=tuple(path for path in json.loads(paths.stdout) if Path(path).is_dir()),
+        extra_python_paths=paths,
     )
 
 

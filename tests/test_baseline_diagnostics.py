@@ -46,6 +46,7 @@ def _recording_runner(monkeypatch, root):
         except (FileNotFoundError, subprocess.TimeoutExpired) as error:
             row.update(
                 exception=type(error).__name__,
+                detail=str(error),
                 stdout=getattr(error, "output", None),
                 stderr=getattr(error, "stderr", None),
             )
@@ -217,7 +218,8 @@ def test_physical_failure_wiring(tmp_path, monkeypatch, kind):
         detail, raw = _failure(tmp_path, monkeypatch, [str(tmp_path / ("forge-" + marker))])
         assert raw["exception"] == "FileNotFoundError" and not raw["identities"]
         assert "runner could not start" in detail
-        assert marker in detail, "runner-start detail lost"
+        assert marker in raw["detail"]
+        assert detail == "run 1: runner could not start; stderr: " + " ".join(raw["detail"].split())[:200]
     elif kind == "timeout":
         payload = f"import time\nprint('ERROR: {marker}', flush=True)\ntime.sleep(20)\n"
         detail, raw = _failure(

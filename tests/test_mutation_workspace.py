@@ -987,6 +987,7 @@ def test_configuration_partial_install_and_recovery_faults_remain_actionable(
                 backup = tmp_path / ".code-forge" / path
                 backup.rename(tmp_path / "retained-backup-directory")
                 backup.mkdir(mode=0o750)
+                backup.chmod(0o750)
             return original(path, flags, *args, **kwargs)
 
         monkeypatch.setattr(os, "open", replace_before_open)
