@@ -4,11 +4,12 @@ HTTP responses and L0/L2/E2E are synthetic. No power-loss or installed CLI claim
 """
 
 import json
-from pathlib import Path
+import os
 import signal
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -173,10 +174,15 @@ def _read(root, identity, prior_pass, mode):
 
 @pytest.fixture
 def product_root():
-    # Same filesystem as the checkout, but outside every Git working tree.
-    with tempfile.TemporaryDirectory(
-        prefix="forge-t34-round-", dir=Path(__file__).resolve().parents[2]
-    ) as directory:
+    # Prefer the checkout filesystem, but the child deliberately forbids Git.
+    base = Path(__file__).resolve().parents[2]
+    for parent in (base, *base.parents):
+        if (parent / ".git").exists():
+            base = parent.parent
+    if not os.access(base, os.W_OK):
+        base = Path(tempfile.gettempdir()).resolve()
+    assert not any((parent / ".git").exists() for parent in (base, *base.parents))
+    with tempfile.TemporaryDirectory(prefix="forge-t34-round-", dir=base) as directory:
         yield Path(directory) / "product"
 
 

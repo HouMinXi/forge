@@ -1697,6 +1697,17 @@ def test_high_descriptor_pidfd_keeps_owned_lifecycle_checks(tmp_path, monkeypatc
             assert proc.pid not in tree.fds
             assert original(proc.pid) is None
         else:
+            # Production runs cleanup in a dedicated owner process. Pytest
+            # shares this parent with unrelated helpers such as its forkserver.
+            children = process._children
+
+            def fixture_children(parent):
+                pids = children(parent)
+                if parent == tree.owner:
+                    return [proc.pid] if proc.pid in pids else []
+                return pids
+
+            monkeypatch.setattr(process, "_children", fixture_children)
             assert tree.cleanup(proc)
             assert proc.returncode is not None
             assert proc.pid not in tree.fds

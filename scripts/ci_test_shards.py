@@ -23,7 +23,7 @@ OWNERSHIP = [
 CGROUP = ["tests/test_mutation_isolate.py", "tests/test_mutation_patchcorpus.py"]
 LOCAL = ["tests/test_lock_signals.py", "tests/test_mutation_detach_integration.py"]
 DESELECT = [
-    "tests/test_integration.py::TestIntegrationPass::test_pass_on_clean_code",
+    "tests/test_integration.py::TestIntegrationUnmeasuredMutation::test_clean_shellcheck_still_fails",
     "tests/test_integration.py::TestIntegrationBaseline::test_baseline_preexisting_not_shown",
 ]
 POLICY = Path(__file__).with_name("ci_test_policy.json")
