@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 import stat
-import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -72,7 +71,7 @@ def _target() -> TargetDeclaration:
         tests=("tests",),
         inputs=(),
         oracle="pytest",
-        command=(str(Path(sys.executable).resolve()), "-m", "pytest", "-q"),
+        command=("/usr/bin/python3", "-m", "pytest", "-q"),
         execution_profile="local",
         environment="host",
         budget=_budget(),
@@ -85,15 +84,13 @@ def _context(tmp_path: Path) -> ExecutionContext:
     import pygments
     import _pytest
 
-    python = str(Path(sys.executable).resolve())
+    python = "/usr/bin/python3"
     packages = (pytest, _pytest, pluggy, pygments)
     locations = [module.__file__ for module in packages]
     assert all(isinstance(location, str) for location in locations)
     paths = tuple(
         dict.fromkeys(
-            str(Path(location).resolve().parent.parent)
-            for location in locations
-            if location is not None
+            str(Path(location).resolve().parent.parent) for location in locations if location is not None
         )
     )
     return ExecutionContext(

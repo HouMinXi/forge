@@ -795,8 +795,12 @@ def test_cleanup_error_is_bounded_and_printable(tmp_path, monkeypatch):
     assert len(message) == 400
     assert sup.cleanup_error is not None
     expected = isolate._printable(
-        sup.cleanup_error + ": " + isolate._root_tag(sup.cgroup_path) + str(tmp_path)
-        + "/?[31m" + "p" * 600
+        sup.cleanup_error
+        + ": "
+        + isolate._root_tag(sup.cgroup_path)
+        + str(tmp_path)
+        + "/?[31m"
+        + "p" * 600
     )[:400]
     assert message == expected
     assert all(" " <= ch <= "~" for ch in message)
@@ -824,9 +828,12 @@ def test_cleanup_error_keeps_type_and_errno_ahead_of_a_long_path(tmp_path, monke
     )
     message = str(info.value)
     assert len(message) == 400
-    assert message == isolate._printable(
-        detail + ": " + isolate._root_tag(sup.cgroup_path) + str(tmp_path) + "/" + "p" * 600
-    )[:400]
+    assert (
+        message
+        == isolate._printable(
+            detail + ": " + isolate._root_tag(sup.cgroup_path) + str(tmp_path) + "/" + "p" * 600
+        )[:400]
+    )
 
 
 def test_absent_cgroup_counts_as_removed(tmp_path, monkeypatch):
@@ -1131,9 +1138,9 @@ def test_probe_cleanup_report_is_bounded(tmp_path, monkeypatch):
         check()
 
     assert len(info.value.detail) == 200
-    assert info.value.detail == isolate._printable(
-        head + isolate._root_tag(probe_path) + probe_path
-    )[:200]
+    assert (
+        info.value.detail == isolate._printable(head + isolate._root_tag(probe_path) + probe_path)[:200]
+    )
 
 
 def test_masked_root_receipts_stay_distinct_whatever_the_host(tmp_path, monkeypatch):
@@ -1366,9 +1373,7 @@ def test_root_diagnostics_keep_their_cause_at_a_long_path(tmp_path, monkeypatch)
     )
     with pytest.raises(isolate.IsolationUnavailable) as raised:
         isolate.verify_isolation_support(str(quoted_root))
-    assert raised.value.detail.startswith(
-        "cannot stat cgroup root (exit 1: Permission denied): "
-    )
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 1: Permission denied): ")
 
     # The longer, escaped form: the path no longer appears verbatim at all, so
     # only the fallback can produce a reason.
@@ -1388,9 +1393,7 @@ def test_root_diagnostics_keep_their_cause_at_a_long_path(tmp_path, monkeypatch)
     )
     with pytest.raises(isolate.IsolationUnavailable) as raised:
         isolate.verify_isolation_support(str(quoted_root))
-    assert raised.value.detail.startswith(
-        "cannot stat cgroup root (exit 1: Permission denied): "
-    )
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 1: Permission denied): ")
 
     # A root that merely prefixes another path on the same line must not be
     # taken for the separator: only a quoted occurrence counts.
@@ -1409,9 +1412,7 @@ def test_root_diagnostics_keep_their_cause_at_a_long_path(tmp_path, monkeypatch)
     )
     with pytest.raises(isolate.IsolationUnavailable) as raised:
         isolate.verify_isolation_support(str(quoted_root))
-    assert raised.value.detail.startswith(
-        "cannot stat cgroup root (exit 1: Permission denied): "
-    )
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 1: Permission denied): ")
 
     # A warning line before the diagnostic must not become the reason.
     multiline = SimpleNamespace(
@@ -1452,8 +1453,7 @@ def test_root_diagnostics_keep_their_cause_at_a_long_path(tmp_path, monkeypatch)
     # own line is the one that quotes the root.
     trailing = SimpleNamespace(
         stdout="",
-        stderr="stat: cannot statx '%s': No such file or directory\nlocale: warning: fallback"
-        % root,
+        stderr="stat: cannot statx '%s': No such file or directory\nlocale: warning: fallback" % root,
         returncode=1,
     )
     monkeypatch.setattr(
@@ -1536,9 +1536,7 @@ def test_root_diagnostics_keep_their_cause_at_a_long_path(tmp_path, monkeypatch)
     )
     with pytest.raises(isolate.IsolationUnavailable) as raised:
         isolate.verify_isolation_support(str(root))
-    assert raised.value.detail.startswith(
-        "cannot stat cgroup root (exit 1: Permission denied for "
-    )
+    assert raised.value.detail.startswith("cannot stat cgroup root (exit 1: Permission denied for ")
     assert "<cgroup-root>" not in raised.value.detail
 
     # stderr that carries only the path falls back to the exit status.

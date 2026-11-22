@@ -184,8 +184,9 @@ def _snapshot(fd: int) -> dict:
     # kernel stamps ctime finely (Linux 6.13 and later, on filesystems that
     # support multigrain timestamps) the window is closed. Accepted limit on
     # other kernels.
-    # Rewind the held directory before confirming names. Some filesystems retain
-    # an earlier directory listing on the same open description until a seek.
+    # Rewind the held directory before confirming names: without it the confirm
+    # scan re-reads the listing the first pass already saw, so an entry added in
+    # between stays invisible (the frozen-timestamp case below fails).
     os.lseek(fd, 0, os.SEEK_SET)
     with os.scandir(fd) as scan:
         names_after = sorted(item.name for item in scan)

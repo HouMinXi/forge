@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-import sys
 
 import pytest
 
@@ -120,7 +119,7 @@ def _context(state_root: str) -> ExecutionContext:
         toolchain_fingerprint="t",
         cgroup_root=CGROUP_ROOT,
         state_root=state_root,
-        approved_python=str(Path(sys.executable).resolve()),
+        approved_python="/usr/bin/python3",
         memory_mb=1024,
         pids=128,
         workspace_mb=128,

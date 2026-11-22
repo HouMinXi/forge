@@ -219,7 +219,9 @@ def test_physical_failure_wiring(tmp_path, monkeypatch, kind):
         assert raw["exception"] == "FileNotFoundError" and not raw["identities"]
         assert "runner could not start" in detail
         assert marker in raw["detail"]
-        assert detail == "run 1: runner could not start; stderr: " + " ".join(raw["detail"].split())[:200]
+        assert (
+            detail == "run 1: runner could not start; stderr: " + " ".join(raw["detail"].split())[:200]
+        )
     elif kind == "timeout":
         payload = f"import time\nprint('ERROR: {marker}', flush=True)\ntime.sleep(20)\n"
         detail, raw = _failure(

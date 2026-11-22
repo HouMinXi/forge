@@ -1522,7 +1522,11 @@ def test_actual_same_root_competitor_refuses_and_different_root_can_run(tmp_path
 
 @pytest.mark.parametrize("case", ["link-replace", "directory-change"])
 def test_cache_snapshot_detects_races_with_frozen_timestamps(tmp_path, monkeypatch, case):
-    """Directory times frozen and the inode reused, as on a coarse-timestamp kernel."""
+    """Directory times frozen and the inode reused, as on a coarse-timestamp kernel.
+
+    The directory-change case also pins the rewind of the held descriptor in
+    _snapshot: drop os.lseek(fd, 0, os.SEEK_SET) and this case reports DID NOT
+    RAISE, because the confirm scan re-reads the earlier listing."""
     cache = _cache(tmp_path)
     workspace = MutationWorkspace(str(tmp_path))
     original_fstat, original_stat, original_link = os.fstat, os.stat, os.readlink

@@ -119,8 +119,7 @@ def verify_isolation_support(cgroup_root: str) -> None:
     if returncode is None:
         raise IsolationUnavailable(
             _bounded(
-                "cannot stat cgroup root (no exit status): %s%r"
-                % (_root_tag(cgroup_root), cgroup_root)
+                "cannot stat cgroup root (no exit status): %s%r" % (_root_tag(cgroup_root), cgroup_root)
             )
         )
     if returncode != 0:
@@ -179,12 +178,15 @@ def verify_isolation_support(cgroup_root: str) -> None:
     if fs_type != _CGROUP2_MAGIC:
         if fs_type:
             detail = "cgroup root is not on a cgroup2 mount (got %r): %s%r" % (
-                fs_type, _root_tag(cgroup_root), cgroup_root,
+                fs_type,
+                _root_tag(cgroup_root),
+                cgroup_root,
             )
         else:
             # A silent success says nothing; reporting "got ''" only hides that.
             detail = "cgroup root reported no filesystem type: %s%r" % (
-                _root_tag(cgroup_root), cgroup_root,
+                _root_tag(cgroup_root),
+                cgroup_root,
             )
         raise IsolationUnavailable(_bounded(detail))
     if not os.path.isdir(cgroup_root):
@@ -223,8 +225,7 @@ def verify_isolation_support(cgroup_root: str) -> None:
             # without replacing an error that is already on its way out. The
             # path comes last, so a long one cannot cut off the type and errno.
             detail = _bounded(
-                "probe cgroup was not removed (%s): %s%s"
-                % (_error_detail(exc), _root_tag(probe), probe)
+                "probe cgroup was not removed (%s): %s%s" % (_error_detail(exc), _root_tag(probe), probe)
             )
             cleanup = ProbeCleanupError(detail)
             cleanup.__cause__ = exc
@@ -742,9 +743,9 @@ class Supervisor:
         )
         # The path comes last, so a long one cannot cut off the type and errno.
         raise CgroupCleanupError(
-            _printable(
-                "%s: %s%s" % (self.cleanup_error, _root_tag(self.cgroup_path), self.cgroup_path)
-            )[:_CLEANUP_MESSAGE_LIMIT]
+            _printable("%s: %s%s" % (self.cleanup_error, _root_tag(self.cgroup_path), self.cgroup_path))[
+                :_CLEANUP_MESSAGE_LIMIT
+            ]
         ) from last_error
 
     def teardown(self) -> None:
