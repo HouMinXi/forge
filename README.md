@@ -495,7 +495,7 @@ pip install -e '.[dev,mcp,semgrep]'
 code-forge doctor
 ```
 
-Semgrep 1.183 is supported on platforms with upstream binaries. Intel macOS
+Semgrep up to 1.186 is supported on platforms with upstream binaries. Intel macOS
 (including x86_64 Python under Rosetta) stays below 1.183 because upstream
 stopped shipping Intel Mac binaries. On Apple Silicon, use native arm64 Python.
 The platform-specific extra selects the appropriate range automatically.

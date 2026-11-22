@@ -318,9 +318,9 @@ class TestAuditPythonDeps:
             for version in ("1.176.0", "1.176.1", "1.182.1"):
                 assert Version(version) in req.specifier, environment
             assert Version("1.175.0") not in req.specifier
-            assert Version("1.186.0") not in req.specifier
+            assert Version("1.187.0") not in req.specifier
             intel_mac = system == "Darwin" and machine == "x86_64"
-            for version in ("1.183.0", "1.184.0", "1.185.0"):
+            for version in ("1.183.0", "1.184.0", "1.185.0", "1.186.0"):
                 assert (Version(version) in req.specifier) is not intel_mac
             # Audit installed metadata under the same platform, not the host's.
             metadata = [
@@ -334,7 +334,8 @@ class TestAuditPythonDeps:
                 ("1.183.0", not intel_mac),
                 ("1.184.0", not intel_mac),
                 ("1.185.0", not intel_mac),
-                ("1.186.0", False),
+                ("1.186.0", not intel_mac),
+                ("1.187.0", False),
             ):
                 with (
                     self._md(metadata, {"semgrep": version}),

@@ -33,7 +33,7 @@ REQUIREMENTS = {
     "unidiff>=0.7.5,<0.8.0": "unidiff<0.8.0,>=0.7.5",
     "pytest==9.2.0": "pytest==9.2.0",
     "pytest-asyncio>=1.0": "pytest-asyncio>=1.0",
-    "ruff==0.17.4": "ruff==0.17.4",
+    "ruff==0.17.5": "ruff==0.17.5",
     "mutmut>=3.4,<4.0": "mutmut<4.0,>=3.4",
     "jsonschema>=4.18": "jsonschema>=4.18",
     "google-auth>=2.35.0": "google-auth>=2.35.0",
@@ -47,8 +47,8 @@ PLATFORM_EXTRA_REQUIREMENTS = {
     ("semgrep", "semgrep>=1.176,<1.183; platform_system == 'Darwin' and platform_machine == 'x86_64'"): (
         'semgrep<1.183,>=1.176; (platform_system == "Darwin" and platform_machine == "x86_64") and extra == "semgrep"'
     ),
-    ("semgrep", "semgrep>=1.176,<1.186; platform_system != 'Darwin' or platform_machine != 'x86_64'"): (
-        'semgrep<1.186,>=1.176; (platform_system != "Darwin" or platform_machine != "x86_64") and extra == "semgrep"'
+    ("semgrep", "semgrep>=1.176,<1.187; platform_system != 'Darwin' or platform_machine != 'x86_64'"): (
+        'semgrep<1.187,>=1.176; (platform_system != "Darwin" or platform_machine != "x86_64") and extra == "semgrep"'
     ),
 }
 

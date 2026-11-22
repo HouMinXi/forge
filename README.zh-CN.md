@@ -428,7 +428,7 @@ pip install -e '.[dev,mcp,semgrep]'
 code-forge doctor
 ```
 
-Semgrep 1.183 可用于上游仍提供二进制的平台。Intel macOS（包括 Rosetta 下的
+Semgrep 至 1.186 可用于上游仍提供二进制的平台。Intel macOS（包括 Rosetta 下的
 x86_64 Python）继续使用低于 1.183 的版本，因为上游已停止提供 Intel Mac 二进制。
 Apple Silicon 请使用原生 arm64 Python。安装 extra 时会自动选择对应平台的版本范围。
 
