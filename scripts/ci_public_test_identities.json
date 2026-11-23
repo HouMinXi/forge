@@ -25985,6 +25985,7 @@
     "tests/test_perf_regression.py::Compare::test_exactly_at_the_limit_stays_within",
     "tests/test_perf_regression.py::Compare::test_past_the_limit_is_slower",
     "tests/test_perf_regression.py::Compare::test_the_limit_is_part_of_the_definition",
+    "tests/test_perf_regression.py::Report::test_a_baseline_integer_past_the_json_limit_exits_incomparable",
     "tests/test_perf_regression.py::Report::test_a_non_utf8_record_exits_incomparable",
     "tests/test_perf_regression.py::Report::test_a_record_from_another_definition_exits_incomparable",
     "tests/test_perf_regression.py::Report::test_a_slow_result_carries_the_definition",

@@ -125,6 +125,26 @@ class Report(unittest.TestCase):
         self.assertEqual(run.returncode, 2)
         self.assertEqual(json.loads(run.stdout)["verdict"], "incomparable")
 
+    def test_a_baseline_integer_past_the_json_limit_exits_incomparable(self):
+        # json.loads rejects an integer literal past its digit limit with
+        # ValueError, which is not a JSONDecodeError. That must not exit 1.
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            handle.write(
+                '{"definition": "forge-perf-regression-v1",'
+                ' "workload": "parse_diff_files", "median_s": ' + "9" * 5001 + "}"
+            )
+            handle.flush()
+            run = subprocess.run(
+                [sys.executable, "scripts/perf_regression.py", "--baseline", handle.name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(run.returncode, 2)
+        self.assertEqual(json.loads(run.stdout)["verdict"], "incomparable")
+
 
 class Workload(unittest.TestCase):
     def test_the_median_is_a_positive_number(self):

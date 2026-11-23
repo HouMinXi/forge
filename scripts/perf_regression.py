@@ -2,12 +2,13 @@
 """Repeat a fixed workload and compare its median to a stored baseline.
 
 One function, one input, one number. The workload is ``parse_diff_files`` on a
-diff that never changes, so a slower result can only come from the function
-itself. The median of several runs is less moved by one slow run than a single
-sample would be, but it is not immune to one: where that run lands among the
-others decides it. A change is reported only when the median moves past a fixed
-fraction of the baseline. A test that takes longer does not count here, and
-nothing in this script says why a change got slower.
+diff that never changes. The median of several runs is less moved by one slow
+run than a single sample would be, but it is not immune to one: where that run
+lands among the others decides it. A change is reported only when the median
+moves past a fixed fraction of the baseline. A test that takes longer does not
+count here, and nothing in this script says why a change got slower. A slower
+result need not come from the function: the machine, the interpreter and the
+load at the time all move the number.
 """
 
 import argparse
@@ -123,7 +124,7 @@ def main() -> int:
         return 0
     try:
         baseline = json.loads(open(args.baseline, encoding="utf-8").read())
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except (OSError, UnicodeError, ValueError):
         print(json.dumps({"definition": DEFINITION, "verdict": "incomparable"}))
         return 2
     if not isinstance(baseline, dict):
