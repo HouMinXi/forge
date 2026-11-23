@@ -1582,3 +1582,32 @@ class TestRemoveWithExplicitFalseDefault:
         body = p.read_text()
         assert "spare:" not in body
         assert "keeper:" in body
+
+
+class TestDefaultMaxTokens:
+    """A backend declared without --max-tokens still has to ask for room.
+
+    The cap is the output budget a review sends. Too small a value truncates
+    the verdict JSON, and a truncated verdict parses as zero findings, so the
+    floor is a correctness property and not a preference.
+    """
+
+    @pytest.mark.parametrize("cmd", ["add", "sync"])
+    def test_written_cap_leaves_room_for_a_long_verdict(self, monkeypatch, cmd):
+        seen = {}
+
+        def capture(args):
+            seen["max_tokens"] = args.max_tokens
+            return 0
+
+        monkeypatch.setattr(fp, "cmd_add", capture)
+        monkeypatch.setattr(fp, "cmd_sync", capture)
+        argv = [cmd, "gamma", "--base-url", "https://g.example/v1", "--model", "m"]
+        monkeypatch.setattr(sys, "argv", ["forge-provider.py", *argv])
+        assert fp.main() == 0
+        # The parser must forward the constant rather than a literal of its own,
+        # and the constant itself must leave room for a long verdict. Either half
+        # alone lets the other drift: an inflated constant slips past a floor,
+        # and a hardcoded parser default slips past a constant-only check.
+        assert seen.get("max_tokens") == fp.DEFAULT_MAX_TOKENS
+        assert fp.DEFAULT_MAX_TOKENS >= 131072

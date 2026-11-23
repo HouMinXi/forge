@@ -10964,6 +10964,8 @@
     "tests/test_forge_provider.py::TestBlockBoundaries::test_tab_indented_file_agrees_with_itself",
     "tests/test_forge_provider.py::TestDefaultAndList::test_default_moves_the_flag",
     "tests/test_forge_provider.py::TestDefaultAndList::test_list_names_every_backend",
+    "tests/test_forge_provider.py::TestDefaultMaxTokens::test_written_cap_leaves_room_for_a_long_verdict[add]",
+    "tests/test_forge_provider.py::TestDefaultMaxTokens::test_written_cap_leaves_room_for_a_long_verdict[sync]",
     "tests/test_forge_provider.py::TestFindConfigs::test_no_duplicates",
     "tests/test_forge_provider.py::TestFindConfigs::test_skips_paths_no_review_reads",
     "tests/test_forge_provider.py::TestHeaders::test_add_with_headers_leaves_the_neighbours_alone",
