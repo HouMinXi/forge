@@ -21,23 +21,32 @@ DEFINITION = "forge-perf-regression-v1"
 WORKLOAD = "parse_diff_files"
 RUNS = 7
 SLOWDOWN = 0.5
+_FILES = 40
+_LINES = 200
 
 # A diff big enough that the loop dominates the call, and fixed so two runs
 # measure the same work.
 _DIFF = "".join(
-    f"diff --git a/f{n}.py b/f{n}.py\n+++ b/f{n}.py\n@@ -1,1 +1,200 @@\n"
-    + "".join(f"+line {i}\n" for i in range(200))
-    for n in range(40)
+    f"diff --git a/f{n}.py b/f{n}.py\n+++ b/f{n}.py\n@@ -1,1 +1,{_LINES} @@\n"
+    + "".join(f"+line {i}\n" for i in range(_LINES))
+    for n in range(_FILES)
 )
 
 
 def measure(runs: int = RUNS) -> float:
-    """Median seconds for one call, over ``runs`` calls."""
+    """Median seconds for one call, over ``runs`` calls.
+
+    The parsed result is checked on every call. A parser that returns less than
+    the workload asks for raises, so a run that did less work cannot report a
+    time.
+    """
     samples = []
     for _ in range(runs):
         start = time.perf_counter()
-        parse_diff_files(_DIFF)
+        parsed = parse_diff_files(_DIFF)
         samples.append(time.perf_counter() - start)
+        if len(parsed) != _FILES or any(len(lines) != _LINES for lines in parsed.values()):
+            raise RuntimeError("workload parsed to less than it contains")
     return statistics.median(samples)
 
 

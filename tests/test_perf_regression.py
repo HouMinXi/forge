@@ -126,6 +126,15 @@ class Workload(unittest.TestCase):
         median = perf.measure(runs=3)
         self.assertGreater(median, 0.0)
 
+    def test_a_parser_that_returns_nothing_is_refused(self):
+        # The timed call has to do the work. A parser that hands back an empty
+        # result must not be allowed to report a time.
+        import unittest.mock
+
+        with unittest.mock.patch.object(perf, "parse_diff_files", return_value={}):
+            with self.assertRaises(RuntimeError):
+                perf.measure(runs=1)
+
     def test_one_slow_sample_does_not_move_the_median(self):
         # Five fast samples and two slow ones: the median is one of the fast
         # ones, so a single stall is not reported as a regression.

@@ -25989,6 +25989,7 @@
     "tests/test_perf_regression.py::Report::test_a_slow_result_carries_the_definition",
     "tests/test_perf_regression.py::Report::test_the_command_exits_nonzero_when_slower",
     "tests/test_perf_regression.py::Report::test_the_command_rejects_a_record_it_cannot_read",
+    "tests/test_perf_regression.py::Workload::test_a_parser_that_returns_nothing_is_refused",
     "tests/test_perf_regression.py::Workload::test_one_slow_sample_does_not_move_the_median",
     "tests/test_perf_regression.py::Workload::test_the_median_is_a_positive_number",
     "tests/test_phase1_migration.py::TestPhase1Migration::test_no_old_api_references",
