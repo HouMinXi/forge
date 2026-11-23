@@ -11,6 +11,7 @@ got slower.
 
 import argparse
 import json
+import math
 import statistics
 import time
 
@@ -40,22 +41,35 @@ def measure(runs: int = RUNS) -> float:
     return statistics.median(samples)
 
 
-def compare(baseline: float, current: float, slowdown: float = SLOWDOWN) -> str:
-    """``slower`` when the median grew past ``slowdown`` of the baseline."""
-    if baseline <= 0:
-        raise ValueError("baseline must be positive")
-    if current > baseline * (1 + slowdown):
+def compare(baseline: dict, current: float, slowdown: float = SLOWDOWN) -> str:
+    """``slower``, ``within``, or ``incomparable``.
+
+    A record that names another definition or workload, or a median that is not
+    a finite positive number, cannot be compared. The script then says so
+    instead of reporting the change as acceptable.
+    """
+    if baseline.get("definition") != DEFINITION or baseline.get("workload") != WORKLOAD:
+        return "incomparable"
+    stored = baseline.get("median_s")
+    if not _finite_positive(stored) or not _finite_positive(current):
+        return "incomparable"
+    assert isinstance(stored, (int, float))
+    if current > stored * (1 + slowdown):
         return "slower"
     return "within"
 
 
-def report(baseline: float, current: float) -> dict:
+def _finite_positive(value) -> bool:
+    return isinstance(value, (int, float)) and math.isfinite(value) and value > 0
+
+
+def report(baseline: dict, current: float) -> dict:
     verdict = compare(baseline, current)
     return {
         "definition": DEFINITION,
         "workload": WORKLOAD,
         "runs": RUNS,
-        "baseline_s": baseline,
+        "baseline_s": baseline.get("median_s"),
         "median_s": current,
         "slowdown_limit": SLOWDOWN,
         "verdict": verdict,
@@ -64,15 +78,23 @@ def report(baseline: float, current: float) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", type=float, help="stored median, in seconds")
+    parser.add_argument("--baseline", help="path to a stored record, as JSON")
     parser.add_argument("--record", action="store_true", help="print a fresh median and stop")
     args = parser.parse_args()
     current = measure()
     if args.record or args.baseline is None:
         print(json.dumps({"definition": DEFINITION, "workload": WORKLOAD, "median_s": current}))
         return 0
-    result = report(args.baseline, current)
-    print(json.dumps(result))
+    try:
+        baseline = json.loads(open(args.baseline).read())
+    except (OSError, json.JSONDecodeError):
+        print(json.dumps({"definition": DEFINITION, "verdict": "incomparable"}))
+        return 2
+    if not isinstance(baseline, dict):
+        print(json.dumps({"definition": DEFINITION, "verdict": "incomparable"}))
+        return 2
+    result = report(baseline, current)
+    print(json.dumps(result, allow_nan=False))
     return 1 if result["verdict"] == "slower" else 0
 
 

@@ -14,31 +14,41 @@ import scripts.perf_regression as perf
 
 
 class Compare(unittest.TestCase):
+    def record(self, median, definition=perf.DEFINITION, workload=perf.WORKLOAD):
+        return {"definition": definition, "workload": workload, "median_s": median}
+
     def test_a_small_change_stays_within(self):
-        self.assertEqual(perf.compare(1.0, 1.2), "within")
+        self.assertEqual(perf.compare(self.record(1.0), 1.2), "within")
 
     def test_past_the_limit_is_slower(self):
-        self.assertEqual(perf.compare(1.0, 1.6), "slower")
+        self.assertEqual(perf.compare(self.record(1.0), 1.6), "slower")
 
     def test_exactly_at_the_limit_stays_within(self):
-        self.assertEqual(perf.compare(1.0, 1.5), "within")
+        self.assertEqual(perf.compare(self.record(1.0), 1.5), "within")
 
     def test_a_faster_result_stays_within(self):
-        self.assertEqual(perf.compare(1.0, 0.4), "within")
+        self.assertEqual(perf.compare(self.record(1.0), 0.4), "within")
 
-    def test_a_zero_baseline_is_refused(self):
-        with self.assertRaises(ValueError):
-            perf.compare(0.0, 1.0)
+    def test_a_non_finite_baseline_is_incomparable(self):
+        for value in (float("nan"), float("inf"), 0.0, -1.0):
+            self.assertEqual(perf.compare(self.record(value), 1.0), "incomparable", value)
+
+    def test_a_different_definition_is_incomparable(self):
+        self.assertEqual(perf.compare(self.record(1.0, definition="other"), 1.0), "incomparable")
+
+    def test_a_different_workload_is_incomparable(self):
+        self.assertEqual(perf.compare(self.record(1.0, workload="other"), 1.0), "incomparable")
 
     def test_the_limit_is_part_of_the_definition(self):
-        # A caller that picks its own fraction can make any change pass.
         self.assertEqual(perf.SLOWDOWN, 0.5)
-        self.assertEqual(perf.compare(1.0, 1.6, slowdown=2.0), "within")
+        self.assertEqual(perf.compare(self.record(1.0), 1.6, slowdown=2.0), "within")
 
 
 class Report(unittest.TestCase):
     def test_a_slow_result_carries_the_definition(self):
-        result = perf.report(1.0, 1.6)
+        result = perf.report(
+            {"definition": perf.DEFINITION, "workload": perf.WORKLOAD, "median_s": 1.0}, 1.6
+        )
         self.assertEqual(result["definition"], "forge-perf-regression-v1")
         self.assertEqual(result["workload"], "parse_diff_files")
         self.assertEqual(result["verdict"], "slower")
@@ -46,14 +56,30 @@ class Report(unittest.TestCase):
         self.assertEqual(result["median_s"], 1.6)
 
     def test_the_command_exits_nonzero_when_slower(self):
+        import tempfile
+
+        record = {"definition": perf.DEFINITION, "workload": perf.WORKLOAD, "median_s": 1e-7}
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(record, handle)
+            handle.flush()
+            run = subprocess.run(
+                [sys.executable, "scripts/perf_regression.py", "--baseline", handle.name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(json.loads(run.stdout)["verdict"], "slower")
+
+    def test_the_command_rejects_a_record_it_cannot_read(self):
         run = subprocess.run(
-            [sys.executable, "scripts/perf_regression.py", "--baseline", "0.0000001"],
+            [sys.executable, "scripts/perf_regression.py", "--baseline", "no-such-file.json"],
             capture_output=True,
             text=True,
             check=False,
         )
-        self.assertEqual(run.returncode, 1)
-        self.assertEqual(json.loads(run.stdout)["verdict"], "slower")
+        self.assertEqual(run.returncode, 2)
+        self.assertEqual(json.loads(run.stdout)["verdict"], "incomparable")
 
 
 class Workload(unittest.TestCase):
@@ -68,7 +94,13 @@ class Workload(unittest.TestCase):
         import statistics
 
         self.assertEqual(statistics.median(samples), 0.01)
-        self.assertEqual(perf.compare(0.01, statistics.median(samples)), "within")
+        self.assertEqual(
+            perf.compare(
+                {"definition": perf.DEFINITION, "workload": perf.WORKLOAD, "median_s": 0.01},
+                statistics.median(samples),
+            ),
+            "within",
+        )
 
 
 if __name__ == "__main__":
