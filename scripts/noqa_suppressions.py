@@ -178,15 +178,6 @@ def detail(path, old, new):
                 return (radius, window)
         return None
 
-    def counterpart_missing(context, other):
-        """True when no line on the other side carries this anchor text.
-
-        That is the shape of code being written or deleted together with its
-        directive, so the site counts as added or removed. Only a counterpart
-        that exists but cannot be identified is ambiguous.
-        """
-        return context is not None and not other.anchors[context[0]]
-
     def record_unmatched(side, context, site, other):
         if context is None:
             reason = "no_source_anchor"
@@ -196,15 +187,25 @@ def detail(path, old, new):
             reason = "repeated_source_anchor"
         unmatched.append(dict(site, side=side, path=path, reason=reason))
 
+    def confirmed_or_rewrite(context, site, other, bucket):
+        # A rewrite leaves a suppression on the other side whose anchor no longer
+        # matches. Nothing proves that line is the same site moved, so both stay
+        # unmatched. When the other side has no suppression left to account for,
+        # the code was written or deleted together with its directive.
+        other_has_unpaired = any(candidate(c) is None for c, _ in other.sites)
+        if context is not None and other_has_unpaired:
+            record_unmatched("before" if bucket == "removed" else "after", context, site, other)
+        elif context is None:
+            record_unmatched("before" if bucket == "removed" else "after", context, site, other)
+        else:
+            changes[bucket].append(site)
+
     new_by_anchor = {key: site for context, site in new.sites if (key := candidate(context)) is not None}
     consumed = set()
     for context, site in old.sites:
         key = candidate(context)
         if key is None:
-            if counterpart_missing(context, new):
-                changes["removed"].append(site)
-            else:
-                record_unmatched("before", context, site, new)
+            confirmed_or_rewrite(context, site, new, "removed")
             continue
         match = new_by_anchor.get(key)
         if match is None:
@@ -216,10 +217,7 @@ def detail(path, old, new):
     for context, site in new.sites:
         key = candidate(context)
         if key is None:
-            if counterpart_missing(context, old):
-                changes["added"].append(site)
-            else:
-                record_unmatched("after", context, site, old)
+            confirmed_or_rewrite(context, site, old, "added")
         elif key not in consumed:
             changes["added"].append(site)
     return result

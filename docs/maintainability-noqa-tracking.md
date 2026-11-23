@@ -41,13 +41,14 @@ so `no_source_anchor` is reported on both sides even when nothing changed. A run
 that changes nothing can therefore still print a non-zero `unmatched` count when
 the file holds duplicate anchors or standalone directives.
 
-When the anchor text is absent from the other side altogether, the site is a real
-addition or deletion: that is the shape of a function written or deleted together
-with its directive. Those are counted as `added` / `removed`. A line rewritten with no
-surviving anchor — a new value, a new indentation, a rename — therefore reads as one
-removal plus one addition with a net-zero delta, which is also how a cross-file move
-reads. When the code text survives and only the rule codes or the category move,
-the site is reported under `changed` instead.
+When the anchor text is absent from the other side but that side still holds a
+suppression of its own, the line was rewritten. Nothing proves the new line is
+the same site moved, so both sides are reported under `unmatched` with
+`no_code_anchor_on_other_side` rather than counted as a removal plus an
+addition. A site is a confirmed `added` or `removed` only when the other side
+has no suppression left to account for, which is the shape of code written or
+deleted together with its directive. When the code text survives and only the
+rule codes or the category move, the site is reported under `changed` instead.
 
 ## Failure states
 
@@ -107,7 +108,7 @@ two causes are distinguishable without reading the JSON.
 
 ## Test status
 
-`tests/test_noqa_suppressions.py` holds 56 tests. Each one pins a way the
+`tests/test_noqa_suppressions.py` holds 57 tests. Each one pins a way the
 comparison could otherwise lie: a directive inside a string, a repeated anchor, a
 changed path inventory, an unreadable Git object, an unclassifiable directive, a
 symlink inside the scanned tree, a lone-CR source, an unreadable blob, an

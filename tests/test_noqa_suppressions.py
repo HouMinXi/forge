@@ -237,16 +237,14 @@ class Controls(unittest.TestCase):
         old = suppressions.scan(b"a = 1  # noqa: F401\n")
         new = suppressions.scan(b"a = 2  # noqa: S110\n")
         result = suppressions.detail("src/code_forge/a.py", old, new)
+        # A rewrite changes the code text, so the anchor no longer matches.
+        # Nothing proves the new line is the same site moved, and both sides stay
+        # unmatched instead of being counted as a confirmed removal plus addition.
+        self.assertEqual(result["confirmed_changes"], {"added": [], "removed": [], "changed": []})
         self.assertEqual(
-            [(s["line"], s["rules"]) for s in result["confirmed_changes"]["removed"]],
-            [(1, ["F401"])],
+            sorted((e["side"], e["rules"]) for e in result["unmatched"]),
+            [("after", ["S110"]), ("before", ["F401"])],
         )
-        self.assertEqual(
-            [(s["line"], s["rules"]) for s in result["confirmed_changes"]["added"]],
-            [(1, ["S110"])],
-        )
-        self.assertEqual(result["confirmed_changes"]["changed"], [])
-        self.assertEqual(result["unmatched"], [])
 
     def test_controlled_delta(self):
         a = dict(
@@ -468,7 +466,7 @@ class GitControls(unittest.TestCase):
         self.assertEqual(code, 0)
         text = suppressions.summary(doc).splitlines()
         self.assertTrue(any("Unmatched" in line for line in text), text)
-        self.assertIn("Confirmed: 1 added, 0 removed, 0 changed. Unmatched: 2.", text)
+        self.assertIn("Confirmed: 0 added, 0 removed, 0 changed. Unmatched: 3.", text)
 
     def test_summary_names_the_reason_when_detail_is_attached(self):
         after = self.commit(b"a = 1  # noqa: mystery word\n")
@@ -682,14 +680,28 @@ class GitControls(unittest.TestCase):
         before = self.commit(b"# noqa\na = 1 # noqa: F401\n")
         after = self.commit(b"# noqa: S110\na = 2 # noqa: S110\n")
         a = self.report(before, after)[1]["comparison"]["file_details"][0]
-        # A rewritten line is one removal plus one addition: there is no anchor
-        # to pair them, and calling it "changed" would need one.
-        self.assertFalse(a["confirmed_changes"]["changed"])
-        self.assertEqual(len(a["confirmed_changes"]["added"]), 1)
-        self.assertEqual(len(a["confirmed_changes"]["removed"]), 1)
-        # The standalone directives still have no code anchor and stay unmatched.
-        self.assertEqual(len(a["unmatched"]), 2)
-        self.assertEqual({e["reason"] for e in a["unmatched"]}, {"no_source_anchor"})
+        # A rewritten line keeps a suppression on both sides but changes the
+        # code text. Nothing proves the new line is the same site moved, so it
+        # is unmatched rather than a confirmed removal plus a confirmed addition.
+        self.assertFalse(any(a["confirmed_changes"].values()))
+        self.assertEqual(
+            sorted((e["side"], e["rules"], e["reason"]) for e in a["unmatched"]),
+            [
+                ("after", ["S110"], "no_code_anchor_on_other_side"),
+                ("after", ["S110"], "no_source_anchor"),
+                ("before", [], "no_source_anchor"),
+                ("before", ["F401"], "no_code_anchor_on_other_side"),
+            ],
+        )
+
+    def test_a_new_suppression_is_still_a_confirmed_addition(self):
+        # The rewrite above must not swallow a real addition: a line whose
+        # anchor text exists nowhere on the other side is code written with its
+        # directive, and that stays confirmed.
+        after = self.commit(b"a = 1 # noqa: F401\ndef g():\n    return 3 # noqa: BLE001\n")
+        a = self.report(self.base, after)[1]["comparison"]["file_details"][0]
+        self.assertEqual([s["rules"] for s in a["confirmed_changes"]["added"]], [["BLE001"]])
+        self.assertEqual(a["unmatched"], [])
 
     def test_path_drift_still_shows_common_detail(self):
         (self.src / "empty.py").write_bytes(b"x = 0\n")
@@ -765,22 +777,13 @@ class GitControls(unittest.TestCase):
     def test_string_interior_is_not_a_counterpart_anchor(self):
         after = self.commit(b'x = """\na = 1\n"""\n')
         detail = self.report(self.base, after)[1]["comparison"]["file_details"][0]
-        self.assertFalse(any(detail["confirmed_changes"].values()))
-        self.assertEqual(
-            detail["unmatched"],
-            [
-                {
-                    "path": "src/code_forge/a.py",
-                    "side": "before",
-                    "line": 1,
-                    "category": "explicit_sites",
-                    "rules": ["F401"],
-                    "reason": "no_code_anchor_on_other_side",
-                }
-            ],
-        )
+        # The anchor text survives only inside a string, which is not an anchor,
+        # so the other side has no suppression left to account for. That is a
+        # real deletion, not a rewrite.
+        self.assertEqual([s["rules"] for s in detail["confirmed_changes"]["removed"]], [["F401"]])
+        self.assertEqual(detail["unmatched"], [])
 
-    def test_human_summary_reports_a_rewrite_as_add_and_remove(self):
+    def test_human_summary_reports_a_rewrite_as_unmatched(self):
         summary = suppressions.summary
 
         after = self.commit(b"a = 2 # noqa: F841\n")
@@ -792,8 +795,8 @@ class GitControls(unittest.TestCase):
                 "Status: comparable",
                 "before: 1 explicit sites across 1 paths",
                 "after: 1 explicit sites across 1 paths",
-                "Confirmed: 1 added, 1 removed, 0 changed. Unmatched: 0.",
-                "  Confirmed added: 'src/code_forge/a.py':1: explicit_sites (F841)",
-                "  Confirmed removed: 'src/code_forge/a.py':1: explicit_sites (F401)",
+                "Confirmed: 0 added, 0 removed, 0 changed. Unmatched: 2.",
+                "  Unmatched before: 'src/code_forge/a.py':1: explicit_sites (F401) (no_code_anchor_on_other_side)",
+                "  Unmatched after: 'src/code_forge/a.py':1: explicit_sites (F841) (no_code_anchor_on_other_side)",
             ],
         )
