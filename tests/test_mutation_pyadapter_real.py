@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -44,32 +44,27 @@ import mutmut  # noqa: E402
 
 MUTMUT_SITE = str(Path(mutmut.__file__).resolve().parent.parent)
 
-# mutmut 3.8.x reads ``item._nodeid`` in its harness plugin; pytest 9 dropped
-# that attribute, so the stats sweep dies before any mutant runs. A release at
-# or above this version is expected to carry the fix, pre-releases excepted.
-MUTMUT_PYTEST9_FIXED = (3, 9)
+# pytest kept Node._nodeid until 9.2.0, which replaced the internal string with
+# a structured NodeId. mutmut 3.8.0 still reads item._nodeid in its harness
+# plugin; 3.8.1 reads the public item.nodeid. The wall is the pairing, not a
+# major version: a mutmut that reads the private attribute cannot drive a
+# pytest that no longer has it.
+_PYTEST_NODE_PRIVATE = (9, 2)
 
-_MUTMUT_NUMBER = re.compile(r"(?i)^\s*v?(?:[0-9]+!)?([0-9]+)(?:\.([0-9]+))?(?:\.[0-9]+)*")
-_MUTMUT_LOCAL = re.compile(r"(?i)^[a-z0-9]+(?:[.\-_][a-z0-9]+)*$")
-_MUTMUT_POSTRELEASE = re.compile(r"(?i)^[.\-_]?(?:post|rev|r)[.\-_]?[0-9]*$")
-_MUTMUT_IMPLICIT_POST = re.compile(r"^[.\-][0-9]+$")
-_MUTMUT_PRERELEASE = re.compile(r"(?i)(?:^|[.\-_])(?:a|b|c|rc|alpha|beta|pre|preview)[0-9]*(?=$|[.\-_])")
-_MUTMUT_DEV = re.compile(r"(?i)[.\-_]?dev[0-9]*$")
+from packaging.version import InvalidVersion, Version  # noqa: E402
 
 
-def _cache_tag(python: str) -> str:
-    """Interpreter ABI tag such as ``cpython-315``, or "" when unprobeable.
+def _soabi(python: str) -> str:
+    """Extension ABI such as ``cpython-314t-x86_64-linux-gnu``, or "".
 
-    ``sys.implementation.cache_tag`` folds the version, the flags (``d`` for a
-    debug build, ``t`` for a free-threaded one) and the implementation into the
-    token extension filenames are stamped with, so comparing tags answers the
-    question the sandbox actually raises: can this interpreter load these
-    compiled modules at all.
+    SOABI carries the flags that decide whether an extension module loads:
+    ``t`` for a free-threaded build and ``d`` for a debug build, plus the
+    platform. The import cache tag does not.
     """
 
     try:
         out = subprocess.run(
-            [python, "-I", "-c", "import sys;print(sys.implementation.cache_tag)"],
+            [python, "-I", "-c", "import sysconfig;print(sysconfig.get_config_var('SOABI'))"],
             capture_output=True,
             text=True,
             timeout=60,
@@ -78,69 +73,56 @@ def _cache_tag(python: str) -> str:
     except (OSError, subprocess.SubprocessError):
         return ""
     tag = out.stdout.strip()
-    # A build without a cache tag prints the word None; that is absence, not a tag.
     return "" if tag == "None" else tag
 
 
-def _mutmut_numbers(version: str) -> tuple[tuple[int, int], bool, bool]:
-    """Major/minor of ``version`` plus whether its tail rules out the fix.
+def _mutmut_release(version: str) -> Version | None:
+    """The parsed release, or None when no PEP 440 parser accepts it."""
 
-    A version that ends in its numbers, or in a post-release suffix, names
-    shipped code. Every other tail rules the fix out: pre-releases and
-    dev-releases precede it, post-releases carrying a further dev segment do
-    too, and a string no parser accepts is not evidence of the fix.
+    try:
+        return Version(version.strip())
+    except InvalidVersion:
+        return None
+
+
+def _reads_private_nodeid(mutmut_version: str) -> bool:
+    """Whether this mutmut reads ``item._nodeid`` rather than ``item.nodeid``.
+
+    3.8.1 switched the harness to the public attribute; anything earlier that
+    parses still reads the private one. A string no parser accepts is not
+    evidence that the harness was fixed.
     """
 
-    text = version.strip()
-    public, separator, local = text.partition("+")
-    if separator and not _MUTMUT_LOCAL.match(local):
-        return (0, 0), False, False
-    match = _MUTMUT_NUMBER.match(public)
-    if match is None:
-        return (0, 0), False, False
-    pair = (int(match.group(1)), int(match.group(2) or 0))
-    tail = public[match.end() :]
-    if not tail:
-        return pair, False, True
-    if _MUTMUT_DEV.search(tail):
-        return pair, True, True
-    if _MUTMUT_POSTRELEASE.match(tail) or _MUTMUT_IMPLICIT_POST.match(tail):
-        return pair, False, True
-    # A pre-release marker is a version a parser accepts; anything else after
-    # the numbers is a string no parser accepts.
-    return pair, True, bool(_MUTMUT_PRERELEASE.search(tail))
+    parsed = _mutmut_release(mutmut_version)
+    if parsed is None or parsed.is_prerelease or parsed.is_devrelease:
+        return True
+    return parsed.release < (3, 8, 1)
 
 
-def _skip_reason(sandbox_tag: str, host_tag: str, pytest_major: int, mutmut_version: str) -> str:
+def _skip_reason(sandbox_abi: str, host_abi: str, pytest_version: str, mutmut_version: str) -> str:
     """Why this test cannot run here, or "" when it can.
 
-    Three walls hit different hosts: the sandbox may have no interpreter to
-    launch at all; it mounts the test interpreter's site-packages, whose
-    compiled modules only load under a matching ABI tag; and mutmut below 3.9
-    cannot drive pytest 9 onwards. Pre-releases are held to the unfixed side
-    because the fix may land after them.
+    The sandbox may have no interpreter to probe; the two interpreters may
+    disagree on the extension ABI, so one cannot load the other's compiled
+    modules; and a mutmut that reads ``item._nodeid`` cannot drive a pytest
+    whose nodes no longer carry it.
     """
 
-    if not sandbox_tag:
+    if not sandbox_abi:
         return f"cannot probe {SANDBOX_PYTHON}; the sandbox interpreter is unknown"
-    if not host_tag:
-        return "cannot read the test interpreter's cache tag; the sandbox comparison is unknown"
-    if sandbox_tag != host_tag:
+    if not host_abi:
+        return "cannot read the test interpreter's SOABI; the sandbox comparison is unknown"
+    if sandbox_abi != host_abi:
         return (
-            f"sandbox interpreter {sandbox_tag} would load {host_tag} site-packages; "
+            f"sandbox interpreter {sandbox_abi} would load {host_abi} site-packages; "
             "extension modules are ABI-specific"
         )
-    pair, rules_out_fix, recognized = _mutmut_numbers(mutmut_version)
-    # A later release series carries the fix, but only when the version is one
-    # a parser accepts. An unparseable string is not evidence of the fix, no
-    # matter how large its leading numbers are.
-    unfixed = (
-        not recognized or pair < MUTMUT_PYTEST9_FIXED or (pair == MUTMUT_PYTEST9_FIXED and rules_out_fix)
-    )
-    if pytest_major >= 9 and unfixed:
+    pytest_release = _mutmut_release(pytest_version)
+    private_removed = pytest_release is not None and pytest_release.release >= _PYTEST_NODE_PRIVATE
+    if private_removed and _reads_private_nodeid(mutmut_version):
         return (
-            f"mutmut {mutmut_version.strip()} calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed"
+            f"mutmut {mutmut_version.strip()} reads item._nodeid, removed in pytest "
+            f"{pytest_version.strip()}; mutants are generated but never executed"
         )
     return ""
 
@@ -154,9 +136,9 @@ def _sandbox_skip_reason() -> str:
     """
 
     return _skip_reason(
-        _cache_tag(SANDBOX_PYTHON),
-        sys.implementation.cache_tag or "",
-        int(pytest.__version__.split(".")[0]),
+        _soabi(SANDBOX_PYTHON),
+        sysconfig.get_config_var("SOABI") or "",
+        pytest.__version__,
         mutmut.__version__,
     )
 
@@ -260,232 +242,377 @@ def _selection() -> TargetSelection:
 
 
 @pytest.mark.parametrize(
-    ("sandbox_tag", "host_tag", "pytest_major", "mutmut_version", "expected"),
+    ("sandbox_abi", "host_abi", "pytest_version", "mutmut_version", "expected"),
     [
         (
-            "cpython-314t",
-            "cpython-314",
-            8,
+            "cpython-314t-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "8.3.0",
             "3.8.1",
-            "sandbox interpreter cpython-314t would load cpython-314 site-packages; "
-            "extension modules are ABI-specific",
+            "sandbox interpreter cpython-314t-x86_64-linux-gnu would load cpython-314-x86_64-linux-gnu site-packages; extension modules are ABI-specific",
         ),
         (
-            "cpython-315",
-            "cpython-314",
-            9,
+            "cpython-315-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0",
-            "sandbox interpreter cpython-315 would load cpython-314 site-packages; "
-            "extension modules are ABI-specific",
+            "sandbox interpreter cpython-315-x86_64-linux-gnu would load cpython-314-x86_64-linux-gnu site-packages; extension modules are ABI-specific",
         ),
         (
             "",
-            "cpython-314",
-            8,
+            "cpython-314-x86_64-linux-gnu",
+            "8.3.0",
             "3.8.1",
             f"cannot probe {SANDBOX_PYTHON}; the sandbox interpreter is unknown",
         ),
         (
             "",
-            "cpython-314",
-            9,
-            "3.8.1",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.8.0",
             f"cannot probe {SANDBOX_PYTHON}; the sandbox interpreter is unknown",
         ),
         (
-            "cpython-314",
+            "cpython-314-x86_64-linux-gnu",
             "",
-            9,
+            "9.2.0",
             "3.9.0",
-            "cannot read the test interpreter's cache tag; the sandbox comparison is unknown",
+            "cannot read the test interpreter's SOABI; the sandbox comparison is unknown",
         ),
         (
-            "cpython-314",
+            "cpython-314-x86_64-linux-gnu",
             "",
-            9,
-            "3.8.1",
-            "cannot read the test interpreter's cache tag; the sandbox comparison is unknown",
+            "9.2.0",
+            "3.8.0",
+            "cannot read the test interpreter's SOABI; the sandbox comparison is unknown",
         ),
         (
             "",
             "",
-            9,
+            "9.2.0",
             "3.9.0",
             f"cannot probe {SANDBOX_PYTHON}; the sandbox interpreter is unknown",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
-            "3.8.1",
-            "mutmut 3.8.1 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.8.0",
+            "mutmut 3.8.0 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            10,
-            "3.8.1",
-            "mutmut 3.8.1 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.1.1",
+            "3.8.0",
+            "",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.8.1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "10.0.0",
+            "3.8.0",
+            "mutmut 3.8.0 reads item._nodeid, removed in pytest 10.0.0; mutants are generated but never executed",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0rc1",
-            "mutmut 3.9.0rc1 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0rc1 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
-        ("cpython-314", "cpython-314", 9, "4.0.0rc1", ""),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "4.0.0rc1",
+            "mutmut 4.0.0rc1 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             " 3.9.0rc1",
-            "mutmut 3.9.0rc1 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0rc1 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
         (
-            "cpython-315",
-            "cpython-314",
-            9,
-            "3.8.1",
-            "sandbox interpreter cpython-315 would load cpython-314 site-packages; "
-            "extension modules are ABI-specific",
+            "cpython-315-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.8.0",
+            "sandbox interpreter cpython-315-x86_64-linux-gnu would load cpython-314-x86_64-linux-gnu site-packages; extension modules are ABI-specific",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0garbage",
-            "mutmut 3.9.0garbage calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0garbage reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "4.0.0garbage.dev1",
+            "mutmut 4.0.0garbage.dev1 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "garbage",
-            "mutmut garbage calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut garbage reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
-        ("cpython-314", "cpython-314", 8, "3.8.1", ""),
-        ("cpython-314", "cpython-314", 8, "3.9.0rc1", ""),
-        ("cpython-314", "cpython-314", 9, "3.9", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0", ""),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "8.3.0",
+            "3.8.0",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "8.3.0",
+            "3.9.0rc1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0.dev0",
-            "mutmut 3.9.0.dev0 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0.dev0 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
-        ("cpython-314", "cpython-314", 9, "3.9.0.post1", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0post1", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0.post.1", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0.post_1", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0rev-1", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0.POST1", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0.rev1", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0.r2", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0.post", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0-1", ""),
-        ("cpython-314", "cpython-314", 9, "v3.9.0", ""),
-        ("cpython-314", "cpython-314", 9, "1!3.9.0", ""),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0.post1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0post1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0.post.1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0.post_1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0rev-1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0.POST1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0.rev1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0.r2",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0.post",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0-1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "v3.9.0",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "1!3.9.0",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0+",
-            "mutmut 3.9.0+ calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0+ reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0+foo..bar",
-            "mutmut 3.9.0+foo..bar calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0+foo..bar reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0_1",
-            "mutmut 3.9.0_1 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0_1 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0RC1",
-            "mutmut 3.9.0RC1 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0RC1 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0.post1.dev0",
-            "mutmut 3.9.0.post1.dev0 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0.post1.dev0 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0rc1.post1",
-            "mutmut 3.9.0rc1.post1 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0rc1.post1 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.9.0.post1.post2",
-            "mutmut 3.9.0.post1.post2 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "mutmut 3.9.0.post1.post2 reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
             "3.8.1.post1",
-            "mutmut 3.8.1.post1 calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "",
         ),
         (
-            "cpython-314",
-            "cpython-314",
-            9,
-            "3.8.1+local",
-            "mutmut 3.8.1+local calls item._nodeid, removed in pytest 9; "
-            "mutants are generated but never executed",
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.8.0+local",
+            "mutmut 3.8.0+local reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
         ),
-        ("cpython-314", "cpython-314", 9, "3.9.0+local", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0+foo.dev0", ""),
-        ("cpython-314", "cpython-314", 9, "3.9.0+foo-rc1", ""),
-        ("cpython-314", "cpython-314", 10, "4.0.0", ""),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0+local",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0+foo.dev0",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0+foo-rc1",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "4.0.0",
+            "",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "3.9.0.post１",
+            "mutmut 3.9.0.post１ reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
+        ),
+        (
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            "３.９.０",
+            "mutmut ３.９.０ reads item._nodeid, removed in pytest 9.2.0; mutants are generated but never executed",
+        ),
     ],
     ids=[
         "abi-flags-differ",
         "abi-version-differ",
         "unprobeable-pytest8",
         "unprobeable-pytest9",
-        "empty-host-tag",
-        "empty-host-tag-beats-version-wall",
-        "both-tags-empty",
-        "pytest9-wall",
-        "pytest10-still-wall",
+        "empty-host-abi",
+        "empty-host-abi-beats-version-wall",
+        "both-abi-empty",
+        "old-mutmut-on-pytest-9-2",
+        "old-mutmut-on-pytest-9-1",
+        "fixed-mutmut-on-pytest-9-2",
+        "old-mutmut-on-pytest-10",
         "prerelease-is-not-fixed",
-        "future-prerelease-is-fixed",
+        "future-prerelease-is-not-fixed",
         "leading-space-prerelease",
         "abi-and-version-walls",
         "malformed-suffix-not-fixed",
+        "dev-segment-after-garbage",
         "unparseable-version",
         "pytest8",
         "pytest8-prerelease",
@@ -511,45 +638,42 @@ def _selection() -> TargetSelection:
         "post-then-dev-not-fixed",
         "rc-then-post-not-fixed",
         "repeated-post-suffix-not-fixed",
-        "post-below-threshold-not-fixed",
+        "post-of-fixed-is-fixed",
         "local-below-threshold-not-fixed",
         "local-version-is-fixed",
         "local-dev-suffix-is-fixed",
         "local-rc-suffix-is-fixed",
         "future",
+        "fullwidth-post-digit",
+        "fullwidth-version",
     ],
 )
-def test_skip_reason_matrix(sandbox_tag, host_tag, pytest_major, mutmut_version, expected):
-    """Each wall reports itself alone, and a runnable pair reports nothing.
+def test_skip_reason_matrix(sandbox_abi, host_abi, pytest_version, mutmut_version, expected):
+    """Each wall reports itself alone, and a runnable pair reports nothing."""
 
-    Isolated combinations keep one wall from silently gating another: the ABI
-    cases hold the mutmut version runnable where the wall under test is the
-    ABI, and the version cases hold both tags equal.
-    """
-
-    assert _skip_reason(sandbox_tag, host_tag, pytest_major, mutmut_version) == expected
+    assert _skip_reason(sandbox_abi, host_abi, pytest_version, mutmut_version) == expected
 
 
-def test_cache_tag_probe_contract(monkeypatch):
+def test_soabi_probe_contract(monkeypatch):
     """The probe's command shape, decoding and failure mode are all pinned."""
 
     calls = []
 
     class Result:
-        stdout = "  cpython-314\n"
+        stdout = "  cpython-314-x86_64-linux-gnu\n"
 
     def fake_run(argv, **kwargs):
         calls.append((argv, kwargs))
         return Result()
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert _cache_tag("/opt/other/python") == "cpython-314"
+    assert _soabi("/opt/other/python") == "cpython-314-x86_64-linux-gnu"
     assert len(calls) == 1
     assert calls[0][0] == [
         "/opt/other/python",
         "-I",
         "-c",
-        "import sys;print(sys.implementation.cache_tag)",
+        "import sysconfig;print(sysconfig.get_config_var('SOABI'))",
     ]
     assert calls[0][1] == {
         "capture_output": True,
@@ -562,31 +686,31 @@ def test_cache_tag_probe_contract(monkeypatch):
         stdout = "None\n"
 
     monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: Tagless())
-    assert _cache_tag("/usr/bin/python3") == ""
+    assert _soabi("/usr/bin/python3") == ""
 
     class Blank:
         stdout = "   \n"
 
     monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: Blank())
-    assert _cache_tag("/usr/bin/python3") == ""
+    assert _soabi("/usr/bin/python3") == ""
 
     def boom(argv, **kwargs):
         raise OSError("no interpreter")
 
     monkeypatch.setattr(subprocess, "run", boom)
-    assert _cache_tag("/usr/bin/python3") == ""
+    assert _soabi("/usr/bin/python3") == ""
 
     def timeout(argv, **kwargs):
         raise subprocess.TimeoutExpired(cmd=argv, timeout=60)
 
     monkeypatch.setattr(subprocess, "run", timeout)
-    assert _cache_tag("/usr/bin/python3") == ""
+    assert _soabi("/usr/bin/python3") == ""
 
     def failed(argv, **kwargs):
         raise subprocess.CalledProcessError(returncode=1, cmd=argv)
 
     monkeypatch.setattr(subprocess, "run", failed)
-    assert _cache_tag("/usr/bin/python3") == ""
+    assert _soabi("/usr/bin/python3") == ""
 
 
 def test_sandbox_skip_reason_forwards_inputs(monkeypatch):
@@ -594,136 +718,87 @@ def test_sandbox_skip_reason_forwards_inputs(monkeypatch):
 
     probed = []
 
-    def fake_tag(python):
+    def fake_abi(python):
         probed.append(python)
-        return "cpython-314"
+        return "cpython-314-x86_64-linux-gnu"
 
-    monkeypatch.setattr(sys.modules[__name__], "_cache_tag", fake_tag)
-    monkeypatch.setattr(sys.implementation, "cache_tag", "cpython-315", raising=False)
+    monkeypatch.setattr(sys.modules[__name__], "_soabi", fake_abi)
+    monkeypatch.setattr(sysconfig, "get_config_var", lambda name: "cpython-315-x86_64-linux-gnu")
     monkeypatch.setattr(mutmut, "__version__", "3.8.1")
     monkeypatch.setattr(pytest, "__version__", "9.2.0")
     assert _sandbox_skip_reason() == (
-        "sandbox interpreter cpython-314 would load cpython-315 site-packages; "
-        "extension modules are ABI-specific"
+        "sandbox interpreter cpython-314-x86_64-linux-gnu would load "
+        "cpython-315-x86_64-linux-gnu site-packages; extension modules are ABI-specific"
     )
     assert probed == [SANDBOX_PYTHON]
 
-    monkeypatch.setattr(sys.implementation, "cache_tag", "cpython-314", raising=False)
+    monkeypatch.setattr(sysconfig, "get_config_var", lambda name: "cpython-314-x86_64-linux-gnu")
+    monkeypatch.setattr(mutmut, "__version__", "3.8.0")
     assert _sandbox_skip_reason() == (
-        "mutmut 3.8.1 calls item._nodeid, removed in pytest 9; mutants are generated but never executed"
+        "mutmut 3.8.0 reads item._nodeid, removed in pytest 9.2.0; "
+        "mutants are generated but never executed"
     )
     assert probed == [SANDBOX_PYTHON] * 2
 
-    monkeypatch.setattr(pytest, "__version__", "8.3.0")
+    monkeypatch.setattr(pytest, "__version__", "9.1.1")
     assert _sandbox_skip_reason() == ""
     assert probed == [SANDBOX_PYTHON] * 3
 
     monkeypatch.setattr(pytest, "__version__", "9.2.0")
 
-    def empty_tag(python):
+    def empty_abi(python):
         probed.append(python)
         return ""
 
-    monkeypatch.setattr(sys.modules[__name__], "_cache_tag", empty_tag)
+    monkeypatch.setattr(sys.modules[__name__], "_soabi", empty_abi)
     assert _sandbox_skip_reason() == (
         f"cannot probe {SANDBOX_PYTHON}; the sandbox interpreter is unknown"
     )
     assert probed == [SANDBOX_PYTHON] * 4
 
-    monkeypatch.setattr(sys.modules[__name__], "_cache_tag", fake_tag)
-    monkeypatch.setattr(sys.implementation, "cache_tag", None, raising=False)
+    monkeypatch.setattr(sys.modules[__name__], "_soabi", fake_abi)
+    monkeypatch.setattr(sysconfig, "get_config_var", lambda name: None)
     assert _sandbox_skip_reason() == (
-        "cannot read the test interpreter's cache tag; the sandbox comparison is unknown"
+        "cannot read the test interpreter's SOABI; the sandbox comparison is unknown"
     )
     assert probed == [SANDBOX_PYTHON] * 5
 
-    monkeypatch.setattr(sys.implementation, "cache_tag", "cpython-314", raising=False)
-    monkeypatch.setattr(mutmut, "__version__", "3.9.1")
+    monkeypatch.setattr(sysconfig, "get_config_var", lambda name: "cpython-314-x86_64-linux-gnu")
+    monkeypatch.setattr(mutmut, "__version__", "3.8.1")
     assert _sandbox_skip_reason() == ""
     assert probed == [SANDBOX_PYTHON] * 6  # one probe per call, no memo
 
 
-PEP440_VERSIONS = [
-    "3.9.0",
-    "3.9",
-    "3.9.0rc1",
-    "3.9.0.dev0",
-    "3.9.0.post1",
-    "3.9.0.post",
-    "3.9.0-1",
-    "3.9.0.rev1",
-    "3.9.0.r2",
-    "v3.9.0",
-    "1!3.9.0",
-    "4.0.0rc1",
-    "3.9.0+foo.dev0",
-    "3.9.0+local",
-    "3.9.0.post1.dev0",
-    "3.9.0rc1.post1",
-    "3.9.0.dev1+local",
-    "3.9.0.post1+local",
-    "3.9.0post1",
-    "3.9.0RC1",
-    "3.9.0.POST1",
-    "3.9.0_POST1",
-    "3.9.0.post.1",
-    "3.9.0.post_1",
-    "3.9.0rev-1",
-    "3.9.0a1.post1",
-    "3.9.0a1",
-    "3.9.0b1",
-    "3.9.0c1",
-    "3.9.0alpha1",
-    "3.9.0beta1",
-    "3.9.0pre1",
-    "3.9.0preview1",
-]
+def test_version_wall_uses_the_pep440_parser():
+    """A string no PEP 440 parser accepts never counts as a fixed mutmut.
 
-
-def test_version_classifier_matches_pep440_reference():
-    """The hand-written classifier agrees with a real PEP 440 parser.
-
-    ``packaging`` arrives with pytest, so this cross-check runs wherever the
-    suite does; the matrix above stays authoritative for the forms the guard
-    documents, and this test is what catches a version spelling nobody thought
-    to list.
+    ``4.0.0garbage.dev1`` is the shape a digit-only regular expression lets
+    through: the leading numbers are high and a ``dev`` segment follows, so
+    the tail looks like a dev release of a future series. packaging rejects
+    it, and so does the wall.
     """
-
-    reference = pytest.importorskip("packaging.version")
-
-    for text in PEP440_VERSIONS:
-        parsed = reference.Version(text)
-        pair, rules_out_fix, recognized = _mutmut_numbers(text)
-        release = parsed.release
-        assert pair == (release[0], release[1] if len(release) > 1 else 0), text
-        # The helper reports what the tail says; how a later series is treated
-        # is policy, pinned by the matrix instead.
-        assert rules_out_fix is parsed.is_prerelease, text
-        assert recognized is True, text
-
-
-def test_unparseable_versions_still_report_the_wall():
-    """Strings no PEP 440 parser accepts never pass for a runnable mutmut."""
-
-    reference = pytest.importorskip("packaging.version")
 
     for text in [
         "garbage",
         "3.9.0garbage",
         "4.0.0garbage",
+        "4.0.0garbage.dev1",
         "3.10.0.post1.post2",
         "3.9.0.post1.post2",
         "3.9.0_1",
         "3.9.0+",
         "3.9.0+foo..bar",
-        # Python's \\d matches non-ASCII digits; packaging does not.
         "3.9.0.post\uff11",
         "\uff13.\uff19.\uff10",
     ]:
-        with pytest.raises(reference.InvalidVersion):
-            reference.Version(text)
-        assert _skip_reason("cpython-314", "cpython-314", 9, text) == (
-            f"mutmut {text} calls item._nodeid, removed in pytest 9; "
+        assert _mutmut_release(text) is None, text
+        assert _skip_reason(
+            "cpython-314-x86_64-linux-gnu",
+            "cpython-314-x86_64-linux-gnu",
+            "9.2.0",
+            text,
+        ) == (
+            f"mutmut {text} reads item._nodeid, removed in pytest 9.2.0; "
             "mutants are generated but never executed"
         ), text
 
