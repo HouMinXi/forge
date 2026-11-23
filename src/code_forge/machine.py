@@ -59,7 +59,13 @@ from .ledger import (
     append_row as ledger_append,
 )
 from .lenses import strip_lens_tag
-from .llm_invoke import FalsifyProtocolError, InvalidJSONResponseError, LLMInvokeError, Usage
+from .llm_invoke import (
+    FalsifyProtocolError,
+    InvalidJSONResponseError,
+    LLMInvokeError,
+    SendDeadlineError,
+    Usage,
+)
 from .mutation import OTHER_ADAPTER_INFRA as _OTHER_ADAPTER_INFRA
 from .mutation import (
     launch_detached_mutation,
@@ -2929,8 +2935,12 @@ class StateMachine:
                     self._state.infra_errors.append(
                         f"falsify {failure} on {f.fingerprint}: {diagnostic}"
                     )
+                display_failure = failure
+                if audit_scope is not None and isinstance(exc, SendDeadlineError):
+                    display_failure = "send deadline expired before this attempt entered network I/O"
                 progress.emit(
-                    "falsify %d/%d: %s (%.1fs)" % (i, total, failure, time.monotonic() - t_falsify)
+                    "falsify %d/%d: %s (%.1fs)"
+                    % (i, total, display_failure, time.monotonic() - t_falsify)
                 )
             except RuntimeError as exc:
                 if audit_scope is not None:
