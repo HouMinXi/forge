@@ -17100,6 +17100,8 @@
     "tests/test_invocation_send_audit.py::test_all_actual_send_paths_normalize_late_admission_without_recovery[headroom-4]",
     "tests/test_invocation_send_audit.py::test_all_actual_send_paths_normalize_late_admission_without_recovery[initial-1]",
     "tests/test_invocation_send_audit.py::test_an_elapsed_budget_stops_before_a_ticket_is_created",
+    "tests/test_invocation_send_audit.py::test_audited_falsifier_distinguishes_send_deadline_from_network_timeout[before-network]",
+    "tests/test_invocation_send_audit.py::test_audited_falsifier_distinguishes_send_deadline_from_network_timeout[network-timeout]",
     "tests/test_invocation_send_audit.py::test_audited_l1_distinguishes_send_deadline_from_network_timeout",
     "tests/test_invocation_send_audit.py::test_cap_and_breaker_skips_do_not_create_send_records",
     "tests/test_invocation_send_audit.py::test_default_failure_warns_and_keeps_result_and_provider_call_count",

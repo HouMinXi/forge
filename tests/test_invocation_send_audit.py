@@ -1131,6 +1131,99 @@ def test_all_actual_send_paths_normalize_late_admission_without_recovery(
     assert host.events[-1][2]["error_class"] == "SendDeadlineBeforeNetwork"
 
 
+@pytest.mark.parametrize("pre_send", [True, False], ids=["before-network", "network-timeout"])
+def test_audited_falsifier_distinguishes_send_deadline_from_network_timeout(
+    monkeypatch, host_factory, backend, tmp_path, capsys, pre_send
+):
+    from code_forge import falsify_real, invocation_redirect
+    from code_forge.disposition import Disposition
+    from code_forge.factories import build_l1_provider
+    from code_forge.invocation_review import OrdinaryReviewAudit
+    from code_forge.state import Mode, Verdict, load_state
+    from tests._outside_gate import outside_gate_root
+    from tests.test_per_pass_usage import DIFF, ROLES, make_machine, resolved
+
+    clock = [time.monotonic()]
+    fake_time = SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda _: None)
+    for module in (invoke, invocation_send_audit, invocation_redirect):
+        monkeypatch.setattr(module, "time", fake_time)
+    monkeypatch.setenv("FORGE_L1_SERIAL", "1")
+    hosts = {role: host_factory() for role in (*ROLES, None)}
+    for host in hosts.values():
+        host.strict_failed = False
+    falsifier_host = hosts[None]
+    if pre_send:
+        falsifier_host.start_hook = lambda: clock.__setitem__(0, clock[0] + 31)
+    review = OrdinaryReviewAudit(source=DIFF, environ={})
+    fake_host = SimpleNamespace(
+        scope=lambda *, pass_name, **_: hosts[pass_name], finalize=lambda **_: None
+    )
+    monkeypatch.setattr(review, "_open_host", lambda: fake_host)
+
+    excerpt = {"file": "sample.py", "start_line": 1, "end_line": 1, "content": "VALUE = 2"}
+    finding = {
+        "file": "sample.py",
+        "line": 1,
+        "severity": "P2",
+        "description": "fixture candidate",
+        "excerpt": "VALUE = 2",
+    }
+    l1_replies = [
+        reply(json.dumps({"findings": [finding] if role == "qodo" else [], "code_excerpts": [excerpt]}))
+        for role in ROLES
+    ]
+    network_timeout = TimeoutError("fixture falsifier socket timeout")
+    transport = scripted(monkeypatch, [*l1_replies, network_timeout])
+    real_invoke, errors = falsify_real.llm_invoke, []
+
+    def observe(*args, **kwargs):
+        try:
+            return real_invoke(*args, **kwargs)
+        except LLMInvokeError as error:
+            errors.append(error)
+            raise
+
+    monkeypatch.setattr(falsify_real, "llm_invoke", observe)
+    backend = dataclasses.replace(backend, timeout_s=30)
+    provider = build_l1_provider("real", resolved(), backend=backend, max_attempts=1)
+    machine = make_machine(tmp_path, provider)
+    machine.mode = Mode.CI
+    machine.falsifier = falsify_real.RealFalsifier(backend=backend, diff_text=DIFF)
+    machine.invocation_audit = review
+    machine.test_config_root = outside_gate_root(tmp_path)
+    machine._state.env_manifest = {}
+    assert machine.run() is Verdict.FAIL
+    review.finalize()
+
+    (error,) = errors
+    (attempt,) = falsifier_host.attempts
+    assert error.is_timeout and not error.retryable
+    assert attempt.finished and attempt.entered is (not pre_send)
+    assert len(transport.requests) == (3 if pre_send else 4)
+    if pre_send:
+        assert type(error) is invoke.SendDeadlineError
+        assert isinstance(error.__cause__, invocation_send_audit.SendDeadlineBeforeNetwork)
+    else:
+        assert type(error) is LLMInvokeError and error.__cause__ is network_timeout
+    state = load_state(tmp_path / ".code-forge" / "state.json")
+    assert state.verdict is Verdict.FAIL and not state.converged
+    (saved,) = [f for f in state.findings if f.description == "[qodo] fixture candidate"]
+    assert saved.disposition is Disposition.UNCERTAIN
+    assert saved.error == "falsify() backend timed out: provider request timed out"
+    assert (
+        f"falsify backend timed out on {saved.fingerprint}: provider request timed out"
+        in state.infra_errors
+    )
+    output = capsys.readouterr()
+    assert output.out == "" and "fixture falsifier socket timeout" not in output.err
+    label = (
+        "send deadline expired before this attempt entered network I/O"
+        if pre_send
+        else "backend timed out"
+    )
+    assert f"falsify 1/1: {label} (" in output.err
+
+
 def test_an_elapsed_budget_stops_before_a_ticket_is_created():
     """A ticket submitted past its deadline can only expire, so refuse it first."""
     starts = []
