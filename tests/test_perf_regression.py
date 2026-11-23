@@ -33,8 +33,16 @@ class Compare(unittest.TestCase):
         for value in (float("nan"), float("inf"), 0.0, -1.0):
             self.assertEqual(perf.compare(self.record(value), 1.0), "incomparable", value)
 
-    def test_a_different_definition_is_incomparable(self):
-        self.assertEqual(perf.compare(self.record(1.0, definition="other"), 1.0), "incomparable")
+    def test_a_bool_baseline_is_incomparable(self):
+        # True is an int in Python, so a type check that stops at int accepts it
+        # and treats the baseline as one second.
+        self.assertEqual(perf.compare(self.record(True), 1.0), "incomparable")
+
+    def test_a_non_finite_result_is_still_json(self):
+        result = perf.report(self.record(float("nan")), 1.0)
+        self.assertEqual(result["verdict"], "incomparable")
+        self.assertIsNone(result["baseline_s"])
+        json.dumps(result)
 
     def test_a_different_workload_is_incomparable(self):
         self.assertEqual(perf.compare(self.record(1.0, workload="other"), 1.0), "incomparable")
@@ -78,6 +86,37 @@ class Report(unittest.TestCase):
             text=True,
             check=False,
         )
+        self.assertEqual(run.returncode, 2)
+        self.assertEqual(json.loads(run.stdout)["verdict"], "incomparable")
+
+    def test_a_record_from_another_definition_exits_incomparable(self):
+        import tempfile
+
+        record = {"definition": "other", "workload": perf.WORKLOAD, "median_s": 1.0}
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
+            json.dump(record, handle)
+            handle.flush()
+            run = subprocess.run(
+                [sys.executable, "scripts/perf_regression.py", "--baseline", handle.name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(run.returncode, 2)
+        self.assertEqual(json.loads(run.stdout)["verdict"], "incomparable")
+
+    def test_a_non_utf8_record_exits_incomparable(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("wb", suffix=".json") as handle:
+            handle.write(b"\xff\xfe not json")
+            handle.flush()
+            run = subprocess.run(
+                [sys.executable, "scripts/perf_regression.py", "--baseline", handle.name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         self.assertEqual(run.returncode, 2)
         self.assertEqual(json.loads(run.stdout)["verdict"], "incomparable")
 

@@ -60,7 +60,19 @@ def compare(baseline: dict, current: float, slowdown: float = SLOWDOWN) -> str:
 
 
 def _finite_positive(value) -> bool:
-    return isinstance(value, (int, float)) and math.isfinite(value) and value > 0
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    )
+
+
+def _jsonable(value):
+    """A number JSON can carry, or None. NaN and infinity are not numbers here."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return value
+    return None
 
 
 def report(baseline: dict, current: float) -> dict:
@@ -69,8 +81,8 @@ def report(baseline: dict, current: float) -> dict:
         "definition": DEFINITION,
         "workload": WORKLOAD,
         "runs": RUNS,
-        "baseline_s": baseline.get("median_s"),
-        "median_s": current,
+        "baseline_s": _jsonable(baseline.get("median_s")),
+        "median_s": _jsonable(current),
         "slowdown_limit": SLOWDOWN,
         "verdict": verdict,
     }
@@ -86,8 +98,8 @@ def main() -> int:
         print(json.dumps({"definition": DEFINITION, "workload": WORKLOAD, "median_s": current}))
         return 0
     try:
-        baseline = json.loads(open(args.baseline).read())
-    except (OSError, json.JSONDecodeError):
+        baseline = json.loads(open(args.baseline, encoding="utf-8").read())
+    except (OSError, UnicodeError, json.JSONDecodeError):
         print(json.dumps({"definition": DEFINITION, "verdict": "incomparable"}))
         return 2
     if not isinstance(baseline, dict):
@@ -95,7 +107,7 @@ def main() -> int:
         return 2
     result = report(baseline, current)
     print(json.dumps(result, allow_nan=False))
-    return 1 if result["verdict"] == "slower" else 0
+    return {"slower": 1, "incomparable": 2}.get(result["verdict"], 0)
 
 
 if __name__ == "__main__":
