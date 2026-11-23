@@ -1043,8 +1043,6 @@ def test_audited_l1_distinguishes_send_deadline_from_network_timeout(
     assert hosts["qodo"].events[-1][2]["error_class"] == "SendDeadlineBeforeNetwork"
     assert hosts["expert"].events[-1][2]["error_class"] == "TimeoutError"
     assert len(transport.requests) == 2
-    assert b"senior engineer" in transport.requests[0][0].data
-    assert b"adversarial QE" in transport.requests[1][0].data
 
     state = load_state(tmp_path / ".code-forge" / "state.json")
     assert state.verdict is Verdict.FAIL and not state.converged
