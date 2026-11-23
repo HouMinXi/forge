@@ -464,7 +464,12 @@ differs. The full tables, the corpus construction, and the caveats are in
 - **No long-term maintainability scoring.** code-forge does not assess
   technical debt accumulation. SonarQube's tech-debt tracking is the
   closest automated approximation, and its number is that tool's own
-  estimate, not a measurable property of the code.
+  estimate, not a measurable property of the code. One narrow signal does
+  exist outside the review pipeline: `scripts/noqa_suppressions.py` reports
+  which explicit `# noqa` suppressions were added, removed or re-pointed
+  between two commits ([details](docs/maintainability-noqa-tracking.md)). It
+  counts comments, not diagnostics Ruff actually suppressed, and no CI job
+  reads it.
 - **No performance regression suite.** No benchmark harness equivalent to
   Rust's `perf.rust-lang.org`. code-forge can tell you a test started
   failing; it cannot tell you a change made a hot path slower.
