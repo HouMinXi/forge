@@ -28401,6 +28401,7 @@
     "tests/test_receipt_diagnostic_summary.py::test_cli_counts_only_classified_host_provider_failures[produced]",
     "tests/test_receipt_diagnostic_summary.py::test_cli_counts_only_classified_host_provider_failures[product-candidates]",
     "tests/test_receipt_diagnostic_summary.py::test_cli_counts_only_classified_host_provider_failures[unavailable]",
+    "tests/test_receipt_diagnostic_summary.py::test_cli_empty_content_summary_requires_execution_source[empty-content]",
     "tests/test_receipt_diagnostic_summary.py::test_falsifier_observation_is_not_relabelled_as_receipt_failure",
     "tests/test_receipt_diagnostic_summary.py::test_five_receipt_errors_are_explained_without_reducing_counts",
     "tests/test_receipt_diagnostic_summary.py::test_known_host_receipt_labels_are_explained[RECEIPT_COVERAGE]",

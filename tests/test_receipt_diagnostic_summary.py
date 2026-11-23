@@ -416,3 +416,38 @@ def test_cli_counts_only_classified_host_provider_failures(
     assert output.out == prepared.stdout + "\n"
     assert path.read_bytes() == snapshot
     assert output.err.splitlines() == expected
+
+
+@pytest.mark.parametrize("report", ["empty-content"])
+def test_cli_empty_content_summary_requires_execution_source(
+    ci_provider_failure_state, capsys, tmp_path
+):
+    from code_forge import cli
+    from code_forge.state import load_state, save_state
+
+    _, state = ci_provider_failure_state
+    (empty_index,) = [
+        i
+        for i, finding in enumerate(state.findings)
+        if (finding.provider_failure or {}).get("kind") == "empty"
+    ]
+    state.findings[empty_index] = replace(state.findings[empty_index], source="UNTRUSTED")
+    path = tmp_path / "empty-product-candidate.json"
+    save_state(state, path)
+    state = load_state(path)
+    projection = classify_report_records(state)
+    assert projection.classification_complete
+    assert [
+        record.host_failure_kind for record in projection.product if record.index == empty_index
+    ] == ["PROVIDER_EMPTY"]
+    assert receipt_finding_provenance(state.findings[empty_index])["channel"] == "product"
+
+    capsys.readouterr()
+    cli._emit_ci_output(path, {})
+    output = capsys.readouterr()
+    results = json.loads(output.out)["runs"][0]["results"]
+    assert any(
+        result["message"]["text"] == "The example omits its required input." for result in results
+    )
+    assert "code-forge: review service transport failures=1 [included in findings]" in output.err
+    assert "code-forge: review service responses with no usable review content=" not in output.err
