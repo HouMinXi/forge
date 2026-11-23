@@ -3,10 +3,11 @@
 
 One function, one input, one number. The workload is ``parse_diff_files`` on a
 diff that never changes, so a slower result can only come from the function
-itself. The median of several runs drops a single slow run; a change is reported
-only when the median moves past a fixed fraction of the baseline. A test that
-takes longer does not count here, and nothing in this script says why a change
-got slower.
+itself. The median of several runs is less moved by one slow run than a single
+sample would be, but it is not immune to one: where that run lands among the
+others decides it. A change is reported only when the median moves past a fixed
+fraction of the baseline. A test that takes longer does not count here, and
+nothing in this script says why a change got slower.
 """
 
 import argparse
@@ -62,25 +63,39 @@ def compare(baseline: dict, current: float, slowdown: float = SLOWDOWN) -> str:
     stored = baseline.get("median_s")
     if not _finite_positive(stored) or not _finite_positive(current):
         return "incomparable"
-    assert isinstance(stored, (int, float))
+    if not isinstance(stored, (int, float)) or isinstance(stored, bool):
+        return "incomparable"
+    try:
+        stored = float(stored)
+    except OverflowError:
+        return "incomparable"
     if current > stored * (1 + slowdown):
         return "slower"
     return "within"
 
 
 def _finite_positive(value) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        and value > 0
-    )
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return False
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
 
 
 def _jsonable(value):
-    """A number JSON can carry, or None. NaN and infinity are not numbers here."""
-    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
-        return value
+    """A number JSON can carry, or None.
+
+    NaN and infinity are not numbers here, and neither is an integer too large
+    to become a float: JSON would reject it, so the report says null instead.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        if math.isfinite(float(value)):
+            return value
+    except OverflowError:
+        return None
     return None
 
 

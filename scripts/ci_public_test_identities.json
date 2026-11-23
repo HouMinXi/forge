@@ -25981,6 +25981,7 @@
     "tests/test_perf_regression.py::Compare::test_a_non_finite_baseline_is_incomparable",
     "tests/test_perf_regression.py::Compare::test_a_non_finite_result_is_still_json",
     "tests/test_perf_regression.py::Compare::test_a_small_change_stays_within",
+    "tests/test_perf_regression.py::Compare::test_an_integer_too_large_to_convert_is_incomparable",
     "tests/test_perf_regression.py::Compare::test_exactly_at_the_limit_stays_within",
     "tests/test_perf_regression.py::Compare::test_past_the_limit_is_slower",
     "tests/test_perf_regression.py::Compare::test_the_limit_is_part_of_the_definition",

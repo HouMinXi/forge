@@ -38,6 +38,11 @@ class Compare(unittest.TestCase):
         # and treats the baseline as one second.
         self.assertEqual(perf.compare(self.record(True), 1.0), "incomparable")
 
+    def test_an_integer_too_large_to_convert_is_incomparable(self):
+        # math.isfinite accepts any int, but multiplying one past the float range
+        # raises. That is not a slowdown.
+        self.assertEqual(perf.compare(self.record(10**10000), 0.001), "incomparable")
+
     def test_a_non_finite_result_is_still_json(self):
         result = perf.report(self.record(float("nan")), 1.0)
         self.assertEqual(result["verdict"], "incomparable")

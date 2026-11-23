@@ -478,9 +478,10 @@ differs. The full tables, the corpus construction, and the caveats are in
   record that names another, or a median that is not a finite number, is
   reported as incomparable rather than as acceptable. A slower test does not
   count, and the script does not say why a change got slower. The median of
-  seven runs ignores up to three slow samples, so a single stall does not move
-  it; four or more do. The check does not prove the timed function did all of
-  its work. code-forge still cannot tell you a change made a hot path slower.
+  seven runs is less moved by one slow sample than a single timing would be, but
+  one sample can still move it, depending on where it lands among the others.
+  The check does not prove the timed function did all of its work. code-forge
+  still cannot tell you a change made a hot path slower.
 - **R3 is artifact-presence, not coverage proof.** The cross-component
   check confirms an integration test file exists under the expected path;
   it does not verify that the test exercises the specific code that
