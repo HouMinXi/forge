@@ -100,7 +100,7 @@ PROBE_MAX_TOKENS = 1024
 # Reviews send a large prompt and read a long answer back; a small cap
 # truncates the verdict JSON and forge then parses zero findings out of a
 # response that had plenty. See the max_tokens note in the fleet memory.
-DEFAULT_MAX_TOKENS = 65536
+DEFAULT_MAX_TOKENS = 131072
 DEFAULT_TIMEOUT_S = 2400
 
 
