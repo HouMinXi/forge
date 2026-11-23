@@ -199,7 +199,7 @@ class Controls(unittest.TestCase):
             b"# noqa: mystery word\n"
             b"y = 2  # noqa: F401 - justified\n"
         )
-        self.assertEqual(suppressions.DEFINITION, "forge-noqa-comment-sites-v3")
+        self.assertEqual(suppressions.DEFINITION, "forge-noqa-comment-sites-v4")
         self.assertEqual(
             dict(counts),
             {
@@ -466,7 +466,7 @@ class GitControls(unittest.TestCase):
         self.assertEqual(code, 0)
         text = suppressions.summary(doc).splitlines()
         self.assertTrue(any("Unmatched" in line for line in text), text)
-        self.assertIn("Confirmed: 0 added, 0 removed, 0 changed. Unmatched: 3.", text)
+        self.assertIn("Confirmed: 0 added, 0 removed, 0 changed. Unmatched: 5.", text)
 
     def test_summary_names_the_reason_when_detail_is_attached(self):
         after = self.commit(b"a = 1  # noqa: mystery word\n")
@@ -676,6 +676,19 @@ class GitControls(unittest.TestCase):
         )
         self.assertEqual([e["reason"] for e in a["unmatched"]], ["repeated_source_anchor"] * 2)
 
+    def test_repeated_anchor_with_comment_removed_stays_unmatched(self):
+        # The repeated code survives but its comment is dropped. The anchor text
+        # is still there, only no longer unique, so this is not a confirmed
+        # deletion: nothing says which copy the comment belonged to.
+        before = self.commit(b"a = 1  # noqa: F401\na = 1\n")
+        after = self.commit(b"a = 1\na = 1\n")
+        a = self.report(before, after)[1]["comparison"]["file_details"][0]
+        self.assertFalse(any(a["confirmed_changes"].values()))
+        self.assertEqual(
+            [(e["side"], e["reason"]) for e in a["unmatched"]],
+            [("before", "repeated_source_anchor")],
+        )
+
     def test_rewritten_and_standalone_anchors_are_not_paired(self):
         before = self.commit(b"# noqa\na = 1 # noqa: F401\n")
         after = self.commit(b"# noqa: S110\na = 2 # noqa: S110\n")
@@ -777,11 +790,11 @@ class GitControls(unittest.TestCase):
     def test_string_interior_is_not_a_counterpart_anchor(self):
         after = self.commit(b'x = """\na = 1\n"""\n')
         detail = self.report(self.base, after)[1]["comparison"]["file_details"][0]
-        # The anchor text survives only inside a string, which is not an anchor,
-        # so the other side has no suppression left to account for. That is a
-        # real deletion, not a rewrite.
-        self.assertEqual([s["rules"] for s in detail["confirmed_changes"]["removed"]], [["F401"]])
-        self.assertEqual(detail["unmatched"], [])
+        # The anchor text survives inside a string. It is not an anchor, but it
+        # is still the same text, so the site cannot be told from a rewrite and
+        # stays unmatched rather than a confirmed deletion.
+        self.assertFalse(any(detail["confirmed_changes"].values()))
+        self.assertEqual([e["reason"] for e in detail["unmatched"]], ["no_code_anchor_on_other_side"])
 
     def test_human_summary_reports_a_rewrite_as_unmatched(self):
         summary = suppressions.summary

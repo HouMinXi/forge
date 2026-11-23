@@ -40,9 +40,7 @@ import tokenize
 
 SCOPE = "src/code_forge"
 GIT_TIMEOUT_S = 8
-DEFINITION = (
-    "forge-noqa-comment-sites-v3"  # v3: an unmatched anchor on the other side counts as added/removed
-)
+DEFINITION = "forge-noqa-comment-sites-v4"  # v4: a repeated anchor, and a rewrite, stay unmatched
 COUNT_KEYS = ("explicit_sites", "blanket_sites", "unclassified_sites", "excluded_file_directives")
 
 
@@ -171,7 +169,13 @@ def detail(path, old, new):
         line = context[0]
         if new.anchors[line] == old.anchors[line] == 1 and (0, line) in code_keys:
             return (0, line)
+        # A wider window disambiguates a repeated line only when it contains
+        # text other than the line itself. A window made entirely of copies of
+        # the repeated line cannot say which copy it points at, so skip it.
+        repeated = new.anchors[line] != 1 or old.anchors[line] != 1
         for radius, window in enumerate(context[1:], 1):
+            if repeated and not any(part not in (line, None) for part in window):
+                continue
             if (radius, window) in code_keys and (
                 new.contexts[radius - 1][window] == old.contexts[radius - 1][window] == 1
             ):
@@ -188,12 +192,16 @@ def detail(path, old, new):
         unmatched.append(dict(site, side=side, path=path, reason=reason))
 
     def confirmed_or_rewrite(context, site, other, bucket):
-        # A rewrite leaves a suppression on the other side whose anchor no longer
-        # matches. Nothing proves that line is the same site moved, so both stay
-        # unmatched. When the other side has no suppression left to account for,
-        # the code was written or deleted together with its directive.
+        # Two shapes stay unmatched. The anchor text still exists on the other
+        # side but is repeated, so it cannot be paired. Or the anchor is gone
+        # while the other side still holds a suppression of its own, which is a
+        # rewrite and nothing proves the new line is the same site moved. Only
+        # an anchor that exists nowhere on the other side, with no suppression
+        # left there to account for, is code written or deleted with its
+        # directive.
+        anchor_survives = context is not None and other.anchors[context[0]]
         other_has_unpaired = any(candidate(c) is None for c, _ in other.sites)
-        if context is not None and other_has_unpaired:
+        if context is not None and (anchor_survives or other_has_unpaired):
             record_unmatched("before" if bucket == "removed" else "after", context, site, other)
         elif context is None:
             record_unmatched("before" if bucket == "removed" else "after", context, site, other)

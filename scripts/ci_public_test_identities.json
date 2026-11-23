@@ -25449,6 +25449,7 @@
     "tests/test_noqa_suppressions.py::GitControls::test_remove_last_source_paths",
     "tests/test_noqa_suppressions.py::GitControls::test_repeat_with_distinct_context_can_pair_after_line_shift",
     "tests/test_noqa_suppressions.py::GitControls::test_repeated_anchor_including_unannotated_copy",
+    "tests/test_noqa_suppressions.py::GitControls::test_repeated_anchor_with_comment_removed_stays_unmatched",
     "tests/test_noqa_suppressions.py::GitControls::test_report_all_failed_paths_without_net_difference",
     "tests/test_noqa_suppressions.py::GitControls::test_revision_pinned_and_equal_total_rule_swap",
     "tests/test_noqa_suppressions.py::GitControls::test_rewritten_and_standalone_anchors_are_not_paired",

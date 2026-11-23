@@ -36,7 +36,10 @@ edits. Instead each suppression is anchored to the code text to its left, then t
 one and two lines of surrounding context. When that text exists on both sides but
 cannot be identified — it is repeated, or it appears only inside a string — the
 site is reported under `unmatched` with a reason (`repeated_source_anchor`,
-`no_code_anchor_on_other_side`, `no_source_anchor`) instead of being guessed. A directive on its own line has no code anchor at all,
+`no_code_anchor_on_other_side`, `no_source_anchor`) instead of being guessed. A
+repeated anchor stays unmatched even when the other side drops the comment: the
+text is still there, only no longer unique, and nothing says which copy the
+comment belonged to. A directive on its own line has no code anchor at all,
 so `no_source_anchor` is reported on both sides even when nothing changed. A run
 that changes nothing can therefore still print a non-zero `unmatched` count when
 the file holds duplicate anchors or standalone directives.
@@ -108,7 +111,7 @@ two causes are distinguishable without reading the JSON.
 
 ## Test status
 
-`tests/test_noqa_suppressions.py` holds 57 tests. Each one pins a way the
+`tests/test_noqa_suppressions.py` holds 58 tests. Each one pins a way the
 comparison could otherwise lie: a directive inside a string, a repeated anchor, a
 changed path inventory, an unreadable Git object, an unclassifiable directive, a
 symlink inside the scanned tree, a lone-CR source, an unreadable blob, an
