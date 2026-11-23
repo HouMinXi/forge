@@ -576,7 +576,7 @@ def build_l1_provider(
         stub.is_stub_l1 = True
         return stub
 
-    from .llm_invoke import InvalidJSONResponseError, LLMInvokeError, llm_invoke
+    from .llm_invoke import InvalidJSONResponseError, LLMInvokeError, SendDeadlineError, llm_invoke
     from .reviewer_json import (
         L1_JSON_ENCODING_GUIDANCE,
         REVIEW_JSON_CONTRACT,
@@ -821,8 +821,11 @@ def build_l1_provider(
                     call.raw_observations.append(
                         {"raw_response": pr.raw_response, "pass_name": pass_name}
                     )
+                display_diagnostic = diagnostic
+                if audit_round is not None and isinstance(pr, SendDeadlineError):
+                    display_diagnostic = "send deadline expired before this attempt entered network I/O"
                 print(
-                    "code-forge: L1 pass '%s' failed: %s" % (pass_name, diagnostic),
+                    "code-forge: L1 pass '%s' failed: %s" % (pass_name, display_diagnostic),
                     file=sys.stderr,
                 )
                 from .disposition import Disposition
