@@ -217,7 +217,7 @@ def test_cli_adds_only_human_clarification(capsys, tmp_path):
         assert derive_pass_outcomes(restored.findings) == outcomes, name
 
 
-def _substitute_vertex_io(monkeypatch):
+def _substitute_vertex_io(monkeypatch, response_body):
     # Keep the Vertex adapter and L1 producer real, including error typing.
     from code_forge import llm_invoke
 
@@ -257,7 +257,7 @@ def _substitute_vertex_io(monkeypatch):
     sys.modules["google.auth.exceptions"].RefreshError = RefreshError
     sys.modules["google.auth.transport.requests"].Request = object
 
-    responses = iter([URLError(ConnectionRefusedError("fixture connection refused")), b"not JSON"])
+    responses = iter([URLError(ConnectionRefusedError("fixture connection refused")), response_body])
 
     def open_url(request, timeout_s):
         response = next(responses)
@@ -270,7 +270,7 @@ def _substitute_vertex_io(monkeypatch):
 
 
 @pytest.fixture
-def ci_provider_failure_state(tmp_path, monkeypatch):
+def ci_provider_failure_state(tmp_path, monkeypatch, report):
     from code_forge import cli
     from code_forge.autofix import StubAutoFixer
     from code_forge.backend import BackendConfig
@@ -282,7 +282,18 @@ def ci_provider_failure_state(tmp_path, monkeypatch):
     from code_forge.state import Mode, load_state
     from tests._outside_gate import outside_gate_root
 
-    _substitute_vertex_io(monkeypatch)
+    response_body = b"not JSON"
+    last_failure = ("PROVIDER_PROTOCOL", "bad_body", "execution")
+    if report == "empty-content":
+        response_body = json.dumps(
+            {
+                "content": [{"type": "text", "text": " \t\n"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 8, "output_tokens": 1},
+            }
+        ).encode("utf-8")
+        last_failure = ("PROVIDER_EMPTY", "empty", "execution")
+    _substitute_vertex_io(monkeypatch, response_body)
     monkeypatch.chdir(tmp_path)
     path = Path("docs/example.md")
     path.parent.mkdir()
@@ -337,13 +348,13 @@ def ci_provider_failure_state(tmp_path, monkeypatch):
     ] == [
         ("PROVIDER_AUTH", "credentials", "execution"),
         ("PROVIDER_TRANSPORT", "conn", "execution"),
-        ("PROVIDER_PROTOCOL", "bad_body", "execution"),
+        last_failure,
     ]
     assert any(state.findings[record.index].id == product.id for record in projection.product)
     return state_path, state
 
 
-@pytest.mark.parametrize("report", ["produced", "product-candidates", "unavailable"])
+@pytest.mark.parametrize("report", ["produced", "product-candidates", "unavailable", "empty-content"])
 def test_cli_counts_only_classified_host_provider_failures(
     report, ci_provider_failure_state, capsys, monkeypatch, tmp_path
 ):
@@ -386,13 +397,17 @@ def test_cli_counts_only_classified_host_provider_failures(
         format_classification_line(prepared.report_classification)
     ]
     labels = {
-        "produced": ("protocol", "transport", "authentication"),
-        "product-candidates": ("protocol",),
+        "produced": ("protocol failures", "transport failures", "authentication failures"),
+        "product-candidates": ("protocol failures",),
         "unavailable": (),
+        "empty-content": (
+            "transport failures",
+            "authentication failures",
+            "responses with no usable review content",
+        ),
     }
     expected.extend(
-        f"code-forge: review service {label} failures=1 [included in findings]"
-        for label in labels[report]
+        f"code-forge: review service {label}=1 [included in findings]" for label in labels[report]
     )
     expected.extend(cli._format_infra_lines(state, state_path=path).splitlines())
 

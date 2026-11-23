@@ -28397,6 +28397,7 @@
     "tests/test_receipt_audit_reporting.py::test_receipt_audit_routing_does_not_hide_other_findings[product-UNTRUSTED-UNCERTAIN]",
     "tests/test_receipt_audit_reporting.py::test_source_proven_tail_omission_has_separate_report_channel",
     "tests/test_receipt_diagnostic_summary.py::test_cli_adds_only_human_clarification",
+    "tests/test_receipt_diagnostic_summary.py::test_cli_counts_only_classified_host_provider_failures[empty-content]",
     "tests/test_receipt_diagnostic_summary.py::test_cli_counts_only_classified_host_provider_failures[produced]",
     "tests/test_receipt_diagnostic_summary.py::test_cli_counts_only_classified_host_provider_failures[product-candidates]",
     "tests/test_receipt_diagnostic_summary.py::test_cli_counts_only_classified_host_provider_failures[unavailable]",
