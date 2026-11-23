@@ -274,9 +274,10 @@ def _emit_ci_output(
             # Pair the report's provider label with the receipt's display provenance.
             findings = final_state.findings
             for kind, label in (
-                ("PROVIDER_PROTOCOL", "protocol"),
-                ("PROVIDER_TRANSPORT", "transport"),
-                ("PROVIDER_AUTH", "authentication"),
+                ("PROVIDER_PROTOCOL", "protocol failures"),
+                ("PROVIDER_TRANSPORT", "transport failures"),
+                ("PROVIDER_AUTH", "authentication failures"),
+                ("PROVIDER_EMPTY", "responses with no usable review content"),
             ):
                 failures = sum(
                     1
@@ -286,7 +287,7 @@ def _emit_ci_output(
                 )
                 if failures:
                     print(
-                        f"code-forge: review service {label} failures={failures} [included in findings]",
+                        f"code-forge: review service {label}={failures} [included in findings]",
                         file=sys.stderr,
                     )
     if loaded_path is not None:
