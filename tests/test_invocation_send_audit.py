@@ -982,6 +982,87 @@ def test_ordinary_network_timeout_keeps_existing_retry_timeout_policy(
         assert not caught.value.retryable and len(transport.requests) == 1
 
 
+def test_audited_l1_distinguishes_send_deadline_from_network_timeout(
+    monkeypatch, host_factory, backend, tmp_path, capsys
+):
+    from code_forge import invocation_redirect
+    from code_forge.factories import build_l1_provider
+    from code_forge.invocation_review import OrdinaryReviewAudit
+    from code_forge.state import Mode, Verdict, load_state
+    from tests._outside_gate import outside_gate_root
+    from tests.test_per_pass_usage import DIFF, ROLES, make_machine, resolved
+
+    clock = [10.0]
+    fake_time = SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda _: None)
+    for module in (invoke, invocation_send_audit, invocation_redirect):
+        monkeypatch.setattr(module, "time", fake_time)
+    monkeypatch.setenv("FORGE_L1_SERIAL", "1")
+    hosts = {role: host_factory() for role in ROLES}
+    for host in hosts.values():
+        host.strict_failed = False
+    hosts["qodo"].start_hook = lambda: clock.__setitem__(0, 14.0)
+    review = OrdinaryReviewAudit(source=DIFF, environ={})
+    fake_host = SimpleNamespace(
+        scope=lambda *, pass_name, **_: hosts[pass_name], finalize=lambda **_: None
+    )
+    monkeypatch.setattr(review, "_open_host", lambda: fake_host)
+    network_timeout = TimeoutError("fixture socket timeout")
+    transport = scripted(monkeypatch, [network_timeout, TimeoutError("fixture sibling timeout")])
+
+    original_invoke, errors = invoke.llm_invoke, []
+
+    def observe(*args, **kwargs):
+        try:
+            return original_invoke(*args, **kwargs)
+        except LLMInvokeError as error:
+            errors.append(error)
+            raise
+
+    monkeypatch.setattr(invoke, "llm_invoke", observe)
+    backend = dataclasses.replace(backend, timeout_s=3)
+    provider = build_l1_provider("real", resolved(), backend=backend, max_attempts=3)
+    machine = make_machine(tmp_path, provider)
+    machine.mode = Mode.CI
+    machine.test_config_root = outside_gate_root(tmp_path)
+    machine.invocation_audit = review
+    machine._state.env_manifest = {}
+    assert machine.run() is Verdict.FAIL
+    review.finalize()
+
+    assert [type(error) for error in errors] == [
+        invoke.SendDeadlineError,
+        LLMInvokeError,
+        LLMInvokeError,
+    ]
+    assert isinstance(errors[0].__cause__, invocation_send_audit.SendDeadlineBeforeNetwork)
+    assert errors[1].__cause__ is network_timeout
+    assert all(error.is_timeout and not error.retryable for error in errors)
+    assert [len(host.requests) for host in hosts.values()] == [1, 1, 1]
+    assert [host.attempts[0].entered for host in hosts.values()] == [False, True, True]
+    assert all(host.attempts[0].finished for host in hosts.values())
+    assert hosts["qodo"].events[-1][2]["error_class"] == "SendDeadlineBeforeNetwork"
+    assert hosts["expert"].events[-1][2]["error_class"] == "TimeoutError"
+    assert len(transport.requests) == 2
+    assert b"senior engineer" in transport.requests[0][0].data
+    assert b"adversarial QE" in transport.requests[1][0].data
+
+    state = load_state(tmp_path / ".code-forge" / "state.json")
+    assert state.verdict is Verdict.FAIL and not state.converged
+    findings = {finding.id: finding for finding in state.findings}
+    for role, kind in zip(ROLES, ("send_deadline", None, None), strict=True):
+        finding = findings[f"l1-{role}-invoke-fail"]
+        assert finding.description == "L1 invoke failed: test-send: provider request timed out"
+        assert finding.is_timeout and finding.provider_failure["kind"] == kind
+        assert finding.provider_failure["stderr"] is None
+    output = capsys.readouterr()
+    assert output.out == "" and "fixture socket timeout" not in output.err
+    assert [line for line in output.err.splitlines() if line.startswith("code-forge: L1 pass ")] == [
+        "code-forge: L1 pass 'qodo' failed: send deadline expired before this attempt entered network I/O",
+        "code-forge: L1 pass 'expert' failed: provider request timed out",
+        "code-forge: L1 pass 'adversarial' failed: provider request timed out",
+    ]
+
+
 @pytest.mark.parametrize(
     "name,late_at",
     [("initial", 1), ("correction", 2), ("continuation", 2), ("headroom", 4), ("excerpt_repair", 2)],
