@@ -471,8 +471,12 @@ differs. The full tables, the corpus construction, and the caveats are in
   counts comments, not diagnostics Ruff actually suppressed, and no CI job
   reads it.
 - **No performance regression suite.** No benchmark harness equivalent to
-  Rust's `perf.rust-lang.org`. code-forge can tell you a test started
-  failing; it cannot tell you a change made a hot path slower.
+  Rust's `perf.rust-lang.org`. One narrow check does exist outside the review
+  pipeline: `scripts/perf_regression.py` times `parse_diff_files` on a fixed
+  diff, repeats the run, and reports when the median grows past half the stored
+  baseline. A slower test does not count, and the script does not say why a
+  change got slower. code-forge still cannot tell you a change made a hot path
+  slower.
 - **R3 is artifact-presence, not coverage proof.** The cross-component
   check confirms an integration test file exists under the expected path;
   it does not verify that the test exercises the specific code that
