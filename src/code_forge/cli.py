@@ -189,7 +189,6 @@ def _emit_ci_output(
     *,
     assertion_outcome: AssertionOutcome | None = None,
     report_version: str = "v1",
-    host_attribution: dict | None = None,
 ) -> None:
     """Emit SARIF to stdout and summary to stderr in CI mode.
 
@@ -251,39 +250,11 @@ def _emit_ci_output(
     # Match presentation serializer domain (allow_nan=False) so the substrate
     # accepts the same document the pure helpers will extend.
     legacy_stdout = json.dumps(log_dict, ensure_ascii=False, allow_nan=False)
-    if host_attribution is not None:
-        from .host_attributed_view import host_attributed_report
-
-        attributed = host_attributed_report(
-            final_state,
-            captured=list(host_attribution.get("captured") or []),
-            booked=list(host_attribution.get("booked") or []),
-        )
-        excluded_indices = set(attributed["excluded_indices"])
-        kept = set(attributed["kept_fingerprints"])
-        run = log_dict["runs"][0]
-        # results[] holds only the product findings, so filter by the
-        # fingerprints the view kept rather than by finding index.
-        run["results"] = [
-            result for result in run["results"] if result.get("ruleId") in kept
-        ]
-        # Keep the rest of the legacy summary. Only the findings count line
-        # comes from the view, so advisory and assertion context stay.
-        head, sep, tail = legacy_summary.partition("\n")
-        if head.startswith("code-forge: ") and " findings=" in head:
-            legacy_summary = attributed["summary"] + (sep + tail if sep else "")
-        legacy_stdout = json.dumps(log_dict, ensure_ascii=False, allow_nan=False)
-        excluded_finding_ids = {
-            id(final_state.findings[index]) for index in excluded_indices
-        }
-    else:
-        excluded_finding_ids = set()
+    # The default v1 and v2 reports stay on the unfiltered state. The
+    # host-attributed counts are a separate view, produced only when the
+    # caller asks for them, and they never change this output.
     substrate = prepare_legacy_report(log_dict, stdout=legacy_stdout, stderr=legacy_summary)
-    projection = (
-        classify_report_records(final_state, excluded=excluded_finding_ids)
-        if substrate.sarif_document is not None
-        else None
-    )
+    projection = classify_report_records(final_state) if substrate.sarif_document is not None else None
     prepared = prepare_report_views(substrate, projection)
     if report_version == "v1":
         print(prepared.stdout, file=sys.stdout)
@@ -5384,7 +5355,6 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
                     backend_model=(backend.model if backend.type == "api" else None),
                     manifest=_manifest_a,
                     assertion_outcome=assertion_outcome,
-                    host_attribution=getattr(l1_provider, "last_host_attribution", None),
                     **({"report_version": "v2"} if report_version == "v2" else {}),
                 )
             elif mode == Mode.LOCAL:

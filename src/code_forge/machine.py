@@ -1166,6 +1166,9 @@ class StateMachine:
                 self._record_receipt_gate_failure(err)
             self._state.verdict = Verdict.FAIL
             self._state.converged = False
+            # CI returns here, before the LOCAL round close, so the captures
+            # and receipts booked this round would otherwise be dropped.
+            self._record_host_attribution()
             self._persist_state()
             self._write_ci_ledger_rows()
             return Verdict.FAIL
@@ -1183,6 +1186,9 @@ class StateMachine:
                     self._record_receipt_gate_failure(err)
             self._state.verdict = Verdict.FAIL
             self._state.converged = False
+            # CI returns here, before the LOCAL round close, so the captures
+            # and receipts booked this round would otherwise be dropped.
+            self._record_host_attribution()
             self._persist_state()
             self._write_ci_ledger_rows()
             return Verdict.FAIL
@@ -2036,9 +2042,7 @@ class StateMachine:
             captures.append(item)
         booked = list(prior.get("booked") or [])
         booked_seen = {
-            (item.get("fingerprint"), item.get("description"))
-            for item in booked
-            if type(item) is dict
+            (item.get("fingerprint"), item.get("description")) for item in booked if type(item) is dict
         }
         for item in self._receipts_booked_this_round:
             key = (item.get("fingerprint"), item.get("description"))
@@ -2627,6 +2631,10 @@ class StateMachine:
                         self._record_receipt_gate_failure(err)
                 self._state.verdict = Verdict.FAIL
                 self._state.converged = False
+                # The receipt gate returns before the normal round close, so the
+                # round's captures and booked receipts would otherwise be lost.
+                # Record them here too; the report reads them in memory only.
+                self._record_host_attribution()
                 self._persist_state()
                 return Verdict.FAIL
 
@@ -4447,17 +4455,28 @@ class StateMachine:
         if any(f.fingerprint == fp for f in self._state.findings):
             return
         text = str(error)
+        # The verifier reports "pass did not complete: c{cycle}p{number}",
+        # which carries no finding id. Bind the receipt to the capture of
+        # that exact pass, and only for the two kinds this change counts.
+        from .state import _PASS_NAMES
+
+        named = []
+        marker = "pass did not complete: c%dp" % (self._state.round + 1)
         captures = getattr(self.l1_provider, "host_captures", []) or []
-        named = [
-            capture
-            for capture in captures
-            if type(capture) is dict
-            and type(capture.get("id")) is str
-            and capture["id"].startswith("l1-")
-            and capture["id"].endswith("-invoke-fail")
-            and capture["id"] in text
-        ]
-        if len(named) == 1 and "coverage" not in text and ";" not in text:
+        if marker in text and ";" not in text:
+            number = text.split(marker, 1)[1].split(" ", 1)[0]
+            if number.isdigit():
+                index = int(number) - 1
+                if 0 <= index < len(_PASS_NAMES):
+                    wanted = "invoke-fail-%s" % _PASS_NAMES[index]
+                    named = [
+                        capture
+                        for capture in captures
+                        if type(capture) is dict
+                        and capture.get("fingerprint") == wanted
+                        and capture.get("kind") in ("no_json", "")
+                    ]
+        if len(named) == 1:
             self._receipts_booked_this_round.append({"fingerprint": fp, "description": text})
         self._state.findings.append(
             StateFinding(

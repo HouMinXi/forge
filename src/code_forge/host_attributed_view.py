@@ -138,16 +138,18 @@ def host_attributed_report(
     excluded = _captured_indices(findings, captured)
     if attributable:
         excluded |= _booked_indices(findings, booked)
-    product_path = {
-        id(finding) for finding in reporting_product_findings(findings)
-    }
+    product_path = {id(finding) for finding in reporting_product_findings(findings)}
     product = [
         finding
         for index, finding in enumerate(findings)
         if index not in excluded and id(finding) in product_path
     ]
-    interrupts = [findings[index].fingerprint for index in sorted(excluded) if _interrupt_shape(findings[index])]
-    blocks = [findings[index].fingerprint for index in sorted(excluded) if _receipt_shape(findings[index])]
+    interrupts = [
+        findings[index].fingerprint for index in sorted(excluded) if _interrupt_shape(findings[index])
+    ]
+    blocks = [
+        findings[index].fingerprint for index in sorted(excluded) if _receipt_shape(findings[index])
+    ]
     # The verdict is the one the run already reached. This view never
     # reclassifies it; the caller passes the run's verdict in.
     verdict = state.verdict.value if isinstance(state.verdict, Verdict) else str(state.verdict)
@@ -161,9 +163,7 @@ def host_attributed_report(
         "interrupts": interrupts,
         "receipt_blocks": blocks,
         "summary": summary,
-        "results": [
-            {"fingerprint": finding.fingerprint, "file": finding.file} for finding in product
-        ],
+        "results": [{"fingerprint": finding.fingerprint, "file": finding.file} for finding in product],
         "excluded_indices": sorted(excluded),
         "kept_fingerprints": [finding.fingerprint for finding in product],
     }

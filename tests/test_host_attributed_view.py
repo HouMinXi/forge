@@ -263,3 +263,103 @@ def test_summary_and_results_come_from_the_same_view():
     )
     assert "findings=%d " % report["product_count"] in report["summary"]
     assert len(report["results"]) == report["product_count"]
+
+
+def test_default_ci_output_is_byte_identical_with_and_without_attribution(tmp_path, monkeypatch):
+    """The real CI emitter must not change its stdout or stderr when the
+    round's attribution is present. The new counts live only in the view."""
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    from code_forge.cli import _emit_ci_output
+    from code_forge.state import save_state
+
+    interrupt = _interrupt("adversarial", kind="no_json")
+    receipt = _receipt("pass did not complete: c1p3 status=incomplete")
+    state = _state([interrupt, receipt])
+    state_path = tmp_path / "state.json"
+    save_state(state, state_path)
+
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        _emit_ci_output(state_path, {})
+    # The emitter takes no attribution. Running it twice on the same state
+    # must produce the same bytes, and the findings line keeps both records.
+    assert (out.getvalue(), err.getvalue()) == _once_more(state_path)
+    assert "findings=2 " in err.getvalue()
+
+
+def _once_more(state_path):
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    from code_forge.cli import _emit_ci_output
+
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        _emit_ci_output(state_path, {})
+    return out.getvalue(), err.getvalue()
+
+
+def _ci_round(fault):
+    """Run one constructed CI round and return the host-attributed view."""
+    import os
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    import pytest
+
+    from code_forge.host_attributed_view import host_attributed_report
+    from code_forge.state import Mode
+    from tests import _review_harness as harness
+
+    home = os.getcwd()
+    workspace = Path(tempfile.mkdtemp())
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        (workspace / ".code-forge").mkdir()
+        for name, content in harness.CONTENT.items():
+            (workspace / name).write_text(content)
+        (workspace / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 3\n")
+        monkeypatch.chdir(workspace)
+        monkeypatch.setattr("code_forge.machine.resolve_ledger_root", lambda cwd: workspace)
+        monkeypatch.setattr("code_forge.ledger.resolve_ledger_root", lambda cwd: workspace)
+        machine, _calls = harness._new_machine(
+            workspace, monkeypatch, fault=fault, rounds=1, mode=Mode.CI
+        )
+        verdict = machine.run()
+        attribution = machine.host_attribution
+        report = host_attributed_report(
+            machine._state, captured=attribution["captured"], booked=attribution["booked"]
+        )
+        return verdict.value, report
+    finally:
+        os.chdir(home)
+        monkeypatch.undo()
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_ci_pure_no_json_is_zero_one_one():
+    verdict, report = _ci_round("no-json")
+    assert verdict == "FAIL"
+    assert report["product_count"] == 0
+    assert len(report["interrupts"]) == 1
+    assert len(report["receipt_blocks"]) == 1
+
+
+def test_ci_plain_timeout_is_zero_one_one():
+    verdict, report = _ci_round("timeout-empty-kind")
+    assert verdict == "FAIL"
+    assert report["product_count"] == 0
+    assert len(report["interrupts"]) == 1
+    assert len(report["receipt_blocks"]) == 1
+
+
+def test_ci_other_failure_keeps_its_product_count():
+    # A connect timeout is an interruption the host caught, but it is not one
+    # of the two kinds this change reclassifies, so it stays a product record.
+    verdict, report = _ci_round("connect-timeout")
+    assert verdict == "FAIL"
+    assert report["product_count"] == 1
+    assert len(report["receipt_blocks"]) == 0

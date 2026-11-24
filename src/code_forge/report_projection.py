@@ -483,16 +483,10 @@ def _evaluate_acquisition(findings: list) -> tuple:
         return None, "acquisition-derivation-fault", None
 
 
-def classify_report_records(state: State, *, excluded: "set[int] | None" = None) -> ReportProjection:
-    """Classify every finding. Recoverable faults degrade into quarantine / A4.
-
-    ``excluded`` names findings the caller has already attributed to this
-    round's host captures. They stay in ``state.findings`` but leave the
-    product path, so the classification counts match the filtered results.
-    """
+def classify_report_records(state: State) -> ReportProjection:
+    """Classify every finding. Recoverable faults degrade into quarantine / A4."""
     findings = state.findings
     n = len(findings)
-    excluded_ids = excluded or set()
     record_errors: list[ClassificationError] = []
     fallbacks_by_index: dict[int, FallbackRecord] = {}
     classified: dict[int, ReportRecord] = {}
@@ -502,9 +496,7 @@ def classify_report_records(state: State, *, excluded: "set[int] | None" = None)
 
     # P1: product-path membership by object identity
     try:
-        product_path_list = [
-            finding for finding in reporting_product_findings(findings) if id(finding) not in excluded_ids
-        ]
+        product_path_list = reporting_product_findings(findings)
         path_count = len(product_path_list)
         id_map = {id(f): i for i, f in enumerate(findings)}
         for pf in product_path_list:
@@ -516,13 +508,9 @@ def classify_report_records(state: State, *, excluded: "set[int] | None" = None)
     except Exception as exc:  # noqa: BLE001 -- Quarantine boundary must tolerate arbitrary malformed finding access.
         projection_error = ClassificationError(None, "projection", type(exc).__name__)
         for i, f in enumerate(findings):
-            if id(f) in excluded_ids:
-                continue
             fallbacks_by_index[i] = _fallback_record(i, f)
         # acquisition still runs
-        acq_complete, acq_reason, acq_outcomes = _evaluate_acquisition(
-            [finding for finding in findings if id(finding) not in excluded_ids]
-        )
+        acq_complete, acq_reason, acq_outcomes = _evaluate_acquisition(findings)
         return ReportProjection(
             product=(),
             unresolved_product_candidates=(),
@@ -540,15 +528,8 @@ def classify_report_records(state: State, *, excluded: "set[int] | None" = None)
             persisted_pass_outcomes=acq_outcomes,
         )
 
-    # Per-record classification. Excluded findings stay in state.findings
-    # but leave every counted bucket, so the projection matches the filtered
-    # results.
-    excluded_indexes = {
-        index for index, finding in enumerate(findings) if id(finding) in excluded_ids
-    }
+    # Per-record classification
     for i, f in enumerate(findings):
-        if i in excluded_indexes:
-            continue
         product_path = i in product_path_ids
         try:
             shape, selector = _select_shape(f, product_path)
@@ -598,8 +579,6 @@ def classify_report_records(state: State, *, excluded: "set[int] | None" = None)
         projection_error = ClassificationError(None, "projection", type(exc).__name__)
         # Every index ends in quarantine exactly once; keep original FallbackRecord objects
         for i, f in enumerate(findings):
-            if id(f) in excluded_ids:
-                continue
             if i not in fallbacks_by_index:
                 fallbacks_by_index[i] = _fallback_record(i, f)
         quarantine = tuple(fallbacks_by_index[i] for i in range(n))
@@ -621,9 +600,7 @@ def classify_report_records(state: State, *, excluded: "set[int] | None" = None)
     errors = tuple(record_errors) + ((projection_error,) if projection_error is not None else ())
 
     # Acquisition last
-    acq_complete, acq_reason, acq_outcomes = _evaluate_acquisition(
-        [finding for finding in findings if id(finding) not in excluded_ids]
-    )
+    acq_complete, acq_reason, acq_outcomes = _evaluate_acquisition(findings)
 
     return ReportProjection(
         product=product,
