@@ -442,8 +442,13 @@ def test_ci_mixed_failure_keeps_the_receipt(tmp_path):
             f.id for f in machine._state.findings if f.fingerprint in report["kept_fingerprints"]
         )
         assert verdict.value == "FAIL"
+        # The real defect stays and counts as the one product finding. The
+        # receipt stays beside it; the interruption is the record that leaves.
+        assert report["product_count"] == 2
         assert "RECEIPT_INVALID" in kept
+        assert any(item.startswith("l1-qodo-") for item in kept)
         assert report["receipt_blocks"] == []
+        assert len(report["interrupts"]) == 1
     finally:
         os.chdir(home)
         monkeypatch.undo()

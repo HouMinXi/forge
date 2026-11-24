@@ -2610,6 +2610,7 @@ class StateMachine:
                     # same; the booking reads the structured result, which a
                     # plain string would drop.
                     error = _ReceiptGateFailure(f"receipt acceptance: {captured.reason}", captured)
+                    error.receipt_subtype = None
                     gate_errors.append(error)
                     if self._capacity_incomplete(captured):
                         capacity_gate_error = error
@@ -4466,29 +4467,18 @@ class StateMachine:
         verification = getattr(error, "verification", None)
         incomplete = getattr(verification, "incomplete_passes", ())
         statuses = getattr(verification, "completion_statuses", ())
-        # An unfinished pass beside an independent unresolved finding is a
-        # mixed failure. The verifier reports both in one result, and the
-        # receipt stays in the product count.
-        unresolved = getattr(verification, "unresolved_findings", ())
-        # The unfinished pass's own interruption is also listed here. Only a
-        # finding from another pass is an independent problem.
-        independent = [
-            row
-            for row in unresolved
-            if type(row) is tuple and len(row) >= 2 and row[1] not in set(incomplete or ())
-        ]
         captures = getattr(self.l1_provider, "host_captures", []) or []
-        # A product finding this round did not capture is an independent
-        # defect. The receipt then stays, even though the verifier folds both
-        # into one result.
+        # The verifier's result does not name a product defect that another
+        # pass reported: its unresolved list holds only the interruption.
+        # A product finding this round did not capture is that defect, and the
+        # receipt stays beside it.
         from .state import reporting_product_findings
 
         captured_ids = {capture.get("fingerprint") for capture in captures if type(capture) is dict}
-        other_product = [
-            finding
+        other_product = any(
+            finding.fingerprint not in captured_ids
             for finding in reporting_product_findings(self._state.findings)
-            if finding.fingerprint not in captured_ids
-        ]
+        )
         unfinished = [
             row
             for row in statuses
@@ -4499,7 +4489,6 @@ class StateMachine:
             and type(incomplete) is tuple
             and len(incomplete) == 1
             and len(unfinished) == 1
-            and not independent
             and not other_product
         ):
             cycle, number, status = unfinished[0]
@@ -4542,7 +4531,12 @@ class StateMachine:
                 description=str(error),
                 diagnostic_kind=diagnostic_kind,
                 receipt_subtype=(
-                    error.verification.receipt_subtype
+                    # An error that sets its own subtype wins. LOCAL wraps the
+                    # result only to carry it and pins this to None, matching
+                    # the string it used to persist.
+                    error.receipt_subtype
+                    if type(error) is _ReceiptGateFailure and hasattr(error, "receipt_subtype")
+                    else error.verification.receipt_subtype
                     if type(error) is _ReceiptGateFailure
                     else error.receipt_subtype
                     if type(error) is _ReceiptDiagnosticError
