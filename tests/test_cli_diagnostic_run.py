@@ -345,7 +345,7 @@ assert callable(diagnostic_probe.install)
 assert callable(trace_parser.parse_trace)
 """
     result = subprocess.run(
-        [sys.executable, "-I", "-c", code], cwd=tmp_path, capture_output=True, text=True
+        [sys.executable, "-I", "-B", "-c", code], cwd=tmp_path, capture_output=True, text=True
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""

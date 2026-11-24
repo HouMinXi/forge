@@ -586,7 +586,7 @@ def test_install_does_not_preimport_forge_and_atexit_emits_footer(tmp_path):
         f"p.install({str(output)!r})\n"
         "assert not any(k == 'code_forge' or k.startswith('code_forge.') for k in sys.modules)\n"
     )
-    result = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
+    result = subprocess.run([sys.executable, "-I", "-B", "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     rows = [json.loads(line) for line in output.read_text().splitlines()]
     assert rows[0]["event"] == "diagnostic_start"
@@ -602,7 +602,7 @@ def test_abrupt_exit_has_no_success_footer(tmp_path):
         f"p.install({str(output)!r})\n"
         "os._exit(0)\n"
     )
-    assert subprocess.run([sys.executable, "-I", "-c", code]).returncode == 0
+    assert subprocess.run([sys.executable, "-I", "-B", "-c", code]).returncode == 0
     rows = [json.loads(line) for line in output.read_text().splitlines()]
     assert rows and not any(row["event"] == "diagnostic_footer" for row in rows)
 
