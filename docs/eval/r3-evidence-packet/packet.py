@@ -129,6 +129,10 @@ def produce(args: argparse.Namespace) -> int:
     root = args.root.resolve()
     target = _resolve(root, args.file)
     source = _resolve(root, args.source)
+    if source != target:
+        # The digest must describe the file the tracer watches. Accepting two
+        # paths would let a packet hash one file and report hits for another.
+        raise PacketError("source and target must resolve to the same file")
     test = _resolve(root, args.node.split("::", 1)[0])
     observer = _load_observer()
     hits = observer.LineHits(target, args.line)

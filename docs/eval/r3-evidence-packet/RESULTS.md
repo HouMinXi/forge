@@ -58,14 +58,15 @@ python docs/eval/r3-evidence-packet/verify.py /tmp/stage1.json \
   --expect-source-sha256 <source> --expect-test-sha256 <test> \
   --expect-observer-sha256 <observer> \
   --expect-target-file src/code_forge/llm_invoke.py --expect-line 2506 \
-  --expect-node <node> --expect-exit 0 --expect-hits 2 \
+  --expect-node <node> --expect-call passed --expect-exit 0 --expect-hits 2 \
   --expect-packet-sha256 <digest>
 ```
 
 The controlled change moves the synthetic excerpt payload from line 78 to 79
 inside `_assessment`, leaving everything else alone. For that stage the
-expected test digest is the digest of the changed file, and the expected exit
-is 1: a failing stage keeps its failure and produces no passing record.
+expected test digest is the digest of the changed file, the expected call
+outcome is `failed`, and the expected exit is 1: a failing stage keeps its
+failure and produces no passing record.
 
 ## Accepted stages
 
@@ -88,6 +89,9 @@ original assertion failed at `tests/test_excerpt_json_encoding.py:46`.
 | Hits edited after the run | `packet digest is e0870992e4b0, caller recorded f8916308d23e` |
 | Green run that never reached the target | `target hits are 0, expected 1` |
 | Collected but never executed (`--collect-only`) | `node has no call phase: collected but not executed` |
+| `--source` pointing at a second file | `packet refused: source and target must resolve to the same file` |
+| Target call passed while another node failed | `node call outcome is ['passed'], expected 'failed'` |
+| Digest or hit count omitted from the check | exits without printing `verified one bound pytest execution` |
 
 ## What this does not establish
 

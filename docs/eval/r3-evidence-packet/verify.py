@@ -79,6 +79,10 @@ def check_identity(body: dict, args: argparse.Namespace) -> None:
     target = identity.get("target", {})
     if target.get("path") != args.expect_target_file or target.get("line") != args.expect_line:
         raise Refused("target does not match")
+    if identity.get("source", {}).get("path") != target.get("path"):
+        # The digest has to describe the traced file, or the packet can hash one
+        # file and report hits for another.
+        raise Refused("source digest does not describe the traced target")
 
 
 def check_execution(body: dict, args: argparse.Namespace) -> None:
@@ -88,12 +92,16 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
     phases = body.get("phases", {}).get(node, [])
     if not any(when == "call" for when, _ in phases):
         raise Refused("node has no call phase: collected but not executed")
+    call_outcomes = [outcome for when, outcome in phases if when == "call"]
+    if args.expect_call not in call_outcomes:
+        # A failing run says nothing about this node: another node may have
+        # failed, or this one may have failed in teardown after a passing call.
+        raise Refused(f"node call outcome is {call_outcomes!r}, expected {args.expect_call!r}")
     if body.get("pytest_exit") != args.expect_exit:
         raise Refused(f"pytest exit is {body.get('pytest_exit')!r}, expected {args.expect_exit}")
-    if args.expect_hits is not None:
-        hits = body.get("hits", {}).get(node, 0)
-        if hits != args.expect_hits:
-            raise Refused(f"target hits are {hits!r}, expected {args.expect_hits}")
+    hits = body.get("hits", {}).get(node, 0)
+    if hits != args.expect_hits:
+        raise Refused(f"target hits are {hits!r}, expected {args.expect_hits}")
 
 
 def main() -> int:
@@ -108,13 +116,22 @@ def main() -> int:
     parser.add_argument("--expect-line", type=int, required=True)
     parser.add_argument("--expect-node", required=True)
     parser.add_argument("--expect-exit", type=int, default=0)
-    parser.add_argument("--expect-hits", type=int, default=None)
-    parser.add_argument("--expect-packet-sha256", default=None)
+    parser.add_argument(
+        "--expect-call",
+        required=True,
+        choices=("passed", "failed"),
+        help="outcome of this node's call phase; a failing run alone is not enough",
+    )
+    parser.add_argument("--expect-hits", type=int, required=True)
+    parser.add_argument(
+        "--expect-packet-sha256",
+        required=True,
+        help="digest printed by the producer at execution time",
+    )
     args = parser.parse_args()
     try:
         body = load(args.packet)
-        if args.expect_packet_sha256:
-            check_digest(body, args.expect_packet_sha256)
+        check_digest(body, args.expect_packet_sha256)
         check_identity(body, args)
         check_execution(body, args)
     except Refused as exc:

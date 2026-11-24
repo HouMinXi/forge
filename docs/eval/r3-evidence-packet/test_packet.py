@@ -69,7 +69,13 @@ def project(tmp_path):
     return root
 
 
-def _run(root: Path, node: str, *extra: str, run_id: str | None = None):
+def _run(
+    root: Path,
+    node: str,
+    *extra: str,
+    run_id: str | None = None,
+    source: str = "mod.py",
+):
     output = root.parent / f"packet-{secrets.token_hex(4)}.json"
     command = [
         sys.executable,
@@ -77,7 +83,7 @@ def _run(root: Path, node: str, *extra: str, run_id: str | None = None):
         "--root",
         str(root),
         "--source",
-        "mod.py",
+        source,
         "--node",
         node,
         "--file",
@@ -107,11 +113,20 @@ def _announced(result) -> dict:
     return dict(re.findall(r"(\w+)=([0-9a-f]+)", line[0]))
 
 
-def _expectations(root: Path, node: str, run_id: str, digest: str | None = None) -> list[str]:
+def _expectations(
+    root: Path,
+    node: str,
+    run_id: str,
+    digest: str,
+    *,
+    call: str = "passed",
+    hits: int = 1,
+    exit_code: int = 0,
+) -> list[str]:
     commit = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
     ).stdout.strip()
-    args = [
+    return [
         "--expect-run-id",
         run_id,
         "--expect-commit",
@@ -128,10 +143,15 @@ def _expectations(root: Path, node: str, run_id: str, digest: str | None = None)
         str(_line_of(MODULE, "return VALUE")),
         "--expect-node",
         node,
+        "--expect-call",
+        call,
+        "--expect-exit",
+        str(exit_code),
+        "--expect-hits",
+        str(hits),
+        "--expect-packet-sha256",
+        digest,
     ]
-    if digest:
-        args += ["--expect-packet-sha256", digest]
-    return args
 
 
 def _verify(packet: Path, args: list[str]):
@@ -160,14 +180,7 @@ def test_the_announced_digest_verifies_the_matching_packet(project):
     result, packet = _run(project, node)
     assert result.returncode == 0, result.stderr
     announced = _announced(result)
-    check = _verify(
-        packet,
-        [
-            *_expectations(project, node, announced["run_id"], announced["sha256"]),
-            "--expect-hits",
-            "1",
-        ],
-    )
+    check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
     assert check.returncode == 0, check.stderr
     assert "verified one bound pytest execution" in check.stdout
 
@@ -178,7 +191,8 @@ def test_a_run_identity_from_another_execution_is_refused(project):
     second, _ = _run(project, node)
     assert first.returncode == 0 and second.returncode == 0
     other_run = _announced(second)["run_id"]
-    check = _verify(packet, _expectations(project, node, other_run))
+    first_digest = _announced(first)["sha256"]
+    check = _verify(packet, _expectations(project, node, other_run, first_digest))
     assert check.returncode == 1
     assert "run identity" in check.stderr
 
@@ -202,7 +216,7 @@ def test_a_green_run_that_missed_the_target_is_refused(project):
     announced = _announced(result)
     check = _verify(
         packet,
-        [*_expectations(project, node, announced["run_id"]), "--expect-hits", "1"],
+        _expectations(project, node, announced["run_id"], announced["sha256"]),
     )
     assert check.returncode == 1
     assert "target hits are 0" in check.stderr
@@ -213,7 +227,7 @@ def test_a_collected_node_that_never_ran_is_refused(project):
     result, packet = _run(project, node, "--collect-only")
     assert result.returncode == 0, result.stderr
     announced = _announced(result)
-    check = _verify(packet, _expectations(project, node, announced["run_id"]))
+    check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
     assert check.returncode == 1
     assert "no call phase" in check.stderr
 
@@ -222,8 +236,46 @@ def test_another_commit_is_refused(project):
     node = "test_mod.py::test_hits_the_line"
     result, packet = _run(project, node)
     announced = _announced(result)
-    args = _expectations(project, node, announced["run_id"])
+    args = _expectations(project, node, announced["run_id"], announced["sha256"])
     args[args.index("--expect-commit") + 1] = "0" * 40
     check = _verify(packet, args)
     assert check.returncode == 1
     assert "commit" in check.stderr
+
+
+def test_a_source_that_is_not_the_traced_file_is_refused(project):
+    (project / "other.py").write_text(MODULE, encoding="utf-8")
+    result, packet = _run(project, "test_mod.py::test_hits_the_line", source="other.py")
+    assert result.returncode == 2
+    assert "resolve to the same file" in result.stderr
+    assert not packet.exists()
+
+
+def test_a_passing_call_beside_a_failing_node_is_refused(project):
+    (project / "test_other.py").write_text("def test_fails():\n    assert False\n", encoding="utf-8")
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node, "test_other.py")
+    assert result.returncode == 1, result.stderr
+    announced = _announced(result)
+    check = _verify(
+        packet,
+        _expectations(
+            project, node, announced["run_id"], announced["sha256"], call="failed", exit_code=1
+        ),
+    )
+    assert check.returncode == 1
+    assert "call outcome" in check.stderr
+
+
+def test_a_missing_digest_or_hit_count_is_refused(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    announced = _announced(result)
+    full = _expectations(project, node, announced["run_id"], announced["sha256"])
+    for flag in ("--expect-packet-sha256", "--expect-hits"):
+        trimmed = list(full)
+        start = trimmed.index(flag)
+        del trimmed[start : start + 2]
+        check = _verify(packet, trimmed)
+        assert check.returncode != 0, flag
+        assert "verified one bound pytest execution" not in check.stdout, flag

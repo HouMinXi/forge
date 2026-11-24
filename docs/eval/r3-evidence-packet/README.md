@@ -42,7 +42,9 @@ Pytest flags go after `--`. The last stdout line is
 `forge-r3-packet run_id=<id> sha256=<digest>`; keep both.
 
 The producer refuses a target outside the root, a missing file, a root without
-a resolvable commit, and an output path inside the checkout.
+a resolvable commit, an output path inside the checkout, and a `--source` that
+does not resolve to the same file as `--file`. The digest has to describe the
+file the tracer watches, so one path serves both.
 
 ## Verifying
 
@@ -52,15 +54,22 @@ python docs/eval/r3-evidence-packet/verify.py /tmp/stage1.json \
   --expect-source-sha256 <source> --expect-test-sha256 <test> \
   --expect-observer-sha256 <observer> \
   --expect-target-file src/code_forge/llm_invoke.py --expect-line 2506 \
-  --expect-node <node> --expect-exit 0 --expect-hits 2 \
+  --expect-node <node> --expect-call passed --expect-exit 0 --expect-hits 2 \
   --expect-packet-sha256 <digest>
 ```
 
-A failing stage is still evidence: pass `--expect-exit 1` and the hits you
-expect, and the packet verifies while keeping its failure. The verifier refuses
-a different run identity, a different commit or digest, a node that was never
-collected, a node collected without a call phase, a hit count that disagrees
-with the target claim, and a packet whose recorded digest no longer matches its
+`--expect-call`, `--expect-hits` and `--expect-packet-sha256` are required; the
+verifier exits without one of them and prints no success line. A failing stage
+is still evidence: pass `--expect-exit 1`, `--expect-call failed` and the hits
+you expect, and the packet verifies while keeping its failure -- a failing run
+alone is not evidence about this node, because another node may have failed or
+this one may have failed in teardown.
+
+The verifier refuses a different run identity, a different commit or digest, a
+node that was never collected, a node collected without a call phase, a call
+outcome that disagrees with the claim, a hit count that disagrees with the
+target claim, a source digest that does not describe the traced target, and a
+packet whose recorded digest no longer matches its
 body.
 
 ## Tests
