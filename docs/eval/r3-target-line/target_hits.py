@@ -18,6 +18,8 @@ import sys
 import threading
 from pathlib import Path
 
+import pytest
+
 SCHEMA = "forge-r3-target-hits-v1"
 MAX_RECORD_BYTES = 64 * 1024
 
@@ -53,38 +55,65 @@ def _outside_output(root: Path, output: Path) -> Path:
 
 
 class LineHits:
-    """Count executions of one file line, per test, across threads."""
+    """Count executions of one file line, per test, across threads.
+
+    A thread keeps the trace function it started with, so that function
+    carries the node that started it. The active node decides whether an
+    event is still wanted: once a call ends, events arriving from threads it
+    started are dropped instead of landing on whichever node runs next.
+    """
 
     def __init__(self, target: Path, line: int) -> None:
         self.target = str(target)
         self.line = line
         self.lock = threading.Lock()
         self.counts: dict[str, int] = {}
-        self.current = ""
+        self.active: str | None = None
 
-    def _count(self) -> None:
+    def _count(self, nodeid: str) -> None:
         with self.lock:
-            self.counts[self.current] = self.counts.get(self.current, 0) + 1
+            if self.active != nodeid:
+                return
+            self.counts[nodeid] = self.counts.get(nodeid, 0) + 1
 
-    def _line_scope(self, frame, event, arg):
-        if event == "line" and frame.f_lineno == self.line:
-            self._count()
-        return self._line_scope
+    def _line_scope(self, nodeid: str):
+        def trace(frame, event, arg):
+            if event == "line" and frame.f_lineno == self.line:
+                self._count(nodeid)
+            return trace
 
-    def _file_scope(self, frame, event, arg):
-        if frame.f_code.co_filename == self.target:
-            return self._line_scope
-        return None
+        return trace
+
+    def _file_scope(self, nodeid: str):
+        line_scope = self._line_scope(nodeid)
+
+        def trace(frame, event, arg):
+            if frame.f_code.co_filename == self.target:
+                return line_scope
+            return None
+
+        return trace
 
     def begin(self, nodeid: str) -> None:
-        self.current = nodeid
-        self.counts.setdefault(nodeid, 0)
-        threading.settrace(self._file_scope)
-        sys.settrace(self._file_scope)
+        with self.lock:
+            self.active = nodeid
+            self.counts.setdefault(nodeid, 0)
+        scope = self._file_scope(nodeid)
+        threading.settrace(scope)
+        sys.settrace(scope)
 
-    def end(self) -> None:
+    def end(self, nodeid: str) -> None:
         sys.settrace(None)
         threading.settrace(None)
+        with self.lock:
+            if self.active == nodeid:
+                self.active = None
+
+    def close(self) -> None:
+        sys.settrace(None)
+        threading.settrace(None)
+        with self.lock:
+            self.active = None
 
 
 class Collector:
@@ -98,14 +127,19 @@ class Collector:
     def pytest_collection_finish(self, session) -> None:
         self.collected = [item.nodeid for item in session.items]
 
-    def pytest_runtest_call(self, item) -> None:
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_call(self, item):
         self.hits.begin(item.nodeid)
+        try:
+            return (yield)
+        finally:
+            self.hits.end(item.nodeid)
 
     def pytest_runtest_teardown(self, item) -> None:
-        self.hits.end()
+        self.hits.end(item.nodeid)
 
     def pytest_sessionfinish(self, session, exitstatus) -> None:
-        self.hits.end()
+        self.hits.close()
         self.exit_status = int(exitstatus)
 
 
@@ -124,8 +158,6 @@ def _record(root: Path, target: Path, line: int, collector: Collector) -> dict:
 
 
 def run(root: Path, target: Path, line: int, output: Path, args: list[str]) -> int:
-    import pytest
-
     if args and args[0] == "--":
         args = args[1:]
     hits = LineHits(target, line)
@@ -136,7 +168,7 @@ def run(root: Path, target: Path, line: int, output: Path, args: list[str]) -> i
         status = int(pytest.main([*args, "-p", "no:cacheprovider"], plugins=[collector]))
     finally:
         os.chdir(cwd)
-        hits.end()
+        hits.close()
     data = json.dumps(_record(root, target, line, collector), indent=2, sort_keys=True) + "\n"
     if len(data.encode("utf-8")) > MAX_RECORD_BYTES:
         raise TargetError("record exceeds size limit")

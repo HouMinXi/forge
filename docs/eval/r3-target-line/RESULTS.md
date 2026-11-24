@@ -12,7 +12,7 @@ one sample, not a gate result and not an attestation.
 | Target line | `src/code_forge/llm_invoke.py:2506`, the `json.loads` inside `loads_reply_json` |
 | Interpreter | CPython 3.14.10 |
 | pytest | 9.2.0 |
-| Observer digest | `target_hits.py` `b9899ac178665c87ec63bf0bf70fa65aceb447ac541a276385744e4fee5fd142` |
+| Observer digest | `target_hits.py` `5c03666ffa050be2d96d2755cb1d07e819aab2f7f58fce58679b6c8ef75cdccc`, taken from the revision that adds this file |
 | Test digest | `tests/test_excerpt_json_encoding.py` `f2a4dbe2a152f8068cb106b9a7a4a169c26ed5a43c8748bcdc180bfedeedaae9` |
 
 Two further nodes from the same file serve as counter-cases:
@@ -33,11 +33,20 @@ which is used for the red-without-hit case.
 
 ## Rerun
 
-Baseline, from the repository root:
+The observer is not present at `c59e51d5`; that commit pins the sample only.
+Take the observer from the revision that adds it, keep it outside the sample
+checkout, and point `--root` at a checkout of the sample commit:
 
 ```sh
-PYTHONPATH=src python docs/eval/r3-target-line/target_hits.py --root . \
-  --file src/code_forge/llm_invoke.py --line 2506 --output /tmp/hits-clean.json \
+# observer, from the revision that introduced this file
+git -C <forge clone> show <observer revision>:docs/eval/r3-target-line/target_hits.py \
+  > /tmp/target_hits.py
+
+# baseline, against a checkout of c59e51d5
+PYTHONPATH=<sample checkout>/src python /tmp/target_hits.py \
+  --root <sample checkout> \
+  --file src/code_forge/llm_invoke.py --line 2506 \
+  --output /tmp/hits-clean.json \
   tests/test_excerpt_json_encoding.py::test_correct_json_encoding_preserves_literal_source
 ```
 

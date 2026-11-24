@@ -43,6 +43,40 @@ def test_hits_from_a_thread():
 """
 
 
+ORDERED = """\
+import threading
+
+import pytest
+
+import mod
+
+release = threading.Event()
+done = threading.Event()
+
+
+def _work():
+    release.wait(5)
+    mod.hit()
+    done.set()
+
+
+def test_a_starts_a_waiting_thread():
+    worker = threading.Thread(target=_work)
+    worker.start()
+
+
+@pytest.fixture()
+def released():
+    release.set()
+    assert done.wait(5)
+    yield
+
+
+def test_b_releases_the_thread(released):
+    assert mod.other() == 0
+"""
+
+
 def _target_line(source: str, needle: str) -> int:
     for number, text in enumerate(source.splitlines(), start=1):
         if text.strip() == needle:
@@ -133,6 +167,24 @@ def test_a_leading_separator_before_the_selection_is_accepted(project):
     assert result.returncode == 0, result.stderr
     data = _record(project.parent / "record.json")
     assert data["hits"]["test_mod.py::test_hits_the_line"] == 1
+
+
+def test_a_late_thread_hit_is_not_credited_to_another_node(project):
+    (project / "test_thread_order.py").write_text(ORDERED, encoding="utf-8")
+    line = _target_line(MODULE, "return VALUE")
+    result = _run(
+        project,
+        project / "mod.py",
+        line,
+        "test_thread_order.py::test_a_starts_a_waiting_thread",
+        "test_thread_order.py::test_b_releases_the_thread",
+    )
+    assert result.returncode == 0, result.stderr
+    data = _record(project.parent / "record.json")
+    assert data["hits"] == {
+        "test_thread_order.py::test_a_starts_a_waiting_thread": 0,
+        "test_thread_order.py::test_b_releases_the_thread": 0,
+    }
 
 
 def test_a_target_outside_the_root_is_refused(project, tmp_path):
