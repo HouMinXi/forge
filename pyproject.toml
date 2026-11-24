@@ -33,10 +33,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest==9.2.0",
+    "ruamel.yaml==0.19.1",
     "pytest-asyncio>=1.0",
     "ruff==0.17.5",
     "mutmut>=3.4,<4.0",
     "jsonschema>=4.18",
+]
+# `scripts/forge-provider.py` is a repository tool, not part of the wheel, so
+# its round-trip YAML loader is an extra rather than a core requirement.
+provider = [
+    "ruamel.yaml==0.19.1",
 ]
 vertex = [
     "google-auth>=2.35.0",
