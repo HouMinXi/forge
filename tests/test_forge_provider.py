@@ -1769,6 +1769,8 @@ class TestDefaultMaxTokens:
         # and a hardcoded parser default slips past a constant-only check.
         assert seen.get("max_tokens") == fp.DEFAULT_MAX_TOKENS
         assert fp.DEFAULT_MAX_TOKENS >= 131072
+
+
 UNMARKED_PAIR = (
     "backends:\n"
     "  alpha:\n"
