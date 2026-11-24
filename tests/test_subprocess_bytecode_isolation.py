@@ -164,12 +164,13 @@ def _isolated_flags(module: str, name: str) -> bool:
 
 
 def test_isolated_launcher_checklist_is_complete():
-    """Every isolated Python launch in the diagnostic tests must be measured."""
+    """Literal isolated launches in the diagnostic tests must be measured."""
     detected = sorted(
         (path.stem, node.name)
         for path in (ROOT / "tests").glob("test_cli_diagnostic_*.py")
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _isolated_flags(path.stem, node.name)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and _isolated_flags(path.stem, node.name)
     )
     assert ISOLATED_LAUNCHERS == tuple(detected)
 

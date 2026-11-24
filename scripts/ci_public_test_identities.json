@@ -43651,6 +43651,7 @@
     "tests/test_subagent_assertion_summary.py::test_untrusted_finding_text_does_not_create_machine_evidence",
     "tests/test_subprocess_bytecode_isolation.py::test_conftest_exports_no_bytecode_to_children",
     "tests/test_subprocess_bytecode_isolation.py::test_inheriting_child_leaves_no_cache_in_checkout_copy",
+    "tests/test_subprocess_bytecode_isolation.py::test_isolated_launcher_checklist_is_complete",
     "tests/test_subprocess_bytecode_isolation.py::test_sanitized_launcher_checklist_is_complete",
     "tests/test_subprocess_bytecode_isolation.py::test_sanitized_launchers_leave_no_cache_in_checkout_copy",
     "tests/test_suggestion_contract.py::TestSuggestionSentences::test_code_selects_its_own_sentence[minimax-1008-Top up at platform.minimaxi.com]",
