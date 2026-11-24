@@ -99,6 +99,11 @@ class PacketCollector:
             # into the report, so recording a bare "passed" here would let an
             # XPASS satisfy a claim about an ordinary passing call.
             outcome = "xpassed" if outcome == "passed" else "xfailed"
+        elif outcome == "failed" and "xfail" in getattr(report, "keywords", {}):
+            # A strict xfail that passes is reported as failed with no
+            # wasxfail: the assertion held and only the marker made it fail.
+            # The keyword is what still identifies it.
+            outcome = "xpassed"
         outcomes = self.phases.setdefault(report.nodeid, [])
         outcomes.append([report.when, outcome])
 

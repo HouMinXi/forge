@@ -337,3 +337,33 @@ def test_a_test_file_changed_before_the_run_keeps_its_own_digest(project):
     announced = _announced(result)
     check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
     assert check.returncode == 0, check.stderr
+
+
+STRICT_XPASS = """\
+import pytest
+
+import mod
+
+
+@pytest.mark.xfail(strict=True, reason="expected to fail, but it passes")
+def test_marks_as_strict_xpass():
+    assert mod.hit() == 1
+"""
+
+
+def test_a_strict_xpass_is_not_a_plain_failure(project):
+    (project / "test_strict.py").write_text(STRICT_XPASS, encoding="utf-8")
+    node = "test_strict.py::test_marks_as_strict_xpass"
+    result, packet = _run(project, node)
+    assert result.returncode == 1, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    assert ["call", "xpassed"] in body["phases"][node]
+    announced = _announced(result)
+    check = _verify(
+        packet,
+        _expectations(
+            project, node, announced["run_id"], announced["sha256"], call="failed", exit_code=1
+        ),
+    )
+    assert check.returncode == 1
+    assert "call outcome is ['xpassed']" in check.stderr

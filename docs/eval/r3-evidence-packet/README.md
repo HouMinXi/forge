@@ -16,7 +16,9 @@ can be paired with any receipt that matches its text.
 - Whether the named line executed, how often, and per node.
 - Whether the node's call phase ran and what it produced. An xfail-marked
   result keeps its own outcome (`xpassed` / `xfailed`), so it never answers a
-  claim about an ordinary passing or failing call.
+  claim about an ordinary passing or failing call. That includes the strict
+  form: pytest reports a strict XPASS as `failed` without `wasxfail`, so the
+  xfail keyword on the report is what identifies it.
 
 ## What it does not answer
 
