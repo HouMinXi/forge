@@ -951,6 +951,7 @@ class StateMachine:
         # later attempt (or a second run()) never inherits these bookings.
         self._booked_receipt_write_errors: list[str] = []
         self._acquisition_markers: list[StateFinding] = []
+        self._receipts_booked_this_round: list[dict] = []
         self._falsify_protocol_findings: list[StateFinding] = []
         self._falsify_failed_findings: list[StateFinding] = []
         self._hold_confirmed_fingerprints: list[str] = []
@@ -1009,6 +1010,7 @@ class StateMachine:
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
+        self.host_attribution = None
         # fix10 (CR2F9-L1): no per-run, per-attempt, per-round or L2-phase state
         # an earlier run() on this instance left is this run's; reset it before
         # any step can fail. This includes the fix9 (CR3R3-L1) clear of
@@ -1897,6 +1899,7 @@ class StateMachine:
         self._c3_strip_fps = set()
         self._preserve_basis = None
         self._acquisition_markers = []
+        self._receipts_booked_this_round = []
         self._falsify_protocol_findings = []
         self._falsify_failed_findings = []
         self._attempt_snapshot = None
@@ -2006,6 +2009,45 @@ class StateMachine:
             self._settled_preserve_round = row["round"]
         if action == "reset":
             self._hold_confirmed_fingerprints = []
+        self._record_host_attribution()
+
+    def _record_host_attribution(self) -> None:
+        """Keep this round's captures in memory for the report.
+
+        The lists name the records this round handled. They are not persisted:
+        a state reloaded from disk has no host_attribution, and the report then
+        drops nothing, because it can no longer tell one record from another
+        that shares the same id and fingerprint.
+        """
+        prior = self.host_attribution if isinstance(self.host_attribution, dict) else {}
+        captures = list(prior.get("captured") or [])
+        seen = {
+            (item.get("id"), item.get("fingerprint"), item.get("description"))
+            for item in captures
+            if type(item) is dict
+        }
+        for item in getattr(self.l1_provider, "host_captures", []) or []:
+            if type(item) is not dict:
+                continue
+            key = (item.get("id"), item.get("fingerprint"), item.get("description"))
+            if key in seen:
+                continue
+            seen.add(key)
+            captures.append(item)
+        booked = list(prior.get("booked") or [])
+        booked_seen = {
+            (item.get("fingerprint"), item.get("description"))
+            for item in booked
+            if type(item) is dict
+        }
+        for item in self._receipts_booked_this_round:
+            key = (item.get("fingerprint"), item.get("description"))
+            if key in booked_seen:
+                continue
+            booked_seen.add(key)
+            booked.append(item)
+        if captures or booked:
+            self.host_attribution = {"captured": captures, "booked": booked}
 
     def _reset_clean_credit(self, *, settled_host_row: bool = False) -> None:
         self._state.consecutive_clean_rounds = 0
@@ -4404,6 +4446,19 @@ class StateMachine:
         fp = "receipt-{}".format(hashlib.sha256(error.encode("utf-8")).hexdigest()[:12])
         if any(f.fingerprint == fp for f in self._state.findings):
             return
+        text = str(error)
+        captures = getattr(self.l1_provider, "host_captures", []) or []
+        named = [
+            capture
+            for capture in captures
+            if type(capture) is dict
+            and type(capture.get("id")) is str
+            and capture["id"].startswith("l1-")
+            and capture["id"].endswith("-invoke-fail")
+            and capture["id"] in text
+        ]
+        if len(named) == 1 and "coverage" not in text and ";" not in text:
+            self._receipts_booked_this_round.append({"fingerprint": fp, "description": text})
         self._state.findings.append(
             StateFinding(
                 id="RECEIPT_INVALID",

@@ -380,6 +380,7 @@ class _L1Call:
         self.unavailable_rejected_passes: set[str] = set()
         self.unavailable_rejected_causes: dict[str, str] = {}
         self.acquisition_failures: list[StateFinding] = []
+        self.host_captures: list[dict] = []
         self.is_stub_l1 = False
         self._excerpt_invocation = object()
         self._excerpt_rejections: tuple[_ExcerptRejection, ...] = ()
@@ -466,6 +467,7 @@ class _L1Call:
         self.correction_observations = []
         self.pending_raw_responses = []
         self.acquisition_failures = []
+        self.host_captures = []
         self.unavailable_rejected_passes = set()
         self.unavailable_rejected_causes = {}
         self.reviewer_responses = None
@@ -850,6 +852,19 @@ def build_l1_provider(
                     **({"include_private_details": False} if audit_round is not None else {}),
                 )
                 call.acquisition_failures.append(all_candidates[-1])
+                # Bound to this handling, not to the persisted id and fingerprint,
+                # which repeat for the same pass across rounds. The report view
+                # reads this list; a reloaded state does not have it, so a
+                # record that only matches by id and fingerprint is not dropped.
+                call.host_captures.append(
+                    {
+                        "id": all_candidates[-1].id,
+                        "fingerprint": all_candidates[-1].fingerprint,
+                        "kind": pr.kind if type(pr.kind) is str else "",
+                        "description": all_candidates[-1].description,
+                        "is_timeout": all_candidates[-1].is_timeout,
+                    }
+                )
                 if breaker is not None:
                     if pr.is_timeout:
                         breaker.record_timeout()
@@ -888,6 +903,15 @@ def build_l1_provider(
                     )
                 )
                 call.acquisition_failures.append(all_candidates[-1])
+                call.host_captures.append(
+                    {
+                        "id": all_candidates[-1].id,
+                        "fingerprint": all_candidates[-1].fingerprint,
+                        "kind": "unexpected",
+                        "description": all_candidates[-1].description,
+                        "is_timeout": all_candidates[-1].is_timeout,
+                    }
+                )
                 if breaker is not None:
                     breaker.record_other_error()
                 continue
@@ -1167,6 +1191,7 @@ def build_grouped_l1_provider(
             findings, excerpts, usage, duration = provider()
             call.pass_usage.extend(dict(row, group=scope.name) for row in provider.pass_usage)
             call.acquisition_failures.extend(provider.acquisition_failures)
+            call.host_captures.extend(provider.host_captures)
             all_findings.extend(_dedup_by_fingerprint(findings, seen))
             all_excerpts.extend(excerpts)
             call.attempted_excerpts.extend(
