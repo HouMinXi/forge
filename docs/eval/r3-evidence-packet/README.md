@@ -14,7 +14,9 @@ can be paired with any receipt that matches its text.
 - For this execution, which commit, source file digest, test digest and
   observer digest were in force.
 - Whether the named line executed, how often, and per node.
-- Whether the node's call phase ran and what it produced.
+- Whether the node's call phase ran and what it produced. An xfail-marked
+  result keeps its own outcome (`xpassed` / `xfailed`), so it never answers a
+  claim about an ordinary passing or failing call.
 
 ## What it does not answer
 
@@ -45,6 +47,12 @@ The producer refuses a target outside the root, a missing file, a root without
 a resolvable commit, an output path inside the checkout, and a `--source` that
 does not resolve to the same file as `--file`. The digest has to describe the
 file the tracer watches, so one path serves both.
+
+It also stamps HEAD, the source, the test and the observer before the run and
+re-reads all four before writing. If any of them moved, it writes no packet and
+says which one changed: a packet that describes opening state cannot also
+describe a tree that changed underneath it. A variant prepared before the run
+is stable by construction, and the packet records its digest.
 
 ## Verifying
 

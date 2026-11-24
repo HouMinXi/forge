@@ -92,6 +92,8 @@ original assertion failed at `tests/test_excerpt_json_encoding.py:46`.
 | `--source` pointing at a second file | `packet refused: source and target must resolve to the same file` |
 | Target call passed while another node failed | `node call outcome is ['passed'], expected 'failed'` |
 | Digest or hit count omitted from the check | exits without printing `verified one bound pytest execution` |
+| XPASS claimed as an ordinary pass | `node call outcome is ['xpassed'], expected 'passed'` |
+| Source edited by the test before it finished | `packet refused: changed during the run, no packet written: source` |
 
 ## What this does not establish
 

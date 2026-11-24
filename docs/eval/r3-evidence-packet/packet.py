@@ -93,8 +93,14 @@ class PacketCollector:
     def pytest_runtest_logreport(self, report) -> None:
         if type(report) is not pytest.TestReport:
             return
+        outcome = report.outcome
+        if getattr(report, "wasxfail", None) is not None:
+            # An xfail-marked result is its own outcome. The marker survives
+            # into the report, so recording a bare "passed" here would let an
+            # XPASS satisfy a claim about an ordinary passing call.
+            outcome = "xpassed" if outcome == "passed" else "xfailed"
         outcomes = self.phases.setdefault(report.nodeid, [])
-        outcomes.append([report.when, report.outcome])
+        outcomes.append([report.when, outcome])
 
     @pytest.hookimpl(wrapper=True)
     def pytest_runtest_call(self, item):
@@ -137,15 +143,25 @@ def produce(args: argparse.Namespace) -> int:
     observer = _load_observer()
     hits = observer.LineHits(target, args.line)
     collector = PacketCollector(hits, args.node)
+
+    def stamp() -> dict[str, str]:
+        return {
+            "commit": _commit(root),
+            "source": _sha256(source),
+            "test": _sha256(test),
+            "observer": _sha256(OBSERVER),
+        }
+
+    opening = stamp()
     identity = {
         "run_id": args.run_id,
-        "commit": _commit(root),
-        "source": {"path": str(source.relative_to(root)), "sha256": _sha256(source)},
-        "test": {"path": str(test.relative_to(root)), "sha256": _sha256(test)},
+        "commit": opening["commit"],
+        "source": {"path": str(source.relative_to(root)), "sha256": opening["source"]},
+        "test": {"path": str(test.relative_to(root)), "sha256": opening["test"]},
         "target": {"path": str(target.relative_to(root)), "line": args.line},
         "observer": {
             "path": str(OBSERVER.relative_to(OBSERVER.parent.parent)),
-            "sha256": _sha256(OBSERVER),
+            "sha256": opening["observer"],
         },
         "python": "%d.%d" % sys.version_info[:2],
         "pytest": pytest.__version__,
@@ -157,6 +173,12 @@ def produce(args: argparse.Namespace) -> int:
     finally:
         os.chdir(cwd)
         hits.close()
+    closing = stamp()
+    drifted = sorted(name for name in opening if opening[name] != closing[name])
+    if drifted:
+        # The packet describes opening state; a tree that moved during the run
+        # would make that description describe nothing in particular.
+        raise PacketError("changed during the run, no packet written: " + ", ".join(drifted))
     body = _body(root, collector, identity)
     body["packet_sha256"] = hashlib.sha256(canonical(body)).hexdigest()
     data = json.dumps(body, indent=2, sort_keys=True) + "\n"

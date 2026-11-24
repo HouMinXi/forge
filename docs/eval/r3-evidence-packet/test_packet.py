@@ -134,7 +134,7 @@ def _expectations(
         "--expect-source-sha256",
         _digest(root / "mod.py"),
         "--expect-test-sha256",
-        _digest(root / "test_mod.py"),
+        _digest(root / node.split("::", 1)[0]),
         "--expect-observer-sha256",
         _digest(OBSERVER),
         "--expect-target-file",
@@ -279,3 +279,61 @@ def test_a_missing_digest_or_hit_count_is_refused(project):
         check = _verify(packet, trimmed)
         assert check.returncode != 0, flag
         assert "verified one bound pytest execution" not in check.stdout, flag
+
+
+XFAILED = """\
+import pytest
+
+import mod
+
+
+@pytest.mark.xfail(reason="expected to fail, but it passes")
+def test_marks_as_xpass():
+    assert mod.hit() == 1
+"""
+
+DRIFTING = """\
+from pathlib import Path
+
+import mod
+
+
+def test_edits_the_source_after_hitting_the_line():
+    assert mod.hit() == 1
+    target = Path(__file__).with_name("mod.py")
+    target.write_text(target.read_text() + "\\n# drift\\n", encoding="utf-8")
+"""
+
+
+def test_an_xpass_does_not_count_as_a_plain_pass(project):
+    (project / "test_xfail.py").write_text(XFAILED, encoding="utf-8")
+    node = "test_xfail.py::test_marks_as_xpass"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    assert ["call", "xpassed"] in body["phases"][node]
+    announced = _announced(result)
+    check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
+    assert check.returncode == 1
+    assert "call outcome is ['xpassed']" in check.stderr
+
+
+def test_a_tree_that_changes_during_the_run_is_refused(project):
+    (project / "test_drift.py").write_text(DRIFTING, encoding="utf-8")
+    result, packet = _run(project, "test_drift.py::test_edits_the_source_after_hitting_the_line")
+    assert result.returncode == 2
+    assert "changed during the run" in result.stderr
+    assert not packet.exists()
+
+
+def test_a_test_file_changed_before_the_run_keeps_its_own_digest(project):
+    test_file = project / "test_mod.py"
+    test_file.write_text(TESTS + "\n# prepared before the run\n", encoding="utf-8")
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    assert body["identity"]["test"]["sha256"] == _digest(test_file)
+    announced = _announced(result)
+    check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
+    assert check.returncode == 0, check.stderr
