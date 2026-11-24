@@ -124,11 +124,15 @@ def hash_backends_block(gate_data: Optional[dict]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def is_trusted(gate_yaml_path: Path, gate_data: dict) -> bool:
+def is_trusted(gate_yaml_path: Path, gate_data: dict, *, migrate: bool = True) -> bool:
     """Check if gate.yaml's backends block matches the stored trust hash.
 
     Migration: if the stored hash matches the legacy all-fields hash but
     not the new dangerous-fields-only hash, silently upgrade the record.
+
+    ``migrate=False`` answers the same question without writing. A caller
+    that only needs to know (a preview, or a command that records the new
+    hash itself) must use it: the default rewrite turns a read into a write.
     """
     store = _load_trust_store()
     key = str(gate_yaml_path.resolve())
@@ -142,9 +146,10 @@ def is_trusted(gate_yaml_path: Path, gate_data: dict) -> bool:
     # Migration: check legacy all-fields hash
     legacy_hash = _hash_all_backends(gate_data)
     if stored == legacy_hash:
-        # Silently upgrade to dangerous-fields-only hash
-        entry["hash"] = current_hash
-        _save_trust_store(store)
+        if migrate:
+            # Silently upgrade to dangerous-fields-only hash
+            entry["hash"] = current_hash
+            _save_trust_store(store)
         return True
     import sys
 

@@ -36,6 +36,7 @@ REQUIREMENTS = {
     "ruff==0.17.5": "ruff==0.17.5",
     "mutmut>=3.4,<4.0": "mutmut<4.0,>=3.4",
     "jsonschema>=4.18": "jsonschema>=4.18",
+    "ruamel.yaml==0.19.1": "ruamel.yaml==0.19.1",
     "google-auth>=2.35.0": "google-auth>=2.35.0",
     "requests>=2.20.0": "requests>=2.20.0",
     "mcp>=1.27,<2": "mcp<2,>=1.27",
