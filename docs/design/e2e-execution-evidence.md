@@ -334,6 +334,28 @@ Seventeen statements carry a pragma (four in `e2e_record`, thirteen in
 | the module-level `pytest_sessionfinish` | the delegate reads only `exitstatus` |
 | the `stacklevel` of the "not written" warning | only the frame the warning is attributed to changes; the message is asserted exactly |
 
+### The diagnostic cannot change what the run reports
+
+When the record is refused, the plugin says so. That message is a warning, and a
+project that runs with `-W error` turns every warning into an exception: the
+refusal would then surface as a failing run with exit code 1, which is a change
+this feature must not make. The message is therefore emitted inside
+`warnings.catch_warnings()` with `simplefilter("always")`, which keeps it a
+message under any filter setting and restores the caller's filters afterwards.
+
+The message also says which of the ways it declined happened — the run had not
+finished, the snapshot could not be read, the snapshot could not be read again
+(a git call stopped answering, which is not the same as the tree moving), the
+tree no longer matches the commit it started on (naming it), or the record could
+not be written — so a caller can tell a refusal from a failure without reading
+the code.
+
+The regression tests run pytest in a subprocess twice, with `-W error` and with
+`-W ignore::UserWarning`, and assert three things at once in each: exit code 0,
+no record, and the full message with its reason still in the output. A unit test
+compares `warnings.filters` before and after the hook, so the guard cannot leak
+a filter change into the caller.
+
 ### Only the test body counts, and the snapshot is re-read at the end
 
 Two things the first shape got wrong, both found by running it:

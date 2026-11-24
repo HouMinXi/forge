@@ -100,6 +100,8 @@ class Recorder:
         self.finished_at: str | None = None
         self.status: int | None = None
         self.files: set[str] = set()
+        # Why write() declined, so the message can say it.
+        self.refusal = ""
 
     def note(self, report: object) -> None:
         """Add the test's file when this report is its call phase result.
@@ -118,13 +120,21 @@ class Recorder:
         if relative is not None:
             self.files.add(relative)
 
-    def matches_its_snapshot(self) -> bool:
-        """Whether HEAD and the tracked tree still say what they said at start."""
+    def snapshot_drift(self) -> str | None:
+        """None when the tree still says what it said at start, else the reason."""
         commit_now = _git(self.root, "rev-parse", "HEAD")
         status_now = _git(self.root, "status", "--porcelain", "--untracked-files=no")
-        if status_now is None or commit_now != self.commit:
-            return False
-        return (status_now == "") is (self.dirty is False)
+        if commit_now is None or status_now is None:
+            # Swallowing this into the drift message would tell the caller the
+            # tree moved when all that happened is that git could not answer.
+            return "the snapshot could not be read again"
+        if commit_now != self.commit or (status_now == "") is not (self.dirty is False):
+            return "the tree no longer matches %s" % self.commit
+        return None
+
+    def matches_its_snapshot(self) -> bool:
+        """Whether HEAD and the tracked tree still say what they said at start."""
+        return self.snapshot_drift() is None
 
     def payload(self) -> dict:
         return {
@@ -141,13 +151,17 @@ class Recorder:
     def write(self) -> bool:
         """Write the record unless this run cannot say what it tested."""
         if self.status not in _FINISHED_STATUSES:
+            self.refusal = "the run had not finished"
             return False
         if self.commit is None or self.dirty is None:
+            self.refusal = "the snapshot could not be read"
             return False
         # The snapshot was read when the session started. A test that edits a
         # tracked file leaves the tree in a state this record would misdescribe,
         # so read it again before signing anything.
-        if not self.matches_its_snapshot():
+        drift = self.snapshot_drift()
+        if drift is not None:
+            self.refusal = drift
             return False
         self.finished_at = datetime.now().astimezone().isoformat(timespec="seconds")
         body = json.dumps(self.payload(), indent=2, sort_keys=True) + "\n"
@@ -159,6 +173,7 @@ class Recorder:
                 dir=str(self.out_path.parent),
             )
         except (OSError, ValueError):
+            self.refusal = "the record could not be written"
             return False
         try:
             # Same locale argument as _git: the payload is ASCII apart from the
@@ -175,6 +190,7 @@ class Recorder:
                 os.unlink(temp)
             except OSError:
                 pass
+            self.refusal = "the record could not be written"
             return False
         return True
 
@@ -224,12 +240,19 @@ class _Session:
         if not self.recorder.write():
             # The run was asked to leave evidence and did not: say so, instead
             # of letting the caller find an absent record later.
-            # The message is asserted exactly; only the frame the warning is
-            # attributed to can change, and that is not part of the contract.
-            warnings.warn(
-                "the execution record was asked for but not written: %s" % self.recorder.out_path,
-                stacklevel=2,  # pragma: no mutate - attribution only
-            )
+            # A diagnostic must not change what the run reports. Under
+            # `-W error` the call below would be raised instead of printed, so
+            # the filter is set for this one message and restored afterwards.
+            with warnings.catch_warnings():
+                # No category argument on either call: the default is the
+                # UserWarning this message already is, and naming it adds a
+                # decision with no effect.
+                warnings.simplefilter("always")
+                warnings.warn(
+                    "the execution record was asked for but not written: %s (%s)"
+                    % (self.recorder.out_path, self.recorder.refusal),
+                    stacklevel=2,  # pragma: no mutate - attribution only
+                )
 
 
 _HOOKS = _Session()

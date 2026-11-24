@@ -105,6 +105,7 @@ def _run_pytest(
     execution_id: str | None,
     *,
     target: str = "tests",
+    extra_args: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONPATH": SRC}
     env.pop("FORGE_E2E_RECORD", None)
@@ -118,7 +119,16 @@ def _run_pytest(
     if execution_id is not None:
         env["FORGE_E2E_EXECUTION_ID"] = execution_id
     return subprocess.run(
-        [sys.executable, "-m", "pytest", target, "-q", "-p", "code_forge.e2e_record"],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            target,
+            "-q",
+            "-p",
+            "code_forge.e2e_record",
+            *extra_args,
+        ],
         cwd=str(repo),
         capture_output=True,
         text=True,
@@ -1976,7 +1986,8 @@ class TestAConfiguredRunThatProducesNothingSaysSo:
             os.environ.pop("FORGE_E2E_EXECUTION_ID", None)
 
         assert str(caught[0].message) == (
-            "the execution record was asked for but not written: %s" % (blocker / "run.json")
+            "the execution record was asked for but not written: %s "
+            "(the record could not be written)" % (blocker / "run.json")
         )
 
     def test_a_config_with_neither_root_does_not_end_the_session(self, tmp_path, monkeypatch):
@@ -2184,6 +2195,91 @@ def test_body(prepared):
         assert document["executed_files"] == []
         assert document["complete"] is True
 
+    def test_a_silenced_warning_is_still_printed(self, tmp_path):
+        # The opposite filter setting: the caller asked for warnings to be
+        # dropped, and the diagnostic must survive that too.
+        repo = tmp_path / "repo"
+        _make_repo(
+            repo,
+            {
+                "pytest.ini": "[pytest]\nasyncio_default_fixture_loop_scope = function\n",
+                "tests/test_ok.py": """from pathlib import Path
+
+
+def test_edits_a_tracked_file():
+    Path("tracked.txt").write_text("changed by the test\\n", encoding="utf-8")
+    assert True
+""",
+                "tracked.txt": "original\n",
+            },
+        )
+        record = _record_path(tmp_path, "quiet")
+
+        finished = _run_pytest(
+            repo,
+            record,
+            "quiet",
+            extra_args=(
+                "-W",
+                "ignore::UserWarning",
+                "-W",
+                "default::pytest.PytestConfigWarning",
+                "-W",
+                "default::pytest.PytestDeprecationWarning",
+            ),
+        )
+
+        assert finished.returncode == 0
+        assert record.exists() is False
+        assert (
+            "the execution record was asked for but not written: %s (the tree no longer matches" % record
+        ) in finished.stdout + finished.stderr
+
+    def test_warnings_as_errors_do_not_change_the_exit_code(self, tmp_path):
+        # The run refuses the record, and the diagnostic must not turn that into
+        # a failure: `-W error` promotes every warning it is told about.
+        repo = tmp_path / "repo"
+        _make_repo(
+            repo,
+            {
+                "pytest.ini": "[pytest]\nasyncio_default_fixture_loop_scope = function\n",
+                "tests/test_ok.py": """from pathlib import Path
+
+
+def test_edits_a_tracked_file():
+    Path("tracked.txt").write_text("changed by the test\\n", encoding="utf-8")
+    assert True
+""",
+                "tracked.txt": "original\n",
+            },
+        )
+        record = _record_path(tmp_path, "werror")
+
+        # pytest's own config and deprecation warnings would otherwise be the
+        # ones escalated; keep them informative and let ours be the only error.
+        finished = _run_pytest(
+            repo,
+            record,
+            "werror",
+            extra_args=(
+                "-W",
+                "error",
+                "-W",
+                "default::pytest.PytestConfigWarning",
+                "-W",
+                "default::pytest.PytestDeprecationWarning",
+            ),
+        )
+
+        # The channel is pytest's business: what this feature promises is that
+        # the caller can see the message, in full, including why.
+        visible = finished.stdout + finished.stderr
+        assert finished.returncode == 0
+        assert record.exists() is False
+        assert (
+            "the execution record was asked for but not written: %s (the tree no longer matches" % record
+        ) in visible
+
     def test_a_test_that_edits_a_tracked_file_leaves_no_record(self, tmp_path):
         # The fixture edits a tracked file and leaves the change in place: the
         # tree no longer matches the commit the record would name.
@@ -2207,5 +2303,141 @@ def test_edits_a_tracked_file():
 
         assert "1 passed" in finished.stdout
         assert record.exists() is False
-        # The warning lands in pytest's warnings summary, which is stdout.
-        assert "asked for but not written" in finished.stdout
+        # Which channel carries the message is pytest's business; the reason is
+        # not: a write that failed for another cause would leave the tree clean.
+        assert (
+            "the execution record was asked for but not written: %s (the tree no longer matches" % record
+        ) in finished.stdout + finished.stderr
+
+
+class TestTheDiagnosticLeavesTheCallersFiltersAlone:
+    def test_the_filter_list_is_the_same_afterwards(self, tmp_path):
+        repo = tmp_path / "repo"
+        _make_repo(repo, {"tests/test_ok.py": _PASSING})
+        blocker = tmp_path / "blocker"
+        blocker.write_text("not a directory", encoding="utf-8")
+        os.environ["FORGE_E2E_RECORD"] = str(blocker / "run.json")
+        os.environ["FORGE_E2E_EXECUTION_ID"] = "filters"
+        try:
+            session = _Session()
+            session.pytest_sessionstart(SimpleNamespace(config=SimpleNamespace(rootpath=str(repo))))
+            before = list(warnings.filters)
+            with warnings.catch_warnings(record=True):
+                session.pytest_sessionfinish(None, 0)
+                after = list(warnings.filters)
+        finally:
+            os.environ.pop("FORGE_E2E_RECORD", None)
+            os.environ.pop("FORGE_E2E_EXECUTION_ID", None)
+
+        assert after == before
+
+
+class TestEveryRefusalSaysWhy:
+    """The message tells the caller which of the ways it declined happened."""
+
+    def _run(self, tmp_path, repo, *, status=0, record=None):
+        record = record or _record_path(tmp_path, "why")
+        os.environ["FORGE_E2E_RECORD"] = str(record)
+        os.environ["FORGE_E2E_EXECUTION_ID"] = "why"
+        try:
+            session = _Session()
+            session.pytest_sessionstart(SimpleNamespace(config=SimpleNamespace(rootpath=str(repo))))
+            with pytest.warns(UserWarning) as caught:
+                session.pytest_sessionfinish(None, status)
+        finally:
+            os.environ.pop("FORGE_E2E_RECORD", None)
+            os.environ.pop("FORGE_E2E_EXECUTION_ID", None)
+        return str(caught[0].message), record
+
+    def test_a_fresh_recorder_has_no_refusal_yet(self, tmp_path):
+        repo = tmp_path / "repo"
+        _make_repo(repo, {"tests/test_ok.py": _PASSING})
+
+        assert Recorder(_record_path(tmp_path, "fresh"), "fresh", repo).refusal == ""
+
+    def test_a_write_that_fails_after_the_temp_file_says_so(self, tmp_path):
+        # The record path is a directory: the temporary file is created, the
+        # replace fails, and the temporary file must not survive.
+        repo = tmp_path / "repo"
+        _make_repo(repo, {"tests/test_ok.py": _PASSING})
+        record = _record_path(tmp_path, "occupied")
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.mkdir()
+
+        message, _ = self._run(tmp_path, repo, record=record)
+
+        assert message == (
+            "the execution record was asked for but not written: %s "
+            "(the record could not be written)" % record
+        )
+        assert [x.name for x in record.parent.iterdir()] == ["occupied.json"]
+
+    def test_a_run_that_did_not_finish_says_so(self, tmp_path):
+        repo = tmp_path / "repo"
+        _make_repo(repo, {"tests/test_ok.py": _PASSING})
+
+        message, record = self._run(tmp_path, repo, status=None)
+
+        assert message == (
+            "the execution record was asked for but not written: %s (the run had not finished)" % record
+        )
+
+    def test_a_snapshot_that_could_not_be_read_says_so(self, tmp_path):
+        plain = tmp_path / "not-a-repo"
+        plain.mkdir()
+
+        message, record = self._run(tmp_path, plain)
+
+        assert message == (
+            "the execution record was asked for but not written: %s "
+            "(the snapshot could not be read)" % record
+        )
+
+    def test_a_moved_tree_names_the_commit_it_left(self, tmp_path):
+        repo = tmp_path / "repo"
+        commit = _make_repo(repo, {"tests/test_ok.py": _PASSING, "tracked.txt": "original\n"})
+        record = _record_path(tmp_path, "moved")
+        recorder = Recorder(record, "moved", repo)
+        recorder.status = 0
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+
+        assert recorder.write() is False
+        assert recorder.refusal == "the tree no longer matches %s" % commit
+
+    def test_a_half_read_snapshot_is_not_a_snapshot(self, tmp_path):
+        # The commit read succeeded and the status read did not: still no record.
+        repo = tmp_path / "repo"
+        _make_repo(repo, {"tests/test_ok.py": _PASSING})
+        recorder = Recorder(_record_path(tmp_path, "half"), "half", repo)
+        recorder.status = 0
+        recorder.dirty = None
+
+        assert recorder.write() is False
+        assert recorder.refusal == "the snapshot could not be read"
+
+    def test_one_unanswered_git_call_is_enough(self, tmp_path, monkeypatch):
+        # Only the second reading fails, and only for one of the two calls.
+        repo = tmp_path / "repo"
+        _make_repo(repo, {"tests/test_ok.py": _PASSING})
+        recorder = Recorder(_record_path(tmp_path, "one"), "one", repo)
+
+        def half_answer(root, *args):
+            return None if args and args[0] == "rev-parse" else ""
+
+        monkeypatch.setattr(e2e_record, "_git", half_answer)
+
+        assert recorder.snapshot_drift() == "the snapshot could not be read again"
+
+    def test_a_git_that_stops_answering_is_not_a_moved_tree(self, tmp_path, monkeypatch):
+        # The second reading is what can fail; saying the tree moved would name
+        # the wrong cause.
+        repo = tmp_path / "repo"
+        _make_repo(repo, {"tests/test_ok.py": _PASSING})
+        recorder = Recorder(_record_path(tmp_path, "silent"), "silent", repo)
+        recorder.status = 0
+        monkeypatch.setattr(e2e_record, "_git", lambda *a, **k: None)
+
+        assert recorder.snapshot_drift() == "the snapshot could not be read again"
+        assert recorder.write() is False
+        assert recorder.refusal == "the snapshot could not be read again"
+        assert recorder.out_path.exists() is False
