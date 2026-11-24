@@ -85,6 +85,7 @@ call and teardown reports in order, plus pytest exit 0. Synthetic subtest
 reports do not count. It checks the clean Git snapshot and exact blob bytes
 before and after pytest, and does not overwrite an existing receipt. Failed,
 skipped, interrupted or partial runs are deliberately outside this profile.
+An unexpected pass (XPASS) is also excluded, even if pytest exits 0.
 The verifier uses Python's standard library and local Git. Provide the
 trusted reviewed worktree root rather than any path named by the receipt.
 The verifier rejects a receipt inside that tree or supplied as a symlink,
@@ -92,7 +93,9 @@ then matches the complete receipt against the separately pinned expectation.
 
 As above, use only trusted tests, `conftest.py` files and Python execution
 environments. This helper disables ambient pytest plugin autoload and uses
-an empty pytest configuration. It does not prevent trusted test code from
+an empty pytest configuration. Pytest does not auto-discover ancestor
+`conftest.py` files above the checkout, but does load those within it.
+This does not prevent trusted test code from
 changing and restoring files between the two snapshot checks. The receipt
 does not prove the named source was imported or executed, assertions were
 effective, or a runner was authentic. A run ID identifies this invocation

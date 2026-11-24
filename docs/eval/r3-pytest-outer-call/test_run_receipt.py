@@ -77,13 +77,17 @@ def git(root, *args):
     return subprocess.run(["git", "-C", root, *args], check=True, capture_output=True, timeout=30).stdout
 
 
-def build(tmp_path, body=GOOD):
+def build(tmp_path, body=GOOD, *, conftest=None):
     root = tmp_path / "checkout"
     root.mkdir()
     (root / SOURCE).write_text("def total(a, b):\n    return a + b\n", encoding="utf-8")
     (root / TEST).write_text(body, encoding="utf-8")
+    files = [SOURCE, TEST]
+    if conftest is not None:
+        (root / "conftest.py").write_text(conftest, encoding="utf-8")
+        files.append("conftest.py")
     git(root, "init", "-q")
-    git(root, "add", "--", SOURCE, TEST)
+    git(root, "add", "--", *files)
     git(
         root,
         "-c",
@@ -250,3 +254,48 @@ def test_producer_does_not_fetch_missing_promisor_blob(tmp_path):
     assert result.returncode == 1 and "git show failed" in result.stderr, result
     assert not output.exists()
     assert not object_path.exists()
+
+
+@pytest.mark.parametrize(
+    "reason", ["", ", reason='constructed unexpected pass'"], ids=["empty-reason", "explicit-reason"]
+)
+def test_producer_refuses_nonstrict_xpass_even_with_green_exit(tmp_path, reason):
+    root = build(
+        tmp_path,
+        f"""
+import pytest
+
+@pytest.mark.xfail(strict=False{reason})
+def test_total():
+    assert 2 + 2 == 4
+""",
+    )
+    output = tmp_path / "refused.json"
+    result = produce(root, output)
+    assert "1 xpassed" in result.stdout, result
+    assert result.returncode == 1 and "pytest exit 0" in result.stderr, result
+    assert not output.exists()
+
+
+def test_producer_loads_conftest_only_within_checkout(tmp_path):
+    (tmp_path / "conftest.py").write_text(
+        'raise RuntimeError("outside checkout conftest must be ignored")\n', encoding="utf-8"
+    )
+    root = build(
+        tmp_path,
+        """
+def test_total(local_value):
+    assert local_value == 4
+""",
+        conftest="""
+import pytest
+
+@pytest.fixture
+def local_value():
+    return 4
+""",
+    )
+    output = tmp_path / "accepted.json"
+    result = produce(root, output)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert verify(root, output).returncode == 0

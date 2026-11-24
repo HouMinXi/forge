@@ -109,6 +109,7 @@ def _run_one(root: Path, node: str, test: str) -> None:
         def __init__(self):
             self.nodes = []
             self.reports = []
+            self.had_expected_failure = False
 
         def pytest_collection_finish(self, session):
             self.nodes = [(item.nodeid, item.path) for item in session.items]
@@ -117,6 +118,9 @@ def _run_one(root: Path, node: str, test: str) -> None:
             # Same final-hook discriminator as collect_outer_calls.py.
             # Checking the intermediate makereport hook admits subtests.
             if type(report) is pytest.TestReport:
+                # A non-strict XPASS also has outcome="passed" and exit 0.
+                if hasattr(report, "wasxfail"):
+                    self.had_expected_failure = True
                 self.reports.append((report.nodeid, [report.when, report.outcome]))
 
     observer = Observe()
@@ -124,11 +128,22 @@ def _run_one(root: Path, node: str, test: str) -> None:
         ini = Path(settings) / "pytest.ini"
         ini.write_text("[pytest]\n", encoding="utf-8")
         status = pytest.main(
-            ["-c", str(ini), "--rootdir", str(root), "-p", "no:cacheprovider", node],
+            [
+                "-c",
+                str(ini),
+                "--rootdir",
+                str(root),
+                "--confcutdir",
+                str(root),
+                "-p",
+                "no:cacheprovider",
+                node,
+            ],
             plugins=[observer],
         )
     if (
         status != pytest.ExitCode.OK
+        or observer.had_expected_failure
         or observer.nodes != [(node, root / test)]
         or observer.reports != [(node, phase) for phase in PASSING_PHASES]
     ):
