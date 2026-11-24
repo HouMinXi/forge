@@ -404,3 +404,87 @@ def test_host_attributed_flag_prints_the_view_without_touching_the_report(tmp_pa
     with redirect_stderr(silent):
         _emit_host_attributed_view(None, state_path)
     assert silent.getvalue() == ""
+
+
+def test_ci_mixed_failure_keeps_the_receipt(tmp_path):
+    # One pass returns no JSON while another reports a real defect. The
+    # verifier returns one result for both, and the receipt must stay.
+    import os
+    import shutil
+
+    import pytest
+
+    from code_forge.host_attributed_view import host_attributed_report
+    from code_forge.state import Mode
+    from tests import _review_harness as harness
+
+    home = os.getcwd()
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        (workspace / ".code-forge").mkdir()
+        for name, content in harness.CONTENT.items():
+            (workspace / name).write_text(content)
+        (workspace / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 3\n")
+        monkeypatch.chdir(workspace)
+        monkeypatch.setattr("code_forge.machine.resolve_ledger_root", lambda cwd: workspace)
+        monkeypatch.setattr("code_forge.ledger.resolve_ledger_root", lambda cwd: workspace)
+        machine, _calls = harness._new_machine(
+            workspace, monkeypatch, fault="no-json", rounds=1, mode=Mode.CI, mixed_product=True
+        )
+        verdict = machine.run()
+        attribution = machine.host_attribution
+        report = host_attributed_report(
+            machine._state, captured=attribution["captured"], booked=attribution["booked"]
+        )
+        kept = sorted(
+            f.id for f in machine._state.findings if f.fingerprint in report["kept_fingerprints"]
+        )
+        assert verdict.value == "FAIL"
+        assert "RECEIPT_INVALID" in kept
+        assert report["receipt_blocks"] == []
+    finally:
+        os.chdir(home)
+        monkeypatch.undo()
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_local_pure_no_json_is_zero_one_one(tmp_path):
+    import os
+    import shutil
+
+    import pytest
+
+    from code_forge.host_attributed_view import host_attributed_report
+    from code_forge.state import Mode
+    from tests import _review_harness as harness
+
+    home = os.getcwd()
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        (workspace / ".code-forge").mkdir()
+        for name, content in harness.CONTENT.items():
+            (workspace / name).write_text(content)
+        (workspace / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 3\n")
+        monkeypatch.chdir(workspace)
+        monkeypatch.setattr("code_forge.machine.resolve_ledger_root", lambda cwd: workspace)
+        monkeypatch.setattr("code_forge.ledger.resolve_ledger_root", lambda cwd: workspace)
+        machine, _calls = harness._new_machine(
+            workspace, monkeypatch, fault="no-json", rounds=1, mode=Mode.LOCAL
+        )
+        verdict = machine.run()
+        attribution = machine.host_attribution
+        report = host_attributed_report(
+            machine._state, captured=attribution["captured"], booked=attribution["booked"]
+        )
+        assert verdict.value == "FAIL"
+        assert report["product_count"] == 0
+        assert len(report["interrupts"]) == 1
+        assert len(report["receipt_blocks"]) == 1
+    finally:
+        os.chdir(home)
+        monkeypatch.undo()
+        shutil.rmtree(workspace, ignore_errors=True)

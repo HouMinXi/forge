@@ -2606,7 +2606,10 @@ class StateMachine:
                 captured = self._verify_host_completion(captured)
                 if not captured.passed:
                     earned_entry = None
-                    error = f"receipt acceptance: {captured.reason}"
+                    # Keep the verification on the error. The text stays the
+                    # same; the booking reads the structured result, which a
+                    # plain string would drop.
+                    error = _ReceiptGateFailure(f"receipt acceptance: {captured.reason}", captured)
                     gate_errors.append(error)
                     if self._capacity_incomplete(captured):
                         capacity_gate_error = error
@@ -4463,7 +4466,29 @@ class StateMachine:
         verification = getattr(error, "verification", None)
         incomplete = getattr(verification, "incomplete_passes", ())
         statuses = getattr(verification, "completion_statuses", ())
+        # An unfinished pass beside an independent unresolved finding is a
+        # mixed failure. The verifier reports both in one result, and the
+        # receipt stays in the product count.
+        unresolved = getattr(verification, "unresolved_findings", ())
+        # The unfinished pass's own interruption is also listed here. Only a
+        # finding from another pass is an independent problem.
+        independent = [
+            row
+            for row in unresolved
+            if type(row) is tuple and len(row) >= 2 and row[1] not in set(incomplete or ())
+        ]
         captures = getattr(self.l1_provider, "host_captures", []) or []
+        # A product finding this round did not capture is an independent
+        # defect. The receipt then stays, even though the verifier folds both
+        # into one result.
+        from .state import reporting_product_findings
+
+        captured_ids = {capture.get("fingerprint") for capture in captures if type(capture) is dict}
+        other_product = [
+            finding
+            for finding in reporting_product_findings(self._state.findings)
+            if finding.fingerprint not in captured_ids
+        ]
         unfinished = [
             row
             for row in statuses
@@ -4474,6 +4499,8 @@ class StateMachine:
             and type(incomplete) is tuple
             and len(incomplete) == 1
             and len(unfinished) == 1
+            and not independent
+            and not other_product
         ):
             cycle, number, status = unfinished[0]
             index = number - 1
