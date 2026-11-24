@@ -4506,37 +4506,21 @@ class StateMachine:
                     and capture.get("kind") in accepted
                 ]
                 if len(named) == 1:
-                    # Match the receipt's own rows against what this round
-                    # captured. A row the host did not capture, or a receipt
-                    # that names a second reason, keeps the receipt.
-                    # Only the unresolved rows say why the receipt was refused.
-                    # A verified defect sits in the receipt but did not refuse it.
+                    # Compare whole rows, the way _capacity_incomplete does.
+                    # A quoted description stays quoted inside the row, so a
+                    # substring search would miss it. An extra row, or a row
+                    # that differs, keeps the receipt.
                     rows = getattr(verification, "unresolved_findings", ())
-                    cycle = self._state.round + 1
-                    expected = named[0].get("description")
+                    captured = getattr(self, "_acquisition_receipts", ())
                     try:
-                        matching = [
-                            row
-                            for row in rows
-                            if type(row) is tuple
-                            and len(row) == 4
-                            and row[0] == cycle
-                            and row[1] == number
-                            and expected in row[3]
-                        ]
-                        others = [
-                            row
-                            for row in rows
-                            if type(row) is tuple
-                            and len(row) == 4
-                            and row[0] == cycle
-                            and row not in matching
-                        ]
+                        same = (
+                            type(rows) is tuple
+                            and type(captured) is tuple
+                            and sorted(rows) == sorted(captured)
+                        )
                     except TypeError:
-                        # A row holds a value that cannot be compared. Keep the
-                        # receipt rather than guess.
-                        matching, others = [], [None]
-                    pure = len(matching) == 1 and not others and "; " not in str(error)
+                        same = False
+                    pure = same and len(captured) == 1
                     self._receipts_booked_this_round.append(
                         {"fingerprint": fp, "description": str(error), "pure": pure}
                     )

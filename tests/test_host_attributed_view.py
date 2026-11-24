@@ -525,11 +525,12 @@ def test_a_receipt_that_names_its_own_rejection_stays(tmp_path):
         )
         real = machine._record_receipt_gate_failure
 
-        def with_rejection(error, **kwargs):
-            mixed = type(error)(str(error) + "; coverage 40% < 60%", error.verification)
-            return real(mixed, **kwargs)
+        def with_extra_row(error, **kwargs):
+            rows = error.verification.unresolved_findings
+            error.verification.unresolved_findings = rows + ((rows[0][0], 1, rows[0][2], "coverage"),)
+            return real(error, **kwargs)
 
-        monkeypatch.setattr(machine, "_record_receipt_gate_failure", with_rejection)
+        monkeypatch.setattr(machine, "_record_receipt_gate_failure", with_extra_row)
         machine.run()
         attribution = machine.host_attribution
         report = host_attributed_report(
@@ -590,6 +591,56 @@ def test_an_incomparable_receipt_row_keeps_the_receipt(tmp_path):
         kept = [f.id for f in machine._state.findings if f.fingerprint in report["kept_fingerprints"]]
         assert "RECEIPT_INVALID" in kept
         assert report["receipt_blocks"] == []
+    finally:
+        os.chdir(home)
+        monkeypatch.undo()
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_a_quoted_interruption_still_matches(tmp_path):
+    # A description that holds a quote is escaped inside the JSON row. The
+    # booking compares whole rows, so the quote must not stop the match.
+    import os
+    import shutil
+
+    import pytest
+
+    from code_forge.host_attributed_view import host_attributed_report
+    from code_forge.state import Mode
+    from tests import _review_harness as harness
+
+    home = os.getcwd()
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        (workspace / ".code-forge").mkdir()
+        for name, content in harness.CONTENT.items():
+            (workspace / name).write_text(content)
+        (workspace / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 3\n")
+        monkeypatch.chdir(workspace)
+        monkeypatch.setattr("code_forge.machine.resolve_ledger_root", lambda cwd: workspace)
+        monkeypatch.setattr("code_forge.ledger.resolve_ledger_root", lambda cwd: workspace)
+        machine, _calls = harness._new_machine(
+            workspace, monkeypatch, fault="no-json", rounds=1, mode=Mode.CI
+        )
+        real = machine._record_receipt_gate_failure
+
+        def quote_the_row(error, **kwargs):
+            rows = error.verification.unresolved_findings
+            quoted = rows[0][3].replace("constructed", 'said "no"')
+            error.verification.unresolved_findings = (rows[0][:3] + (quoted,),)
+            machine._acquisition_receipts = error.verification.unresolved_findings
+            return real(error, **kwargs)
+
+        monkeypatch.setattr(machine, "_record_receipt_gate_failure", quote_the_row)
+        machine.run()
+        attribution = machine.host_attribution
+        report = host_attributed_report(
+            machine._state, captured=attribution["captured"], booked=attribution["booked"]
+        )
+        assert report["product_count"] == 0
+        assert len(report["receipt_blocks"]) == 1
     finally:
         os.chdir(home)
         monkeypatch.undo()
