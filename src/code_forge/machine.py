@@ -4505,19 +4505,19 @@ class StateMachine:
                     and capture.get("kind") in accepted
                 ]
                 if len(named) == 1:
-                    # More than the unfinished pass's own record means the
-                    # cycle found something else, and the receipt stays.
-                    counts = getattr(verification, "product_findings_by_cycle", ())
-                    cycle_found_more = any(
-                        type(row) is tuple
-                        and len(row) == 2
-                        and row[0] == self._state.round + 1
-                        and row[1] > 0
-                        for row in counts
-                    )
-                    # "; " separates the pass marker from a rejection the
-                    # receipt names itself. Either one keeps the receipt.
-                    pure = not cycle_found_more and "; " not in str(error)
+                    # Match the receipt's own rows against what this round
+                    # captured. A row the host did not capture, or a receipt
+                    # that names a second reason, keeps the receipt.
+                    rows = getattr(verification, "attested_findings", ())
+                    cycle = self._state.round + 1
+                    captured_rows = {
+                        (cycle, number, "<llm-invoke>", 0, capture.get("description"))
+                        for capture in named
+                    }
+                    attested_rows = {
+                        row for row in rows if type(row) is tuple and len(row) == 5 and row[0] == cycle
+                    }
+                    pure = attested_rows == captured_rows and "; " not in str(error)
                     self._receipts_booked_this_round.append(
                         {"fingerprint": fp, "description": str(error), "pure": pure}
                     )

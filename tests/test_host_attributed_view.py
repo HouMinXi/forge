@@ -442,9 +442,10 @@ def test_ci_mixed_failure_keeps_the_receipt(tmp_path):
             f.id for f in machine._state.findings if f.fingerprint in report["kept_fingerprints"]
         )
         assert verdict.value == "FAIL"
-        # The interruption leaves. The real defect stays, and so does the
-        # receipt: the verifier's attested receipts show the cycle found a
-        # product defect, so the receipt is not only the interruption.
+        # The attested receipts carry the product defect as their own row,
+        # and the host did not capture that row. The receipt therefore stays
+        # beside the defect: two product records, and only the interruption
+        # leaves.
         assert report["product_count"] == 2
         assert "RECEIPT_INVALID" in kept
         assert any(item.startswith("l1-qodo-") for item in kept)
