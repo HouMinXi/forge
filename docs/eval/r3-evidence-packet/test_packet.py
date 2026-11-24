@@ -1,0 +1,229 @@
+"""One packet binds identity, execution and hits to the same pytest run."""
+
+import hashlib
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+PACKET = Path(__file__).with_name("packet.py")
+VERIFY = Path(__file__).with_name("verify.py")
+OBSERVER = PACKET.parent.parent / "r3-target-line" / "target_hits.py"
+
+MODULE = """\
+VALUE = 1
+
+
+def hit():
+    return VALUE
+
+
+def other():
+    return 0
+"""
+
+TESTS = """\
+import mod
+
+
+def test_hits_the_line():
+    assert mod.hit() == 1
+
+
+def test_misses_the_line():
+    assert mod.other() == 0
+"""
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _line_of(source: str, needle: str) -> int:
+    for number, text in enumerate(source.splitlines(), start=1):
+        if text.strip() == needle:
+            return number
+    raise AssertionError(f"{needle} not found")
+
+
+@pytest.fixture()
+def project(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "mod.py").write_text(MODULE, encoding="utf-8")
+    (root / "test_mod.py").write_text(TESTS, encoding="utf-8")
+    env = dict(
+        os.environ,
+        GIT_AUTHOR_NAME="Project Owner",
+        GIT_AUTHOR_EMAIL="owner@example.invalid",
+        GIT_COMMITTER_NAME="Project Owner",
+        GIT_COMMITTER_EMAIL="owner@example.invalid",
+    )
+    for command in (["init", "-q"], ["add", "."], ["commit", "-qm", "sample"]):
+        subprocess.run(["git", "-C", str(root), *command], check=True, capture_output=True, env=env)
+    return root
+
+
+def _run(root: Path, node: str, *extra: str, run_id: str | None = None):
+    output = root.parent / f"packet-{secrets.token_hex(4)}.json"
+    command = [
+        sys.executable,
+        str(PACKET),
+        "--root",
+        str(root),
+        "--source",
+        "mod.py",
+        "--node",
+        node,
+        "--file",
+        "mod.py",
+        "--line",
+        str(_line_of(MODULE, "return VALUE")),
+        "--run-id",
+        run_id or secrets.token_hex(16),
+        "--output",
+        str(output),
+        "--",
+        node,
+        *extra,
+    ]
+    env = dict(
+        os.environ,
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        PYTHONPATH=str(root),
+    )
+    result = subprocess.run(command, capture_output=True, text=True, env=env)
+    return result, output
+
+
+def _announced(result) -> dict:
+    line = [row for row in result.stdout.splitlines() if row.startswith("forge-r3-packet ")]
+    assert len(line) == 1, result.stdout
+    return dict(re.findall(r"(\w+)=([0-9a-f]+)", line[0]))
+
+
+def _expectations(root: Path, node: str, run_id: str, digest: str | None = None) -> list[str]:
+    commit = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    args = [
+        "--expect-run-id",
+        run_id,
+        "--expect-commit",
+        commit,
+        "--expect-source-sha256",
+        _digest(root / "mod.py"),
+        "--expect-test-sha256",
+        _digest(root / "test_mod.py"),
+        "--expect-observer-sha256",
+        _digest(OBSERVER),
+        "--expect-target-file",
+        "mod.py",
+        "--expect-line",
+        str(_line_of(MODULE, "return VALUE")),
+        "--expect-node",
+        node,
+    ]
+    if digest:
+        args += ["--expect-packet-sha256", digest]
+    return args
+
+
+def _verify(packet: Path, args: list[str]):
+    return subprocess.run(
+        [sys.executable, str(VERIFY), str(packet), *args], capture_output=True, text=True
+    )
+
+
+def test_one_run_carries_identity_hits_and_the_call_outcome(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    assert body["schema"] == "forge-r3-evidence-v1"
+    assert body["pytest_exit"] == 0
+    assert body["collected"] == [node]
+    assert body["hits"] == {node: 1}
+    assert ["call", "passed"] in body["phases"][node]
+    assert body["identity"]["commit"]
+    assert body["identity"]["source"]["sha256"] == _digest(project / "mod.py")
+    assert body["identity"]["observer"]["sha256"] == _digest(OBSERVER)
+
+
+def test_the_announced_digest_verifies_the_matching_packet(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    announced = _announced(result)
+    check = _verify(
+        packet,
+        [
+            *_expectations(project, node, announced["run_id"], announced["sha256"]),
+            "--expect-hits",
+            "1",
+        ],
+    )
+    assert check.returncode == 0, check.stderr
+    assert "verified one bound pytest execution" in check.stdout
+
+
+def test_a_run_identity_from_another_execution_is_refused(project):
+    node = "test_mod.py::test_hits_the_line"
+    first, packet = _run(project, node)
+    second, _ = _run(project, node)
+    assert first.returncode == 0 and second.returncode == 0
+    other_run = _announced(second)["run_id"]
+    check = _verify(packet, _expectations(project, node, other_run))
+    assert check.returncode == 1
+    assert "run identity" in check.stderr
+
+
+def test_a_packet_edited_after_the_run_is_refused(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    announced = _announced(result)
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    body["hits"][node] = 99
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
+    assert check.returncode == 1
+    assert "packet digest" in check.stderr
+
+
+def test_a_green_run_that_missed_the_target_is_refused(project):
+    node = "test_mod.py::test_misses_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    announced = _announced(result)
+    check = _verify(
+        packet,
+        [*_expectations(project, node, announced["run_id"]), "--expect-hits", "1"],
+    )
+    assert check.returncode == 1
+    assert "target hits are 0" in check.stderr
+
+
+def test_a_collected_node_that_never_ran_is_refused(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node, "--collect-only")
+    assert result.returncode == 0, result.stderr
+    announced = _announced(result)
+    check = _verify(packet, _expectations(project, node, announced["run_id"]))
+    assert check.returncode == 1
+    assert "no call phase" in check.stderr
+
+
+def test_another_commit_is_refused(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    announced = _announced(result)
+    args = _expectations(project, node, announced["run_id"])
+    args[args.index("--expect-commit") + 1] = "0" * 40
+    check = _verify(packet, args)
+    assert check.returncode == 1
+    assert "commit" in check.stderr
