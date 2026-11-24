@@ -179,6 +179,31 @@ def _report_v2_downgrade_notice(stderr: str, reason: str, limit: int) -> str:
     return stderr
 
 
+def _emit_host_attributed_view(host_attribution, state_path: Path) -> None:
+    """Print the host-attributed product view. Never changes the default report.
+
+    The attribution lives in memory for this round only. A missing or reloaded
+    attribution prints nothing, because the view would otherwise guess.
+    """
+    if not isinstance(host_attribution, dict):
+        return
+    from .host_attributed_view import host_attributed_report
+
+    state = _load_state(state_path)
+    if state is None:
+        return
+    report = host_attributed_report(
+        state,
+        captured=list(host_attribution.get("captured") or []),
+        booked=list(host_attribution.get("booked") or []),
+    )
+    print(
+        "code-forge: host-attributed product=%d interrupts=%d receipt-blocks=%d"
+        % (report["product_count"], len(report["interrupts"]), len(report["receipt_blocks"])),
+        file=sys.stderr,
+    )
+
+
 def _emit_ci_output(
     state_path: Path,
     registry: dict[str, "ToolConfig"],
@@ -250,6 +275,9 @@ def _emit_ci_output(
     # Match presentation serializer domain (allow_nan=False) so the substrate
     # accepts the same document the pure helpers will extend.
     legacy_stdout = json.dumps(log_dict, ensure_ascii=False, allow_nan=False)
+    # The default v1 and v2 reports stay on the unfiltered state. The
+    # host-attributed counts are a separate view, produced only when the
+    # caller asks for them, and they never change this output.
     substrate = prepare_legacy_report(log_dict, stdout=legacy_stdout, stderr=legacy_summary)
     projection = classify_report_records(final_state) if substrate.sarif_document is not None else None
     prepared = prepare_report_views(substrate, projection)
@@ -633,6 +661,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["v1", "v2"],
         default="v1",
         help="report presentation version (v2: ordinary single-repository CI subprocess only)",
+    )
+    review_parser.add_argument(
+        "--host-attributed",
+        action="store_true",
+        help="print the host-attributed product view after the report; the default report is unchanged",
     )
     review_parser.add_argument(
         "--falsification-engine",
@@ -5344,6 +5377,10 @@ def _run(args, env, cwd: Path, *, audit_diagnostics=None) -> Verdict:
                 )
             )
             # SARIF emission in CI mode, inside lock scope.
+            if getattr(args, "host_attributed", False):
+                _emit_host_attributed_view(
+                    getattr(l1_provider, "last_host_attribution", None), state_path
+                )
             if mode == Mode.CI:
                 _emit_ci_output(
                     state_path,
@@ -5475,6 +5512,8 @@ def _run_hold_loop(
             **({"invocation_audit": invocation_audit} if invocation_audit is not None else {}),
         )
         verdict = sm.run()
+        if l1_provider is not None:
+            l1_provider.last_host_attribution = getattr(sm, "host_attribution", None)
         # CLI-08 B6: load final state from disk for cost fields.
         # PENDING is not exempt: a CI run that ended PENDING with
         # UNCERTAIN findings still spent tokens, and the cost line

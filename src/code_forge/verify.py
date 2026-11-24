@@ -163,6 +163,10 @@ class VerifyResult:
     unresolved_findings: tuple[tuple[int, int, str, str], ...] = ()
     # Display only; existing failure_kind remains the routing authority.
     receipt_subtype: str | None = None
+    # Every open finding the attested receipts carry, as
+    # (cycle, pass, file, line, description). A row the host did not capture
+    # this round is a reason of its own.
+    attested_findings: tuple[tuple[int, int, str, int, str], ...] = ()
 
 
 def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
@@ -2285,6 +2289,20 @@ def _run_verify_impl(
                         json.dumps(finding, sort_keys=True, separators=(",", ":")),
                     )
                 )
+
+    attested_rows = tuple(
+        (
+            receipt["cycle"],
+            receipt["pass"],
+            item.get("file"),
+            item.get("line"),
+            item.get("description"),
+        )
+        for receipt in attested
+        for item in _open_findings(receipt.get("findings", []))
+        if isinstance(item, dict)
+    )
+
     if unresolved:
         reason = finding_summary
         if incomplete:
@@ -2301,6 +2319,7 @@ def _run_verify_impl(
             cp,
             incomplete_passes=tuple(sorted({r["pass"] for r in incomplete})),
             completion_statuses=completion_statuses,
+            attested_findings=attested_rows,
             unresolved_findings=tuple(unresolved),
         )
     if incomplete:
@@ -2313,6 +2332,7 @@ def _run_verify_impl(
             failure_kind=VerifyFailureKind.INCOMPLETE_PASS,
             incomplete_passes=tuple(sorted({r["pass"] for r in incomplete})),
             completion_statuses=completion_statuses,
+            attested_findings=attested_rows,
         )
     cp += 1
 

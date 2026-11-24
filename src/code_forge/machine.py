@@ -951,6 +951,7 @@ class StateMachine:
         # later attempt (or a second run()) never inherits these bookings.
         self._booked_receipt_write_errors: list[str] = []
         self._acquisition_markers: list[StateFinding] = []
+        self._receipts_booked_this_round: list[dict] = []
         self._falsify_protocol_findings: list[StateFinding] = []
         self._falsify_failed_findings: list[StateFinding] = []
         self._hold_confirmed_fingerprints: list[str] = []
@@ -1009,6 +1010,7 @@ class StateMachine:
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
+        self.host_attribution = None
         # fix10 (CR2F9-L1): no per-run, per-attempt, per-round or L2-phase state
         # an earlier run() on this instance left is this run's; reset it before
         # any step can fail. This includes the fix9 (CR3R3-L1) clear of
@@ -1164,6 +1166,9 @@ class StateMachine:
                 self._record_receipt_gate_failure(err)
             self._state.verdict = Verdict.FAIL
             self._state.converged = False
+            # CI returns here, before the LOCAL round close, so the captures
+            # and receipts booked this round would otherwise be dropped.
+            self._record_host_attribution()
             self._persist_state()
             self._write_ci_ledger_rows()
             return Verdict.FAIL
@@ -1181,6 +1186,9 @@ class StateMachine:
                     self._record_receipt_gate_failure(err)
             self._state.verdict = Verdict.FAIL
             self._state.converged = False
+            # CI returns here, before the LOCAL round close, so the captures
+            # and receipts booked this round would otherwise be dropped.
+            self._record_host_attribution()
             self._persist_state()
             self._write_ci_ledger_rows()
             return Verdict.FAIL
@@ -1897,6 +1905,7 @@ class StateMachine:
         self._c3_strip_fps = set()
         self._preserve_basis = None
         self._acquisition_markers = []
+        self._receipts_booked_this_round = []
         self._falsify_protocol_findings = []
         self._falsify_failed_findings = []
         self._attempt_snapshot = None
@@ -2006,6 +2015,44 @@ class StateMachine:
             self._settled_preserve_round = row["round"]
         if action == "reset":
             self._hold_confirmed_fingerprints = []
+        self._record_host_attribution()
+
+    def _record_host_attribution(self) -> None:
+        """Keep this round's captures in memory for the report.
+
+        The lists name the records this round handled. They are not persisted:
+        a state reloaded from disk has no host_attribution, and the report then
+        drops nothing, because it can no longer tell one record from another
+        that shares the same id and fingerprint.
+        """
+        prior = getattr(self, "host_attribution", None)
+        prior = prior if isinstance(prior, dict) else {}
+        captures = list(prior.get("captured") or [])
+        seen = {
+            (item.get("id"), item.get("fingerprint"), item.get("description"))
+            for item in captures
+            if type(item) is dict
+        }
+        for item in getattr(self.l1_provider, "host_captures", []) or []:
+            if type(item) is not dict:
+                continue
+            key = (item.get("id"), item.get("fingerprint"), item.get("description"))
+            if key in seen:
+                continue
+            seen.add(key)
+            captures.append(item)
+        booked = list(prior.get("booked") or [])
+        booked_seen = {
+            (item.get("fingerprint"), item.get("description")) for item in booked if type(item) is dict
+        }
+        for item in self._receipts_booked_this_round:
+            key = (item.get("fingerprint"), item.get("description"))
+            if key in booked_seen:
+                continue
+            booked_seen.add(key)
+            booked.append(item)
+        if captures or booked:
+            self.host_attribution = {"captured": captures, "booked": booked}
 
     def _reset_clean_credit(self, *, settled_host_row: bool = False) -> None:
         self._state.consecutive_clean_rounds = 0
@@ -2560,7 +2607,11 @@ class StateMachine:
                 captured = self._verify_host_completion(captured)
                 if not captured.passed:
                     earned_entry = None
-                    error = f"receipt acceptance: {captured.reason}"
+                    # Keep the verification on the error. The text stays the
+                    # same; the booking reads the structured result, which a
+                    # plain string would drop.
+                    error = _ReceiptGateFailure(f"receipt acceptance: {captured.reason}", captured)
+                    error.receipt_subtype = None
                     gate_errors.append(error)
                     if self._capacity_incomplete(captured):
                         capacity_gate_error = error
@@ -2585,6 +2636,10 @@ class StateMachine:
                         self._record_receipt_gate_failure(err)
                 self._state.verdict = Verdict.FAIL
                 self._state.converged = False
+                # The receipt gate returns before the normal round close, so the
+                # round's captures and booked receipts would otherwise be lost.
+                # Record them here too; the report reads them in memory only.
+                self._record_host_attribution()
                 self._persist_state()
                 return Verdict.FAIL
 
@@ -4404,6 +4459,71 @@ class StateMachine:
         fp = "receipt-{}".format(hashlib.sha256(error.encode("utf-8")).hexdigest()[:12])
         if any(f.fingerprint == fp for f in self._state.findings):
             return
+        # Bind from the verifier's structured result, never from the text.
+        # A receipt counts only when exactly one pass is incomplete, that
+        # pass's status is a plain error, and this round captured that pass
+        # as no-JSON or a plain timeout. Mixed causes and anything else stay.
+        from .state import _PASS_NAMES
+
+        verification = getattr(error, "verification", None)
+        incomplete = getattr(verification, "incomplete_passes", ())
+        statuses = getattr(verification, "completion_statuses", ())
+        captures = getattr(self.l1_provider, "host_captures", []) or []
+        unfinished = [
+            row
+            for row in statuses
+            if type(row) is tuple and len(row) == 3 and row[2] not in (None, "completed")
+        ]
+        if (
+            type(error) is _ReceiptGateFailure
+            and type(incomplete) is tuple
+            and len(incomplete) == 1
+            and len(unfinished) == 1
+        ):
+            cycle, number, status = unfinished[0]
+            index = number - 1
+            # A no-JSON response reports status "error" with kind "no_json".
+            # A plain timeout reports status "timeout" with an empty kind.
+            # A connect timeout also reports "timeout" but carries a kind, so
+            # the two have to agree or the receipt stays.
+            if status == "error":
+                accepted = ("no_json",)
+            elif status == "timeout":
+                accepted = ("",)
+            else:
+                accepted = ()
+            if (
+                cycle == self._state.round + 1
+                and number == incomplete[0]
+                and 0 <= index < len(_PASS_NAMES)
+            ):
+                wanted = "invoke-fail-%s" % _PASS_NAMES[index]
+                named = [
+                    capture
+                    for capture in captures
+                    if type(capture) is dict
+                    and capture.get("fingerprint") == wanted
+                    and capture.get("kind") in accepted
+                ]
+                if len(named) == 1:
+                    # Compare whole rows, the way _capacity_incomplete does.
+                    # A quoted description stays quoted inside the row, so a
+                    # substring search would miss it. An extra row, or a row
+                    # that differs, keeps the receipt.
+                    rows = getattr(verification, "unresolved_findings", ())
+                    captured = getattr(self, "_acquisition_receipts", ())
+                    try:
+                        same = (
+                            type(rows) is tuple
+                            and type(captured) is tuple
+                            and sorted(rows) == sorted(captured)
+                        )
+                    except TypeError:
+                        same = False
+                    pure = same and len(captured) == 1
+                    self._receipts_booked_this_round.append(
+                        {"fingerprint": fp, "description": str(error), "pure": pure}
+                    )
         self._state.findings.append(
             StateFinding(
                 id="RECEIPT_INVALID",
@@ -4415,7 +4535,12 @@ class StateMachine:
                 description=str(error),
                 diagnostic_kind=diagnostic_kind,
                 receipt_subtype=(
-                    error.verification.receipt_subtype
+                    # An error that sets its own subtype wins. LOCAL wraps the
+                    # result only to carry it and pins this to None, matching
+                    # the string it used to persist.
+                    error.receipt_subtype
+                    if type(error) is _ReceiptGateFailure and hasattr(error, "receipt_subtype")
+                    else error.verification.receipt_subtype
                     if type(error) is _ReceiptGateFailure
                     else error.receipt_subtype
                     if type(error) is _ReceiptDiagnosticError
