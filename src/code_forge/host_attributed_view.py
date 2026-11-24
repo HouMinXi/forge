@@ -71,6 +71,13 @@ def _captured_indices(findings: list[StateFinding], captured: list[dict]) -> set
     for capture in captured:
         if type(capture) is not dict or type(capture.get("kind")) is not str:
             continue
+        # Only a response with no JSON, or a plain timeout, leaves the
+        # product count. A connect timeout, an HTTP error and an unexpected
+        # host exception stay where they are.
+        kind = capture["kind"]
+        plain_timeout = kind == "" and capture.get("is_timeout") is True
+        if kind != "no_json" and not plain_timeout:
+            continue
         hits = [
             index
             for index, finding in enumerate(findings)

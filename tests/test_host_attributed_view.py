@@ -333,7 +333,7 @@ def _ci_round(fault):
         report = host_attributed_report(
             machine._state, captured=attribution["captured"], booked=attribution["booked"]
         )
-        return verdict.value, report
+        return verdict.value, report, list(machine._state.findings)
     finally:
         os.chdir(home)
         monkeypatch.undo()
@@ -341,7 +341,7 @@ def _ci_round(fault):
 
 
 def test_ci_pure_no_json_is_zero_one_one():
-    verdict, report = _ci_round("no-json")
+    verdict, report, _findings = _ci_round("no-json")
     assert verdict == "FAIL"
     assert report["product_count"] == 0
     assert len(report["interrupts"]) == 1
@@ -349,17 +349,58 @@ def test_ci_pure_no_json_is_zero_one_one():
 
 
 def test_ci_plain_timeout_is_zero_one_one():
-    verdict, report = _ci_round("timeout-empty-kind")
+    verdict, report, _findings = _ci_round("timeout-empty-kind")
     assert verdict == "FAIL"
     assert report["product_count"] == 0
     assert len(report["interrupts"]) == 1
     assert len(report["receipt_blocks"]) == 1
 
 
-def test_ci_other_failure_keeps_its_product_count():
+def test_ci_other_failure_keeps_both_records():
     # A connect timeout is an interruption the host caught, but it is not one
-    # of the two kinds this change reclassifies, so it stays a product record.
-    verdict, report = _ci_round("connect-timeout")
+    # of the two kinds this change reclassifies. Both the interruption and
+    # the receipt stay in the product count, and the view must say which.
+    verdict, report, findings = _ci_round("connect-timeout")
     assert verdict == "FAIL"
-    assert report["product_count"] == 1
-    assert len(report["receipt_blocks"]) == 0
+    kept = sorted(f.id for f in findings if f.fingerprint in report["kept_fingerprints"])
+    assert kept == ["RECEIPT_INVALID", "l1-adversarial-invoke-fail"]
+    assert report["interrupts"] == []
+    assert report["receipt_blocks"] == []
+
+
+def test_host_attributed_flag_prints_the_view_without_touching_the_report(tmp_path):
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    from code_forge.cli import _emit_ci_output, _emit_host_attributed_view
+    from code_forge.state import save_state
+
+    interrupt = _interrupt("adversarial", kind="no_json")
+    receipt = _receipt("pass did not complete: c1p3 status=error")
+    state_path = tmp_path / "state.json"
+    save_state(_state([interrupt, receipt]), state_path)
+    attribution = {
+        "captured": [_captured(interrupt, kind="no_json")],
+        "booked": [_booked(receipt)],
+    }
+
+    def report():
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            _emit_ci_output(state_path, {})
+        return out.getvalue(), err.getvalue()
+
+    before = report()
+    view = io.StringIO()
+    with redirect_stderr(view):
+        _emit_host_attributed_view(attribution, state_path)
+    after = report()
+    assert before == after
+    assert (
+        view.getvalue().strip() == "code-forge: host-attributed product=0 interrupts=1 receipt-blocks=1"
+    )
+    # No attribution in hand means no line, rather than a guessed count.
+    silent = io.StringIO()
+    with redirect_stderr(silent):
+        _emit_host_attributed_view(None, state_path)
+    assert silent.getvalue() == ""

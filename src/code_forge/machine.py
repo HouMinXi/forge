@@ -4454,30 +4454,56 @@ class StateMachine:
         fp = "receipt-{}".format(hashlib.sha256(error.encode("utf-8")).hexdigest()[:12])
         if any(f.fingerprint == fp for f in self._state.findings):
             return
-        text = str(error)
-        # The verifier reports "pass did not complete: c{cycle}p{number}",
-        # which carries no finding id. Bind the receipt to the capture of
-        # that exact pass, and only for the two kinds this change counts.
+        # Bind from the verifier's structured result, never from the text.
+        # A receipt counts only when exactly one pass is incomplete, that
+        # pass's status is a plain error, and this round captured that pass
+        # as no-JSON or a plain timeout. Mixed causes and anything else stay.
         from .state import _PASS_NAMES
 
-        named = []
-        marker = "pass did not complete: c%dp" % (self._state.round + 1)
+        verification = getattr(error, "verification", None)
+        incomplete = getattr(verification, "incomplete_passes", ())
+        statuses = getattr(verification, "completion_statuses", ())
         captures = getattr(self.l1_provider, "host_captures", []) or []
-        if marker in text and ";" not in text:
-            number = text.split(marker, 1)[1].split(" ", 1)[0]
-            if number.isdigit():
-                index = int(number) - 1
-                if 0 <= index < len(_PASS_NAMES):
-                    wanted = "invoke-fail-%s" % _PASS_NAMES[index]
-                    named = [
-                        capture
-                        for capture in captures
-                        if type(capture) is dict
-                        and capture.get("fingerprint") == wanted
-                        and capture.get("kind") in ("no_json", "")
-                    ]
-        if len(named) == 1:
-            self._receipts_booked_this_round.append({"fingerprint": fp, "description": text})
+        unfinished = [
+            row
+            for row in statuses
+            if type(row) is tuple and len(row) == 3 and row[2] not in (None, "completed")
+        ]
+        if (
+            type(error) is _ReceiptGateFailure
+            and type(incomplete) is tuple
+            and len(incomplete) == 1
+            and len(unfinished) == 1
+        ):
+            cycle, number, status = unfinished[0]
+            index = number - 1
+            # A no-JSON response reports status "error" with kind "no_json".
+            # A plain timeout reports status "timeout" with an empty kind.
+            # A connect timeout also reports "timeout" but carries a kind, so
+            # the two have to agree or the receipt stays.
+            if status == "error":
+                accepted = ("no_json",)
+            elif status == "timeout":
+                accepted = ("",)
+            else:
+                accepted = ()
+            if (
+                cycle == self._state.round + 1
+                and number == incomplete[0]
+                and 0 <= index < len(_PASS_NAMES)
+            ):
+                wanted = "invoke-fail-%s" % _PASS_NAMES[index]
+                named = [
+                    capture
+                    for capture in captures
+                    if type(capture) is dict
+                    and capture.get("fingerprint") == wanted
+                    and capture.get("kind") in accepted
+                ]
+                if len(named) == 1:
+                    self._receipts_booked_this_round.append(
+                        {"fingerprint": fp, "description": str(error)}
+                    )
         self._state.findings.append(
             StateFinding(
                 id="RECEIPT_INVALID",
