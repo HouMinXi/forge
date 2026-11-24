@@ -2025,7 +2025,8 @@ class StateMachine:
         drops nothing, because it can no longer tell one record from another
         that shares the same id and fingerprint.
         """
-        prior = self.host_attribution if isinstance(self.host_attribution, dict) else {}
+        prior = getattr(self, "host_attribution", None)
+        prior = prior if isinstance(prior, dict) else {}
         captures = list(prior.get("captured") or [])
         seen = {
             (item.get("id"), item.get("fingerprint"), item.get("description"))

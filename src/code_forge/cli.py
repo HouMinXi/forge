@@ -5512,7 +5512,8 @@ def _run_hold_loop(
             **({"invocation_audit": invocation_audit} if invocation_audit is not None else {}),
         )
         verdict = sm.run()
-        l1_provider.last_host_attribution = getattr(sm, "host_attribution", None)
+        if l1_provider is not None:
+            l1_provider.last_host_attribution = getattr(sm, "host_attribution", None)
         # CLI-08 B6: load final state from disk for cost fields.
         # PENDING is not exempt: a CI run that ended PENDING with
         # UNCERTAIN findings still spent tokens, and the cost line
