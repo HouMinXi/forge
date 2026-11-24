@@ -55,12 +55,12 @@ def _outside_output(root: Path, output: Path) -> Path:
 
 
 class LineHits:
-    """Count executions of one file line, per test, across threads.
+    """Count executions of one file line, per node, across threads.
 
-    A thread keeps the trace function it started with, so that function
-    carries the node that started it. The active node decides whether an
-    event is still wanted: once a call ends, events arriving from threads it
-    started are dropped instead of landing on whichever node runs next.
+    A thread keeps the trace function it started with. Each call allocates a
+    fresh token and the trace carries that token, so a callback from an earlier
+    call cannot count again when the same node runs a second time. Events
+    arriving after their own call has finished are dropped.
     """
 
     def __init__(self, target: Path, line: int) -> None:
@@ -68,24 +68,24 @@ class LineHits:
         self.line = line
         self.lock = threading.Lock()
         self.counts: dict[str, int] = {}
-        self.active: str | None = None
+        self.active: object | None = None
 
-    def _count(self, nodeid: str) -> None:
+    def _count(self, nodeid: str, token: object) -> None:
         with self.lock:
-            if self.active != nodeid:
+            if self.active is not token:
                 return
             self.counts[nodeid] = self.counts.get(nodeid, 0) + 1
 
-    def _line_scope(self, nodeid: str):
+    def _line_scope(self, nodeid: str, token: object):
         def trace(frame, event, arg):
             if event == "line" and frame.f_lineno == self.line:
-                self._count(nodeid)
+                self._count(nodeid, token)
             return trace
 
         return trace
 
-    def _file_scope(self, nodeid: str):
-        line_scope = self._line_scope(nodeid)
+    def _file_scope(self, nodeid: str, token: object):
+        line_scope = self._line_scope(nodeid, token)
 
         def trace(frame, event, arg):
             if frame.f_code.co_filename == self.target:
@@ -94,19 +94,21 @@ class LineHits:
 
         return trace
 
-    def begin(self, nodeid: str) -> None:
+    def begin(self, nodeid: str) -> object:
+        token = object()
         with self.lock:
-            self.active = nodeid
+            self.active = token
             self.counts.setdefault(nodeid, 0)
-        scope = self._file_scope(nodeid)
+        scope = self._file_scope(nodeid, token)
         threading.settrace(scope)
         sys.settrace(scope)
+        return token
 
-    def end(self, nodeid: str) -> None:
+    def end(self, token: object) -> None:
         sys.settrace(None)
         threading.settrace(None)
         with self.lock:
-            if self.active == nodeid:
+            if self.active is token:
                 self.active = None
 
     def close(self) -> None:
@@ -129,14 +131,11 @@ class Collector:
 
     @pytest.hookimpl(wrapper=True)
     def pytest_runtest_call(self, item):
-        self.hits.begin(item.nodeid)
+        token = self.hits.begin(item.nodeid)
         try:
             return (yield)
         finally:
-            self.hits.end(item.nodeid)
-
-    def pytest_runtest_teardown(self, item) -> None:
-        self.hits.end(item.nodeid)
+            self.hits.end(token)
 
     def pytest_sessionfinish(self, session, exitstatus) -> None:
         self.hits.close()

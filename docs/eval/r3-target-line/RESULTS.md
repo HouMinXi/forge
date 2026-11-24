@@ -12,7 +12,7 @@ one sample, not a gate result and not an attestation.
 | Target line | `src/code_forge/llm_invoke.py:2506`, the `json.loads` inside `loads_reply_json` |
 | Interpreter | CPython 3.14.10 |
 | pytest | 9.2.0 |
-| Observer digest | `target_hits.py` `5c03666ffa050be2d96d2755cb1d07e819aab2f7f58fce58679b6c8ef75cdccc`, taken from the revision that adds this file |
+| Observer digest | `target_hits.py` `a9aac0ef16e69410391b56f849eeb3afd846604ea8f1411e06d0cc3af30853eb`, taken from the revision that adds this file |
 | Test digest | `tests/test_excerpt_json_encoding.py` `f2a4dbe2a152f8068cb106b9a7a4a169c26ed5a43c8748bcdc180bfedeedaae9` |
 
 Two further nodes from the same file serve as counter-cases:

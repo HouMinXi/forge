@@ -63,12 +63,16 @@ The helper exits 2 without running pytest when the target is not a regular
 file under the given root, when the line is past the end of the file, when the
 line number is not positive, or when the record path is inside the checkout.
 
-## Threads
+## Threads and repeated nodes
 
-A thread keeps the trace function it started with, so that function carries
-the node that started it. Events arriving after that call has finished are
-dropped rather than credited to whichever node runs next: a thread released by
-a later test's setup records zero for both nodes.
+Each call allocates a fresh token and the trace carries that token, so a
+callback from an earlier call cannot count again. That covers both a thread
+released by a later test's setup and the same node executed twice under
+`--keep-duplicates`: both record zero when the line only runs after its own
+call has finished.
+
+A node selected twice appears twice in `collected`, and its counts are summed
+under its one nodeid.
 
 ## Tests
 
@@ -76,12 +80,12 @@ a later test's setup records zero for both nodes.
 python -m pytest -q docs/eval/r3-target-line
 ```
 
-Ten cases cover a hit, a passing node with no hit, a hit from another thread, a
-late hit from a thread started by an earlier node, per-node separation, a
-leading `--` before the selection, and the four refusals. Withdrawing any one
-of the checks the helper depends on turns its covering case red: thread
-registration, the line comparison, the active-node check, the per-node count
-key, the outside-checkout guard and the missing-file guard.
+Eleven cases cover a hit, a passing node with no hit, a hit from another
+thread, a late hit from a thread started by an earlier node, the same node run
+twice, per-node separation, a leading `--` before the selection, and the four
+refusals. Withdrawing any one of the checks the helper depends on turns its
+covering case red: thread registration, the line comparison, the call token,
+the per-node count key, the outside-checkout guard and the missing-file guard.
 
 Run this by hand. It is not wired into CI, verdicts or gates, and it traces
 frames in one file only so the cost stays low on a single selection.

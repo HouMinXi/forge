@@ -77,6 +77,34 @@ def test_b_releases_the_thread(released):
 """
 
 
+DUPLICATED = """\
+import threading
+
+import mod
+
+runs = 0
+release = threading.Event()
+done = threading.Event()
+
+
+def _work():
+    release.wait(5)
+    mod.hit()
+    done.set()
+
+
+def test_pending_thread():
+    global runs
+    runs += 1
+    if runs == 1:
+        worker = threading.Thread(target=_work)
+        worker.start()
+    else:
+        release.set()
+        assert done.wait(5)
+"""
+
+
 def _target_line(source: str, needle: str) -> int:
     for number, text in enumerate(source.splitlines(), start=1):
         if text.strip() == needle:
@@ -185,6 +213,24 @@ def test_a_late_thread_hit_is_not_credited_to_another_node(project):
         "test_thread_order.py::test_a_starts_a_waiting_thread": 0,
         "test_thread_order.py::test_b_releases_the_thread": 0,
     }
+
+
+def test_a_node_run_twice_does_not_reuse_the_earlier_callback(project):
+    (project / "test_dup.py").write_text(DUPLICATED, encoding="utf-8")
+    line = _target_line(MODULE, "return VALUE")
+    result = _run(
+        project,
+        project / "mod.py",
+        line,
+        "--",
+        "--keep-duplicates",
+        "test_dup.py",
+        "test_dup.py",
+    )
+    assert result.returncode == 0, result.stderr
+    data = _record(project.parent / "record.json")
+    assert data["collected"] == ["test_dup.py::test_pending_thread"] * 2
+    assert data["hits"] == {"test_dup.py::test_pending_thread": 0}
 
 
 def test_a_target_outside_the_root_is_refused(project, tmp_path):
