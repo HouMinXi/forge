@@ -4509,25 +4509,28 @@ class StateMachine:
                     # Match the receipt's own rows against what this round
                     # captured. A row the host did not capture, or a receipt
                     # that names a second reason, keeps the receipt.
-                    rows = getattr(verification, "attested_findings", ())
+                    # Only the unresolved rows say why the receipt was refused.
+                    # A verified defect sits in the receipt but did not refuse it.
+                    rows = getattr(verification, "unresolved_findings", ())
                     cycle = self._state.round + 1
-                    expected = (cycle, number, "<llm-invoke>", 0, named[0].get("description"))
+                    expected = named[0].get("description")
                     try:
                         matching = [
                             row
                             for row in rows
                             if type(row) is tuple
-                            and len(row) == 5
+                            and len(row) == 4
                             and row[0] == cycle
-                            and row == expected
+                            and row[1] == number
+                            and expected in row[3]
                         ]
                         others = [
                             row
                             for row in rows
                             if type(row) is tuple
-                            and len(row) == 5
+                            and len(row) == 4
                             and row[0] == cycle
-                            and row != expected
+                            and row not in matching
                         ]
                     except TypeError:
                         # A row holds a value that cannot be compared. Keep the

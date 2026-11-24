@@ -442,15 +442,14 @@ def test_ci_mixed_failure_keeps_the_receipt(tmp_path):
             f.id for f in machine._state.findings if f.fingerprint in report["kept_fingerprints"]
         )
         assert verdict.value == "FAIL"
-        # The attested receipts carry the product defect as their own row,
-        # and the host did not capture that row. The receipt therefore stays
-        # beside the defect: two product records, and only the interruption
-        # leaves.
-        assert report["product_count"] == 2
-        assert "RECEIPT_INVALID" in kept
+        # The verified defect is in the receipt, but it did not refuse the
+        # receipt. The only unresolved row is the interruption, so the
+        # receipt leaves and the defect is the one product finding.
+        assert report["product_count"] == 1
+        assert "RECEIPT_INVALID" not in kept
         assert any(item.startswith("l1-qodo-") for item in kept)
         assert len(report["interrupts"]) == 1
-        assert report["receipt_blocks"] == []
+        assert len(report["receipt_blocks"]) == 1
     finally:
         os.chdir(home)
         monkeypatch.undo()
@@ -576,9 +575,9 @@ def test_an_incomparable_receipt_row_keeps_the_receipt(tmp_path):
         real = machine._record_receipt_gate_failure
 
         def with_list_line(error, **kwargs):
-            rows = getattr(error.verification, "attested_findings", ())
-            error.verification.attested_findings = tuple(
-                (row[0], row[1], row[2], ["not", "a", "line"], row[4]) for row in rows
+            rows = getattr(error.verification, "unresolved_findings", ())
+            error.verification.unresolved_findings = tuple(
+                (row[0], row[1], row[2], ["not", "comparable"]) for row in rows
             )
             return real(error, **kwargs)
 
