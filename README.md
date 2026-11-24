@@ -485,7 +485,13 @@ differs. The full tables, the corpus construction, and the caveats are in
 - **R3 is artifact-presence, not coverage proof.** The cross-component
   check confirms an integration test file exists under the expected path;
   it does not verify that the test exercises the specific code that
-  changed. A present-but-stale test passes the gate.
+  changed. A present-but-stale test passes the gate. A standalone reader,
+  `python -m code_forge.e2e_evidence`, can judge a record written by a test run
+  that loaded the plugin with pytest's `-p code_forge.e2e_record`, and say
+  whether a test in a file reached its call phase in a named run of a named
+  commit. It is not wired into the review
+  pipeline, it gates nothing, and the paragraph above still holds: nothing in
+  code-forge checks that an e2e artifact covers the changed path.
 
 Static review (3-cycle convergence) is one layer. code-forge learned
 from its own Phase 2 experience where 9 static passes and 639 mock tests
