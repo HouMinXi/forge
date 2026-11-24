@@ -4468,17 +4468,6 @@ class StateMachine:
         incomplete = getattr(verification, "incomplete_passes", ())
         statuses = getattr(verification, "completion_statuses", ())
         captures = getattr(self.l1_provider, "host_captures", []) or []
-        # The verifier's result does not name a product defect that another
-        # pass reported: its unresolved list holds only the interruption.
-        # A product finding this round did not capture is that defect, and the
-        # receipt stays beside it.
-        from .state import reporting_product_findings
-
-        captured_ids = {capture.get("fingerprint") for capture in captures if type(capture) is dict}
-        other_product = any(
-            finding.fingerprint not in captured_ids
-            for finding in reporting_product_findings(self._state.findings)
-        )
         unfinished = [
             row
             for row in statuses
@@ -4489,7 +4478,6 @@ class StateMachine:
             and type(incomplete) is tuple
             and len(incomplete) == 1
             and len(unfinished) == 1
-            and not other_product
         ):
             cycle, number, status = unfinished[0]
             index = number - 1
@@ -4517,8 +4505,21 @@ class StateMachine:
                     and capture.get("kind") in accepted
                 ]
                 if len(named) == 1:
+                    # More than the unfinished pass's own record means the
+                    # cycle found something else, and the receipt stays.
+                    counts = getattr(verification, "product_findings_by_cycle", ())
+                    cycle_found_more = any(
+                        type(row) is tuple
+                        and len(row) == 2
+                        and row[0] == self._state.round + 1
+                        and row[1] > 0
+                        for row in counts
+                    )
+                    # "; " separates the pass marker from a rejection the
+                    # receipt names itself. Either one keeps the receipt.
+                    pure = not cycle_found_more and "; " not in str(error)
                     self._receipts_booked_this_round.append(
-                        {"fingerprint": fp, "description": str(error)}
+                        {"fingerprint": fp, "description": str(error), "pure": pure}
                     )
         self._state.findings.append(
             StateFinding(

@@ -442,13 +442,14 @@ def test_ci_mixed_failure_keeps_the_receipt(tmp_path):
             f.id for f in machine._state.findings if f.fingerprint in report["kept_fingerprints"]
         )
         assert verdict.value == "FAIL"
-        # The real defect stays and counts as the one product finding. The
-        # receipt stays beside it; the interruption is the record that leaves.
+        # The interruption leaves. The real defect stays, and so does the
+        # receipt: the verifier's attested receipts show the cycle found a
+        # product defect, so the receipt is not only the interruption.
         assert report["product_count"] == 2
         assert "RECEIPT_INVALID" in kept
         assert any(item.startswith("l1-qodo-") for item in kept)
-        assert report["receipt_blocks"] == []
         assert len(report["interrupts"]) == 1
+        assert report["receipt_blocks"] == []
     finally:
         os.chdir(home)
         monkeypatch.undo()
@@ -489,6 +490,54 @@ def test_local_pure_no_json_is_zero_one_one(tmp_path):
         assert report["product_count"] == 0
         assert len(report["interrupts"]) == 1
         assert len(report["receipt_blocks"]) == 1
+    finally:
+        os.chdir(home)
+        monkeypatch.undo()
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_a_receipt_that_names_its_own_rejection_stays(tmp_path):
+    # The receipt text carries an independent rejection after the pass marker.
+    # The booking comes from the real gate, and the view must keep that record.
+    import os
+    import shutil
+
+    import pytest
+
+    from code_forge.host_attributed_view import host_attributed_report
+    from code_forge.state import Mode
+    from tests import _review_harness as harness
+
+    home = os.getcwd()
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        (workspace / ".code-forge").mkdir()
+        for name, content in harness.CONTENT.items():
+            (workspace / name).write_text(content)
+        (workspace / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 3\n")
+        monkeypatch.chdir(workspace)
+        monkeypatch.setattr("code_forge.machine.resolve_ledger_root", lambda cwd: workspace)
+        monkeypatch.setattr("code_forge.ledger.resolve_ledger_root", lambda cwd: workspace)
+        machine, _calls = harness._new_machine(
+            workspace, monkeypatch, fault="no-json", rounds=1, mode=Mode.CI
+        )
+        real = machine._record_receipt_gate_failure
+
+        def with_rejection(error, **kwargs):
+            mixed = type(error)(str(error) + "; coverage 40% < 60%", error.verification)
+            return real(mixed, **kwargs)
+
+        monkeypatch.setattr(machine, "_record_receipt_gate_failure", with_rejection)
+        machine.run()
+        attribution = machine.host_attribution
+        report = host_attributed_report(
+            machine._state, captured=attribution["captured"], booked=attribution["booked"]
+        )
+        kept = [f.id for f in machine._state.findings if f.fingerprint in report["kept_fingerprints"]]
+        assert "RECEIPT_INVALID" in kept
+        assert report["receipt_blocks"] == []
     finally:
         os.chdir(home)
         monkeypatch.undo()

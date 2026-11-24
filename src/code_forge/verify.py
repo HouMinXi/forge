@@ -163,6 +163,10 @@ class VerifyResult:
     unresolved_findings: tuple[tuple[int, int, str, str], ...] = ()
     # Display only; existing failure_kind remains the routing authority.
     receipt_subtype: str | None = None
+    # Open product findings per attested cycle, from the receipts themselves.
+    # A verified defect is not an unresolved finding, so a caller that needs to
+    # know the cycle found something reads this instead of the state.
+    product_findings_by_cycle: tuple[tuple[int, int], ...] = ()
 
 
 def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
@@ -2285,6 +2289,23 @@ def _run_verify_impl(
                         json.dumps(finding, sort_keys=True, separators=(",", ":")),
                     )
                 )
+
+    def _product_items(receipt):
+        # The unfinished pass records its own interruption as a finding. It is
+        # not a product defect, so it does not count.
+        return [
+            item
+            for item in _open_findings(receipt.get("findings", []))
+            if not (isinstance(item, dict) and item.get("file") == "<llm-invoke>")
+        ]
+
+    product_counts = tuple(
+        (
+            cycle,
+            sum(len(_product_items(receipt)) for receipt in attested if receipt["cycle"] == cycle),
+        )
+        for cycle in sorted({receipt["cycle"] for receipt in attested})
+    )
     if unresolved:
         reason = finding_summary
         if incomplete:
@@ -2301,6 +2322,7 @@ def _run_verify_impl(
             cp,
             incomplete_passes=tuple(sorted({r["pass"] for r in incomplete})),
             completion_statuses=completion_statuses,
+            product_findings_by_cycle=product_counts,
             unresolved_findings=tuple(unresolved),
         )
     if incomplete:
@@ -2313,6 +2335,7 @@ def _run_verify_impl(
             failure_kind=VerifyFailureKind.INCOMPLETE_PASS,
             incomplete_passes=tuple(sorted({r["pass"] for r in incomplete})),
             completion_statuses=completion_statuses,
+            product_findings_by_cycle=product_counts,
         )
     cp += 1
 

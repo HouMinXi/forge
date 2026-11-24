@@ -143,8 +143,11 @@ def host_attributed_report(
     """
     findings = list(state.findings)
     excluded = _captured_indices(findings, captured)
+    # A booking that names itself impure shares its cycle with another
+    # product finding. Its receipt stays even though the interruption leaves.
+    pure_booked = [booking for booking in booked if booking.get("pure", True)]
     if attributable:
-        excluded |= _booked_indices(findings, booked)
+        excluded |= _booked_indices(findings, pure_booked)
     product_path = {id(finding) for finding in reporting_product_findings(findings)}
     product = [
         finding
