@@ -4511,14 +4511,29 @@ class StateMachine:
                     # that names a second reason, keeps the receipt.
                     rows = getattr(verification, "attested_findings", ())
                     cycle = self._state.round + 1
-                    captured_rows = {
-                        (cycle, number, "<llm-invoke>", 0, capture.get("description"))
-                        for capture in named
-                    }
-                    attested_rows = {
-                        row for row in rows if type(row) is tuple and len(row) == 5 and row[0] == cycle
-                    }
-                    pure = attested_rows == captured_rows and "; " not in str(error)
+                    expected = (cycle, number, "<llm-invoke>", 0, named[0].get("description"))
+                    try:
+                        matching = [
+                            row
+                            for row in rows
+                            if type(row) is tuple
+                            and len(row) == 5
+                            and row[0] == cycle
+                            and row == expected
+                        ]
+                        others = [
+                            row
+                            for row in rows
+                            if type(row) is tuple
+                            and len(row) == 5
+                            and row[0] == cycle
+                            and row != expected
+                        ]
+                    except TypeError:
+                        # A row holds a value that cannot be compared. Keep the
+                        # receipt rather than guess.
+                        matching, others = [], [None]
+                    pure = len(matching) == 1 and not others and "; " not in str(error)
                     self._receipts_booked_this_round.append(
                         {"fingerprint": fp, "description": str(error), "pure": pure}
                     )

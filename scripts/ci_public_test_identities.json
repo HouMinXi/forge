@@ -11985,6 +11985,7 @@
     "tests/test_host_attributed_view.py::test_a_live_round_feeds_the_view_from_its_own_captures",
     "tests/test_host_attributed_view.py::test_a_receipt_that_names_its_own_rejection_stays",
     "tests/test_host_attributed_view.py::test_a_shared_fingerprint_does_not_drop_the_other_record",
+    "tests/test_host_attributed_view.py::test_an_incomparable_receipt_row_keeps_the_receipt",
     "tests/test_host_attributed_view.py::test_ci_mixed_failure_keeps_the_receipt",
     "tests/test_host_attributed_view.py::test_ci_other_failure_keeps_both_records",
     "tests/test_host_attributed_view.py::test_ci_plain_timeout_is_zero_one_one",

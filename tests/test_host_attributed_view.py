@@ -543,3 +543,55 @@ def test_a_receipt_that_names_its_own_rejection_stays(tmp_path):
         os.chdir(home)
         monkeypatch.undo()
         shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_an_incomparable_receipt_row_keeps_the_receipt(tmp_path):
+    # A receipt row whose line is a list cannot be hashed. The booking must
+    # keep the receipt instead of raising, because it cannot prove the row is
+    # only the interruption.
+    import os
+    import shutil
+
+    import pytest
+
+    from code_forge.host_attributed_view import host_attributed_report
+    from code_forge.state import Mode
+    from tests import _review_harness as harness
+
+    home = os.getcwd()
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        (workspace / ".code-forge").mkdir()
+        for name, content in harness.CONTENT.items():
+            (workspace / name).write_text(content)
+        (workspace / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 3\n")
+        monkeypatch.chdir(workspace)
+        monkeypatch.setattr("code_forge.machine.resolve_ledger_root", lambda cwd: workspace)
+        monkeypatch.setattr("code_forge.ledger.resolve_ledger_root", lambda cwd: workspace)
+        machine, _calls = harness._new_machine(
+            workspace, monkeypatch, fault="no-json", rounds=1, mode=Mode.CI
+        )
+        real = machine._record_receipt_gate_failure
+
+        def with_list_line(error, **kwargs):
+            rows = getattr(error.verification, "attested_findings", ())
+            error.verification.attested_findings = tuple(
+                (row[0], row[1], row[2], ["not", "a", "line"], row[4]) for row in rows
+            )
+            return real(error, **kwargs)
+
+        monkeypatch.setattr(machine, "_record_receipt_gate_failure", with_list_line)
+        machine.run()
+        attribution = machine.host_attribution
+        report = host_attributed_report(
+            machine._state, captured=attribution["captured"], booked=attribution["booked"]
+        )
+        kept = [f.id for f in machine._state.findings if f.fingerprint in report["kept_fingerprints"]]
+        assert "RECEIPT_INVALID" in kept
+        assert report["receipt_blocks"] == []
+    finally:
+        os.chdir(home)
+        monkeypatch.undo()
+        shutil.rmtree(workspace, ignore_errors=True)
