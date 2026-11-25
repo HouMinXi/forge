@@ -93,11 +93,13 @@ def check_identity(body: dict, args: argparse.Namespace) -> None:
         type(node) is not str
         or type(test) is not dict
         or node != args.expect_node
-        or not node.startswith(Path(str(test.get("path", ""))).name + "::")
+        or node.split("::", 1)[0] != test.get("path")
     ):
         # The test digest and the verified node must name the same file. A
         # packet can otherwise carry one file's digest behind another's result.
-        raise Refused(f"{node} does not name a node in {test.get('path') if type(test) is dict else None}")
+        raise Refused(
+            f"{node} does not name a node in {test.get('path') if type(test) is dict else None}"
+        )
 
 
 def check_execution(body: dict, args: argparse.Namespace) -> None:
@@ -112,6 +114,10 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
     if type(phases) is not dict:
         raise Refused("phases is not a record")
     node_phases = phases.get(node, [])
+    if type(node_phases) is not list or any(
+        type(entry) is not list or len(entry) != 2 for entry in node_phases
+    ):
+        raise Refused("phase entry is not a when/outcome pair")
     if not any(when == "call" for when, _ in node_phases):
         raise Refused("node has no call phase: collected but not executed")
     call_outcomes = [outcome for when, outcome in node_phases if when == "call"]
@@ -121,9 +127,12 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
         raise Refused(f"node call outcome is {call_outcomes!r}, expected {args.expect_call!r}")
     if body.get("pytest_exit") != args.expect_exit:
         raise Refused(f"pytest exit is {body.get('pytest_exit')!r}, expected {args.expect_exit}")
-    hits = body.get("hits", {}).get(node, 0)
-    if hits != args.expect_hits:
-        raise Refused(f"target hits are {hits!r}, expected {args.expect_hits}")
+    hits = body.get("hits", {})
+    if type(hits) is not dict:
+        raise Refused("hits is not a record")
+    count = hits.get(node, 0)
+    if count != args.expect_hits:
+        raise Refused(f"target hits are {count!r}, expected {args.expect_hits}")
 
 
 def main() -> int:

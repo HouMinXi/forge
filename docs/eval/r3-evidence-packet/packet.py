@@ -99,12 +99,14 @@ class PacketCollector:
             # into the report, so recording a bare "passed" here would let an
             # XPASS satisfy a claim about an ordinary passing call.
             outcome = "xpassed" if outcome == "passed" else "xfailed"
-        elif outcome == "failed" and str(report.longrepr).startswith("[XPASS(strict)]"):
-            # A strict xfail that passes is reported as a failure whose text
-            # opens with this prefix and carries no wasxfail. The marker name
-            # alone does not say that: a marker whose condition is false, or
-            # an xfail(raises=...) that caught a different exception, fails the
-            # same way and must stay a plain failure.
+        elif (
+            outcome == "failed"
+            and type(report.longrepr) is str
+            and report.longrepr.startswith("[XPASS(strict)]")
+        ):
+            # A strict xfail that passes is the one failure pytest reports as a
+            # plain string opening with this prefix. Every other failure carries
+            # a structured longrepr, so the type check keeps those as failures.
             outcome = "xpassed"
         outcomes = self.phases.setdefault(report.nodeid, [])
         outcomes.append([report.when, outcome])

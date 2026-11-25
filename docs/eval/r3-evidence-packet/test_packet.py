@@ -161,6 +161,19 @@ def _verify(packet: Path, args: list[str]):
     )
 
 
+def test_a_node_in_a_subdirectory_verifies(project):
+    nested = project / "tests"
+    nested.mkdir()
+    (nested / "test_mod.py").write_text(TESTS, encoding="utf-8")
+    node = "tests/test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    announced = _announced(result)
+    check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
+    assert check.returncode == 0, check.stderr
+    assert "verified one bound pytest execution" in check.stdout
+
+
 def test_one_run_carries_identity_hits_and_the_call_outcome(project):
     node = "test_mod.py::test_hits_the_line"
     result, packet = _run(project, node)
@@ -227,9 +240,7 @@ def test_a_node_from_another_file_is_refused_even_when_the_digest_holds(project)
     body["identity"]["node"] = "test_other.py::test_in_the_other_file"
     _rehashed(body)
     packet.write_text(json.dumps(body), encoding="utf-8")
-    check = _verify(
-        packet, _expectations(project, node, announced["run_id"], body["packet_sha256"])
-    )
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
     assert "does not name a node in" in check.stderr
     assert "verified" not in check.stdout
@@ -244,9 +255,23 @@ def test_a_malformed_record_is_refused_without_a_traceback(project):
     body["collected"] = "nn"
     _rehashed(body)
     packet.write_text(json.dumps(body), encoding="utf-8")
-    check = _verify(
-        packet, _expectations(project, node, announced["run_id"], body["packet_sha256"])
-    )
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
+    assert check.returncode == 1
+    assert "packet refused:" in check.stderr
+    assert "Traceback" not in check.stderr
+    assert "verified" not in check.stdout
+
+
+def test_a_malformed_phase_or_hit_count_is_refused_without_a_traceback(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    announced = _announced(result)
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    body["phases"][node] = ["call"]
+    body["hits"] = [1]
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
     assert "packet refused:" in check.stderr
     assert "Traceback" not in check.stderr
@@ -261,9 +286,7 @@ def test_a_source_that_differs_from_the_target_is_refused_by_the_verifier(projec
     body["identity"]["source"]["path"] = "other.py"
     _rehashed(body)
     packet.write_text(json.dumps(body), encoding="utf-8")
-    check = _verify(
-        packet, _expectations(project, node, announced["run_id"], body["packet_sha256"])
-    )
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
     assert "does not describe the traced target" in check.stderr
     assert "verified" not in check.stdout
