@@ -26,6 +26,8 @@ nothing. Exit 2 means input was rejected; a report can include a valid
 Publication failure returns 1. Use a new output filename for each invocation;
 a pre-existing result is deliberately not overwritten. Report publication
 links a fully written temporary file and does not claim crash durability.
+Once the link succeeds, inability to remove the scratch name does not turn
+the published report into a failed run; a scratch file may remain.
 
 ## Frozen input and scoring boundary
 

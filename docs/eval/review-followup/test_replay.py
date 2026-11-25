@@ -1,6 +1,7 @@
 """Offline #574 PR1 acceptance controls with hand-authored oracles."""
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -240,3 +241,27 @@ def test_symlinked_answer_subtree_is_an_invalid_review_reference(tree):
     note.symlink_to(tree / "answer_keys/first/key.json")
     with pytest.raises(InputError, match="symlink: first/artifacts/candidate-note"):
         pipeline.validate(tree)
+
+
+def test_cleanup_failure_after_publication_keeps_success(tree, tmp_path, monkeypatch, capsys):
+    unlink = os.unlink
+    temp_files = []
+
+    def fail_scratch_cleanup(path, *args, **kwargs):
+        if Path(path).name.startswith(".offline-replay-"):
+            temp_files.append(path)
+            raise OSError("cannot remove scratch file")
+        return unlink(path, *args, **kwargs)
+
+    target = tmp_path / "report.json"
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr("code_forge.eval.review_followup.report.os.unlink", fail_scratch_cleanup)
+            code = main(["replay", str(tree), "--output", str(target)])
+        assert len(temp_files) == 1
+        assert json.loads(target.read_bytes()) == build_report(pipeline.replay(tree))
+        assert code == 0
+        assert "unable to publish" not in capsys.readouterr().err
+    finally:
+        for path in temp_files:
+            unlink(path)

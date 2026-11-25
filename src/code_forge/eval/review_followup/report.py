@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from contextlib import suppress
 
 
 def build_report(rows):
@@ -47,4 +48,6 @@ def publish_local(path, report):
         os.link(temp, path)
     finally:
         if temp is not None:
-            os.unlink(temp)
+            # Removing the scratch name must not undo publication or mask a link failure.
+            with suppress(OSError):
+                os.unlink(temp)
