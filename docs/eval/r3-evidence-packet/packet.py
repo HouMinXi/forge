@@ -99,10 +99,12 @@ class PacketCollector:
             # into the report, so recording a bare "passed" here would let an
             # XPASS satisfy a claim about an ordinary passing call.
             outcome = "xpassed" if outcome == "passed" else "xfailed"
-        elif outcome == "failed" and "xfail" in getattr(report, "keywords", {}):
-            # A strict xfail that passes is reported as failed with no
-            # wasxfail: the assertion held and only the marker made it fail.
-            # The keyword is what still identifies it.
+        elif outcome == "failed" and str(report.longrepr).startswith("[XPASS(strict)]"):
+            # A strict xfail that passes is reported as a failure whose text
+            # opens with this prefix and carries no wasxfail. The marker name
+            # alone does not say that: a marker whose condition is false, or
+            # an xfail(raises=...) that caught a different exception, fails the
+            # same way and must stay a plain failure.
             outcome = "xpassed"
         outcomes = self.phases.setdefault(report.nodeid, [])
         outcomes.append([report.when, outcome])
@@ -161,6 +163,7 @@ def produce(args: argparse.Namespace) -> int:
     identity = {
         "run_id": args.run_id,
         "commit": opening["commit"],
+        "node": args.node,
         "source": {"path": str(source.relative_to(root)), "sha256": opening["source"]},
         "test": {"path": str(test.relative_to(root)), "sha256": opening["test"]},
         "target": {"path": str(target.relative_to(root)), "line": args.line},
@@ -184,6 +187,14 @@ def produce(args: argparse.Namespace) -> int:
         # The packet describes opening state; a tree that moved during the run
         # would make that description describe nothing in particular.
         raise PacketError("changed during the run, no packet written: " + ", ".join(drifted))
+    node_file = identity["test"]["path"]
+    if args.node not in collector.collected or any(
+        item.split("::", 1)[0] != node_file for item in collector.collected
+    ):
+        # --node names the file whose digest the packet carries, while
+        # pytest_args decides what actually runs. Refuse unless the recorded
+        # node ran and every collected node comes from that same file.
+        raise PacketError(f"{args.node} does not name a node in {node_file}")
     body = _body(root, collector, identity)
     body["packet_sha256"] = hashlib.sha256(canonical(body)).hexdigest()
     data = json.dumps(body, indent=2, sort_keys=True) + "\n"

@@ -74,25 +74,47 @@ def check_identity(body: dict, args: argparse.Namespace) -> None:
         ("test digest", "test", args.expect_test_sha256),
         ("observer digest", "observer", args.expect_observer_sha256),
     ):
-        if identity.get(key, {}).get("sha256") != expected:
+        record = identity.get(key, {})
+        if type(record) is not dict or record.get("sha256") != expected:
             raise Refused(f"{label} does not match")
     target = identity.get("target", {})
+    if type(target) is not dict:
+        raise Refused("target is not a record")
     if target.get("path") != args.expect_target_file or target.get("line") != args.expect_line:
         raise Refused("target does not match")
-    if identity.get("source", {}).get("path") != target.get("path"):
+    source = identity.get("source", {})
+    if type(source) is not dict or source.get("path") != target.get("path"):
         # The digest has to describe the traced file, or the packet can hash one
         # file and report hits for another.
         raise Refused("source digest does not describe the traced target")
+    node = identity.get("node")
+    test = identity.get("test", {})
+    if (
+        type(node) is not str
+        or type(test) is not dict
+        or node != args.expect_node
+        or not node.startswith(Path(str(test.get("path", ""))).name + "::")
+    ):
+        # The test digest and the verified node must name the same file. A
+        # packet can otherwise carry one file's digest behind another's result.
+        raise Refused(f"{node} does not name a node in {test.get('path') if type(test) is dict else None}")
 
 
 def check_execution(body: dict, args: argparse.Namespace) -> None:
     node = args.expect_node
-    if node not in body.get("collected", []):
+    collected = body.get("collected", [])
+    if type(collected) is not list or node not in collected:
         raise Refused("node was not collected in this run")
-    phases = body.get("phases", {}).get(node, [])
-    if not any(when == "call" for when, _ in phases):
+    node_file = node.split("::", 1)[0]
+    if any(type(item) is not str or item.split("::", 1)[0] != node_file for item in collected):
+        raise Refused(f"{node} does not name a node in {node_file}")
+    phases = body.get("phases", {})
+    if type(phases) is not dict:
+        raise Refused("phases is not a record")
+    node_phases = phases.get(node, [])
+    if not any(when == "call" for when, _ in node_phases):
         raise Refused("node has no call phase: collected but not executed")
-    call_outcomes = [outcome for when, outcome in phases if when == "call"]
+    call_outcomes = [outcome for when, outcome in node_phases if when == "call"]
     if args.expect_call not in call_outcomes:
         # A failing run says nothing about this node: another node may have
         # failed, or this one may have failed in teardown after a passing call.

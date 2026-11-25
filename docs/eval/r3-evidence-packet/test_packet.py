@@ -75,6 +75,7 @@ def _run(
     *extra: str,
     run_id: str | None = None,
     source: str = "mod.py",
+    pytest_node: str | None = None,
 ):
     output = root.parent / f"packet-{secrets.token_hex(4)}.json"
     command = [
@@ -95,7 +96,7 @@ def _run(
         "--output",
         str(output),
         "--",
-        node,
+        pytest_node or node,
         *extra,
     ]
     env = dict(
@@ -209,6 +210,65 @@ def test_a_packet_edited_after_the_run_is_refused(project):
     assert "packet digest" in check.stderr
 
 
+def _rehashed(body: dict) -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("verify", VERIFY)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    body["packet_sha256"] = module.digest_of(body)
+
+
+def test_a_node_from_another_file_is_refused_even_when_the_digest_holds(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    announced = _announced(result)
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    body["identity"]["node"] = "test_other.py::test_in_the_other_file"
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    check = _verify(
+        packet, _expectations(project, node, announced["run_id"], body["packet_sha256"])
+    )
+    assert check.returncode == 1
+    assert "does not name a node in" in check.stderr
+    assert "verified" not in check.stdout
+
+
+def test_a_malformed_record_is_refused_without_a_traceback(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    announced = _announced(result)
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    body["identity"]["source"] = "not-a-record"
+    body["collected"] = "nn"
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    check = _verify(
+        packet, _expectations(project, node, announced["run_id"], body["packet_sha256"])
+    )
+    assert check.returncode == 1
+    assert "packet refused:" in check.stderr
+    assert "Traceback" not in check.stderr
+    assert "verified" not in check.stdout
+
+
+def test_a_source_that_differs_from_the_target_is_refused_by_the_verifier(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    announced = _announced(result)
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    body["identity"]["source"]["path"] = "other.py"
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    check = _verify(
+        packet, _expectations(project, node, announced["run_id"], body["packet_sha256"])
+    )
+    assert check.returncode == 1
+    assert "does not describe the traced target" in check.stderr
+    assert "verified" not in check.stdout
+
+
 def test_a_green_run_that_missed_the_target_is_refused(project):
     node = "test_mod.py::test_misses_the_line"
     result, packet = _run(project, node)
@@ -252,19 +312,24 @@ def test_a_source_that_is_not_the_traced_file_is_refused(project):
 
 
 def test_a_passing_call_beside_a_failing_node_is_refused(project):
-    (project / "test_other.py").write_text("def test_fails():\n    assert False\n", encoding="utf-8")
     node = "test_mod.py::test_hits_the_line"
-    result, packet = _run(project, node, "test_other.py")
-    assert result.returncode == 1, result.stderr
+    result, packet = _run(project, node)
     announced = _announced(result)
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    body["collected"].append("test_other.py::test_fails")
+    body["phases"]["test_other.py::test_fails"] = [["call", "failed"]]
+    body["pytest_exit"] = 1
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(
         packet,
         _expectations(
-            project, node, announced["run_id"], announced["sha256"], call="failed", exit_code=1
+            project, node, announced["run_id"], body["packet_sha256"], call="failed", exit_code=1
         ),
     )
     assert check.returncode == 1
-    assert "call outcome" in check.stderr
+    assert "does not name a node in" in check.stderr
+    assert "verified" not in check.stdout
 
 
 def test_a_missing_digest_or_hit_count_is_refused(project):
@@ -367,3 +432,66 @@ def test_a_strict_xpass_is_not_a_plain_failure(project):
     )
     assert check.returncode == 1
     assert "call outcome is ['xpassed']" in check.stderr
+
+
+INACTIVE_XFAIL = """\
+import sys
+
+import pytest
+
+import mod
+
+
+@pytest.mark.xfail(sys.version_info < (3, 0), reason="only on py2")
+def test_fails_under_an_inactive_marker():
+    assert mod.hit() == 0
+"""
+
+
+def test_a_plain_failure_under_an_inactive_xfail_stays_a_failure(project):
+    (project / "test_inactive.py").write_text(INACTIVE_XFAIL, encoding="utf-8")
+    node = "test_inactive.py::test_fails_under_an_inactive_marker"
+    result, packet = _run(project, node)
+    assert result.returncode == 1, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    assert ["call", "failed"] in body["phases"][node]
+
+
+RAISES_MISMATCH = """\
+import pytest
+
+import mod
+
+
+@pytest.mark.xfail(raises=ValueError, reason="expects ValueError")
+def test_raises_a_different_type():
+    mod.hit()
+    raise TypeError("not a ValueError")
+"""
+
+
+def test_a_raises_mismatch_stays_a_failure(project):
+    (project / "test_raises.py").write_text(RAISES_MISMATCH, encoding="utf-8")
+    node = "test_raises.py::test_raises_a_different_type"
+    result, packet = _run(project, node)
+    assert result.returncode == 1, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    assert ["call", "failed"] in body["phases"][node]
+
+
+OTHER_FILE = """\
+import mod
+
+
+def test_in_the_other_file():
+    assert mod.hit() == 1
+"""
+
+
+def test_the_recorded_node_must_live_in_the_hashed_test_file(project):
+    (project / "test_other.py").write_text(OTHER_FILE, encoding="utf-8")
+    claimed = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, claimed, pytest_node="test_other.py::test_in_the_other_file")
+    assert result.returncode == 2
+    assert "does not name a node in" in result.stderr
+    assert not packet.exists()
