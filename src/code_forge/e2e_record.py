@@ -25,10 +25,12 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import warnings
 import pytest
 
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
@@ -243,13 +245,22 @@ class _Session:
             # of letting the caller find an absent record later.
             # Bypass filters, not the display hook: this diagnostic must remain
             # visible under -W error/ignore without changing another warning.
-            warnings.showwarning(
-                "the execution record was asked for but not written: %s (%s)"
-                % (self.recorder.out_path, self.recorder.refusal),
-                UserWarning,
-                __file__,  # pragma: no mutate - attribution only
-                0,  # pragma: no mutate - attribution only
+            message = "the execution record was asked for but not written: %s (%s)" % (
+                self.recorder.out_path,
+                self.recorder.refusal,
             )
+            # A broken display hook must not replace pytest's result.
+            with suppress(Exception):
+                warnings.showwarning(
+                    message,
+                    UserWarning,
+                    __file__,  # pragma: no mutate - attribution only
+                    0,  # pragma: no mutate - attribution only
+                )
+                return
+            # stderr is also best effort. Neither guard catches interrupts.
+            with suppress(Exception):
+                print(message, file=sys.stderr)
 
 
 _HOOKS = _Session()
