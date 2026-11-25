@@ -250,12 +250,22 @@ class TestWorkingTreeDiff:
         (git_repo / "keep.py").write_text("print('keep')\n")
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
+            # Unrelated warnings can precede the binary-skip warning.
+            warnings.warn("unrelated cleanup", ResourceWarning, stacklevel=1)
             diff = working_tree_diff("HEAD", [Path(".")], git_repo)
         assert "keep" in diff
         assert "print('keep')" in diff
-        message = str(caught[0].message)
-        assert "first.bin" in message
-        assert "second.bin" in message
+        binary_warnings = [
+            str(item.message)
+            for item in caught
+            if item.category is UserWarning
+            and str(item.message).startswith(
+                "forge: skipped 2 binary untracked file(s) from working-tree diff:"
+            )
+        ]
+        assert len(binary_warnings) == 1
+        assert "first.bin" in binary_warnings[0]
+        assert "second.bin" in binary_warnings[0]
 
     def test_bogus_baseline_ref_raises(self, git_repo):
         """R3-1: bogus baseline ref -> exit 128 -> BaselineResolutionError."""
