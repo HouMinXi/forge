@@ -1,0 +1,9 @@
+{
+  "candidate": "synthetic:invalid-candidate",
+  "case": "invalid",
+  "findings": [],
+  "observation_sha256": "62f0930ddfa415260d0b4d69ab25a942a27dc6de10b79e6ef96ee01a7e4ab687",
+  "revisions": [],
+  "run": "fixture-invalid",
+  "schema": 1
+}

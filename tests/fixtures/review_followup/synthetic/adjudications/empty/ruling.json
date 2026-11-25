@@ -1,0 +1,9 @@
+{
+  "candidate": "synthetic:empty-candidate",
+  "case": "empty",
+  "findings": [],
+  "observation_sha256": "a7bc525340899fc07b83ccaf82a2ef885fcc2de6c28db3ac1ef6f0adc0148b6d",
+  "revisions": [],
+  "run": "fixture-empty",
+  "schema": 1
+}

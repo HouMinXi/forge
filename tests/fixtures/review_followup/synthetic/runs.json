@@ -1,0 +1,35 @@
+{
+  "cases": {
+    "empty": {
+      "observation": {
+        "path": "saved_runs/empty/observation.json",
+        "sha256": "a7bc525340899fc07b83ccaf82a2ef885fcc2de6c28db3ac1ef6f0adc0148b6d"
+      }
+    },
+    "first": {
+      "observation": {
+        "path": "saved_runs/first/observation.json",
+        "sha256": "1db31d3f7a7345bb7b3fbd66f53a1022d1ab91245f5237d3ac6d0421c94f23d9"
+      }
+    },
+    "invalid": {
+      "observation": {
+        "path": "saved_runs/invalid/observation.json",
+        "sha256": "62f0930ddfa415260d0b4d69ab25a942a27dc6de10b79e6ef96ee01a7e4ab687"
+      }
+    },
+    "provider": {
+      "observation": {
+        "path": "saved_runs/provider/observation.json",
+        "sha256": "294bdbdb2af670df90539cf305f6b878980f8c1327f90e09ee38788017d0d2f4"
+      }
+    },
+    "revision": {
+      "observation": {
+        "path": "saved_runs/revision/observation.json",
+        "sha256": "a55032d444b970fac34ab9d1098197403a1d8846498e3403d13443509be9e7f1"
+      }
+    }
+  },
+  "schema": 1
+}

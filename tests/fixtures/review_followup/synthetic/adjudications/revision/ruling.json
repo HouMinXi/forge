@@ -1,0 +1,32 @@
+{
+  "candidate": "synthetic:revision-candidate",
+  "case": "revision",
+  "findings": [],
+  "observation_sha256": "a55032d444b970fac34ab9d1098197403a1d8846498e3403d13443509be9e7f1",
+  "revisions": [
+    {
+      "evidence": [
+        "candidate-note"
+      ],
+      "finding": "old-fixed",
+      "outcome": "verified_fixed",
+      "rationale": "The current label is nonempty."
+    },
+    {
+      "evidence": [
+        "candidate-note"
+      ],
+      "finding": "old-removed",
+      "outcome": "no_longer_applicable",
+      "rationale": "The original optional branch was removed."
+    },
+    {
+      "evidence": [],
+      "finding": "old-unclear",
+      "outcome": "insufficient_evidence",
+      "rationale": "No evidence about fallback was retained."
+    }
+  ],
+  "run": "fixture-revision",
+  "schema": 1
+}

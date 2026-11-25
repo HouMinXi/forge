@@ -1,0 +1,1 @@
+The sample label is expected to be nonempty. Candidate label is empty.

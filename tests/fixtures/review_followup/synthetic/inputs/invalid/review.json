@@ -1,0 +1,26 @@
+{
+  "artifacts": [
+    {
+      "case": "invalid",
+      "id": "candidate-note",
+      "path": "inputs/invalid/candidate.txt",
+      "revision": "synthetic:invalid-candidate",
+      "role": "candidate",
+      "sha256": "ca09461489df08808eef9e88c6d8523f490defb47068f2229018e574f74b99ed"
+    }
+  ],
+  "base": "synthetic:invalid-base",
+  "candidate": "synthetic:invalid-candidate",
+  "case": "invalid",
+  "groups": [
+    {
+      "artifacts": [
+        "candidate-note"
+      ],
+      "id": "group-1"
+    }
+  ],
+  "prior_findings": [],
+  "schema": 1,
+  "task": "first_review"
+}

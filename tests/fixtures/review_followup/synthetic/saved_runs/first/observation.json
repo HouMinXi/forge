@@ -1,0 +1,45 @@
+{
+  "baseline": {
+    "call_limit": null,
+    "context_limit": null,
+    "failure_policy": "saved-only",
+    "forge_commit": "git:5e82ac79dcb4f69c0684ec04470b0d370d516b09",
+    "model": null,
+    "prompt": null
+  },
+  "candidate": "synthetic:first-candidate",
+  "case": "first",
+  "diagnostic": null,
+  "findings": [
+    {
+      "blocking": true,
+      "claim": "Empty label",
+      "id": "f1"
+    },
+    {
+      "blocking": false,
+      "claim": "Missing label text",
+      "id": "f2"
+    },
+    {
+      "blocking": true,
+      "claim": "Existing spacing",
+      "id": "f3"
+    },
+    {
+      "blocking": false,
+      "claim": "Existing spacing reminder",
+      "id": "f4"
+    },
+    {
+      "blocking": true,
+      "claim": "Unreviewed concern",
+      "id": "f5"
+    }
+  ],
+  "input_sha256": "d991953a01bd7a3d032ebfd8348b7c67f1affafb8311b57255f77dd8143322db",
+  "run": "fixture-first",
+  "schema": 1,
+  "status": "completed",
+  "usage": 12
+}

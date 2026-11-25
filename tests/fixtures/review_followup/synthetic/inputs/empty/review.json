@@ -1,0 +1,26 @@
+{
+  "artifacts": [
+    {
+      "case": "empty",
+      "id": "candidate-note",
+      "path": "inputs/empty/candidate.txt",
+      "revision": "synthetic:empty-candidate",
+      "role": "candidate",
+      "sha256": "6e877ee4e02a60edb5b872b6a8993db39f9c919d05d43da868f8b1f6023d029a"
+    }
+  ],
+  "base": "synthetic:empty-base",
+  "candidate": "synthetic:empty-candidate",
+  "case": "empty",
+  "groups": [
+    {
+      "artifacts": [
+        "candidate-note"
+      ],
+      "id": "group-1"
+    }
+  ],
+  "prior_findings": [],
+  "schema": 1,
+  "task": "first_review"
+}

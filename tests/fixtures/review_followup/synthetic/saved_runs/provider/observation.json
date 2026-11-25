@@ -1,0 +1,19 @@
+{
+  "baseline": {
+    "call_limit": null,
+    "context_limit": null,
+    "failure_policy": "saved-only",
+    "forge_commit": "git:5e82ac79dcb4f69c0684ec04470b0d370d516b09",
+    "model": null,
+    "prompt": null
+  },
+  "candidate": "synthetic:provider-candidate",
+  "case": "provider",
+  "diagnostic": "Synthetic saved provider_failed observation.",
+  "findings": [],
+  "input_sha256": "9eb4d6a00cbdae35280b582709da6527e0760fabb70cf92d87c3fb45fc5bb065",
+  "run": "fixture-provider",
+  "schema": 1,
+  "status": "provider_failed",
+  "usage": null
+}

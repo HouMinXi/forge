@@ -1,0 +1,9 @@
+{
+  "candidate": "synthetic:provider-candidate",
+  "case": "provider",
+  "findings": [],
+  "observation_sha256": "294bdbdb2af670df90539cf305f6b878980f8c1327f90e09ee38788017d0d2f4",
+  "revisions": [],
+  "run": "fixture-provider",
+  "schema": 1
+}

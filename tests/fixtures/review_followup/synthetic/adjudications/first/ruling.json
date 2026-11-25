@@ -1,0 +1,38 @@
+{
+  "candidate": "synthetic:first-candidate",
+  "case": "first",
+  "findings": [
+    {
+      "attribution": "introduced",
+      "blocking": "should_block",
+      "factual": "supported",
+      "finding": "f1",
+      "root": "label-root"
+    },
+    {
+      "attribution": "introduced",
+      "blocking": "should_block",
+      "factual": "supported",
+      "finding": "f2",
+      "root": "label-root"
+    },
+    {
+      "attribution": "preexisting",
+      "blocking": "should_not_block",
+      "factual": "supported",
+      "finding": "f3",
+      "root": null
+    },
+    {
+      "attribution": "preexisting",
+      "blocking": "should_not_block",
+      "factual": "supported",
+      "finding": "f4",
+      "root": null
+    }
+  ],
+  "observation_sha256": "1db31d3f7a7345bb7b3fbd66f53a1022d1ab91245f5237d3ac6d0421c94f23d9",
+  "revisions": [],
+  "run": "fixture-first",
+  "schema": 1
+}

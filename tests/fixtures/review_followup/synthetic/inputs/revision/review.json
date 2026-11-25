@@ -1,0 +1,31 @@
+{
+  "artifacts": [
+    {
+      "case": "revision",
+      "id": "candidate-note",
+      "path": "inputs/revision/candidate.txt",
+      "revision": "synthetic:revision-candidate",
+      "role": "candidate",
+      "sha256": "1b82374673e7c3192e4edfe9bb1a7930d9c297eb3616b0937a99d03d2455427a"
+    }
+  ],
+  "base": "synthetic:revision-base",
+  "candidate": "synthetic:revision-candidate",
+  "case": "revision",
+  "groups": [
+    {
+      "artifacts": [
+        "candidate-note"
+      ],
+      "id": "group-1"
+    }
+  ],
+  "prior_findings": [
+    "old-fixed",
+    "old-removed",
+    "old-unclear",
+    "old-open"
+  ],
+  "schema": 1,
+  "task": "revision_followup"
+}

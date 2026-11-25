@@ -1,0 +1,55 @@
+{
+  "cases": {
+    "empty": {
+      "adjudication": {
+        "path": "adjudications/empty/ruling.json",
+        "sha256": "26d618be48eac1c5288a30cc1af11232ef02ea85b079a99a53ae5701ebb664c4"
+      },
+      "answer": {
+        "path": "answer_keys/empty/key.json",
+        "sha256": "ec26c95270ab32582596d6d64173037eedd7c8cecdcff4300837cd9e906eb1f8"
+      }
+    },
+    "first": {
+      "adjudication": {
+        "path": "adjudications/first/ruling.json",
+        "sha256": "5a09be53b75238157c7ea301afd4d069a5f06d03b37cbe513ca4797ec4db5be3"
+      },
+      "answer": {
+        "path": "answer_keys/first/key.json",
+        "sha256": "d1c5569dd596b6a1a324114edd0aa8aad05f553c703326df34ff9e536feabb9b"
+      }
+    },
+    "invalid": {
+      "adjudication": {
+        "path": "adjudications/invalid/ruling.json",
+        "sha256": "c9f6e1304b8a5cbf9d73021364ae7e457c079f73d3a26789afdecfac92a575a3"
+      },
+      "answer": {
+        "path": "answer_keys/invalid/key.json",
+        "sha256": "55cd9360ceac18496eb697dbc03ef4ccc7b94019c5874f51282582a122e542cd"
+      }
+    },
+    "provider": {
+      "adjudication": {
+        "path": "adjudications/provider/ruling.json",
+        "sha256": "3251db8b806428339804831acc557d62041f5bebe3df6aa798c0c0010c7def8a"
+      },
+      "answer": {
+        "path": "answer_keys/provider/key.json",
+        "sha256": "0ed909ef95b70a5bf691d1cbc6e26570bd868b1102b76985377ae3ea51d8de97"
+      }
+    },
+    "revision": {
+      "adjudication": {
+        "path": "adjudications/revision/ruling.json",
+        "sha256": "571681b5bffe704ff83b9d75b91c86e141ce44cc037b519b0c06f7b3a20ff4fa"
+      },
+      "answer": {
+        "path": "answer_keys/revision/key.json",
+        "sha256": "0e489067c3f60596d87579d8eb4285a319d435dee23ef894bdc9dab1212d102c"
+      }
+    }
+  },
+  "schema": 1
+}

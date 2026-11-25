@@ -1,0 +1,1 @@
+Candidate label is nonempty; the optional deleted branch no longer exists. The fallback was not observed.
