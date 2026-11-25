@@ -316,7 +316,7 @@ configuration; the pragma is used here because it sits next to the code it
 applies to. Source: https://mutmut.readthedocs.io/en/latest/ and the pragma
 parser in `mutmut/mutation/pragma_handling.py`.
 
-Seventeen statements carry a pragma (four in `e2e_record`, thirteen in
+Eighteen statements carry a pragma (five in `e2e_record`, thirteen in
 `e2e_evidence`), each with its reason inline:
 
 | location | why no test can kill it |
@@ -332,7 +332,33 @@ Seventeen statements carry a pragma (four in `e2e_record`, thirteen in
 | `verify`'s `(reviewed_commit or "")` | a fallback of `"XXXX"` fails `_is_commit` exactly as `""` does |
 | `verify`'s `resolve(strict=False)` | `strict=None` is falsy and takes the same path |
 | the module-level `pytest_sessionfinish` | the delegate reads only `exitstatus` |
-| the `stacklevel` of the "not written" warning | only the frame the warning is attributed to changes; the message is asserted exactly |
+| the filename and line number passed to `showwarning` | attribution only; the category and message remain asserted |
+
+### The diagnostic cannot change what the run reports
+
+When the record is refused, the plugin sends its diagnostic directly to
+`warnings.showwarning()` with an explicit `UserWarning` category. This bypasses
+warning filters without replacing them: `-W error` cannot promote the diagnostic
+to an exception, and `-W ignore` cannot drop it. The installed warning display
+hook still decides where the message appears. No temporary global filter window
+can change how an unrelated thread's warning is handled.
+
+The message also says which of the ways it declined happened — the run had not
+finished, the snapshot could not be read, the snapshot could not be read again
+(a git call stopped answering, which is not the same as the tree moving), the
+tree no longer matches the commit it started on (naming it), or the record could
+not be written — so a caller can tell a refusal from a failure without reading
+the code.
+
+The regression tests run pytest in a subprocess twice, with `-W error` and with
+`-W ignore::UserWarning`, and assert three things at once in each: exit code 0,
+no record, and the full message with its reason still in the output. A unit test
+compares `warnings.filters` before and after the hook. Another schedules an
+unrelated thread's warning at the diagnostic dispatch boundary under both error
+and ignore policies. It observes the filters and the worker's raised, displayed,
+or ignored outcome. The old `warn()` route is intercepted before it takes its
+warning lock; waiting inside that route's display callback would measure lock
+contention instead of the policy.
 
 ### Only the test body counts, and the snapshot is re-read at the end
 
@@ -385,7 +411,8 @@ was checked rather than assumed: renaming `--record` to `--recrod` in the parser
 breaks six of the command-line tests, and dropping `required=True` from
 `--execution-id` breaks two. What the pragmas stopped judging is still guarded.
 
-Everything else is killed: 732 mutants, 0 survivors, over 155 tests. Dead code
-found on the way out was deleted rather than pragma'd, which is why the two
-unreachable guards in `_as_posix_relative` and the unused `or "unknown"` in the
-HEAD comparison are gone.
+The earlier producer/reader run recorded 732 mutants killed, no survivors, with
+155 tests. That historical count is not a result for subsequent diagnostic
+changes. Dead code found during that run was deleted rather than pragma'd, which
+is why the two unreachable guards in `_as_posix_relative` and the unused
+`or "unknown"` in the HEAD comparison are gone.
