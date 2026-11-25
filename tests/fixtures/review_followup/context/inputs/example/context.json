@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "case": "example",
+  "review_input_sha256": "25ec54ceb370c3fc6c41aee7e0490d17cf7bc99efe93ba85ced3bfe577cc4b52",
+  "groups": {
+    "storage": {
+      "diff": "@@ put @@\n+    if value is None:\n+        return False",
+      "contract": "Missing values must not be written.",
+      "lenses": {
+        "qodo": "Correctness",
+        "expert": "Maintainability",
+        "adversarial": "Boundary behavior"
+      },
+      "baseline": [
+        "overview"
+      ],
+      "limit_bytes": 469
+    },
+    "tests": {
+      "diff": "@@ teardown @@\n+reset the store",
+      "contract": "Each test leaves the store empty.",
+      "lenses": {
+        "qodo": "Correctness",
+        "expert": "Maintainability",
+        "adversarial": "Boundary behavior"
+      },
+      "baseline": [
+        "cleanup"
+      ],
+      "limit_bytes": 712
+    }
+  },
+  "candidates": [
+    {
+      "id": "overview",
+      "group": "storage",
+      "revision": "synthetic:context-v1",
+      "relationship": "background",
+      "artifact": "store",
+      "start": 0,
+      "end": 69
+    },
+    {
+      "id": "lookup",
+      "group": "storage",
+      "revision": "synthetic:context-v1",
+      "relationship": "reader",
+      "artifact": "store",
+      "start": 69,
+      "end": 126
+    },
+    {
+      "id": "error-exit",
+      "group": "storage",
+      "revision": "synthetic:context-v1",
+      "relationship": "failure_exit",
+      "artifact": "store",
+      "start": 154,
+      "end": 197
+    },
+    {
+      "id": "error-exit-copy",
+      "group": "storage",
+      "revision": "synthetic:context-v1",
+      "relationship": "writer",
+      "artifact": "store",
+      "start": 154,
+      "end": 197
+    },
+    {
+      "id": "writer-not-captured",
+      "group": "storage",
+      "revision": "synthetic:context-v1",
+      "relationship": "writer",
+      "artifact": null,
+      "start": null,
+      "end": null
+    },
+    {
+      "id": "cleanup",
+      "group": "tests",
+      "revision": "synthetic:context-v1",
+      "relationship": "test_cleanup",
+      "artifact": "tests",
+      "start": 59,
+      "end": 84
+    },
+    {
+      "id": "setup",
+      "group": "tests",
+      "revision": "synthetic:context-v1",
+      "relationship": "test_setup",
+      "artifact": "tests",
+      "start": 0,
+      "end": 28
+    },
+    {
+      "id": "skip",
+      "group": "tests",
+      "revision": "synthetic:context-v1",
+      "relationship": "test_skip",
+      "artifact": "tests",
+      "start": 28,
+      "end": 59
+    }
+  ]
+}

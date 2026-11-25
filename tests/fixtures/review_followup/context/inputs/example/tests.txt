@@ -1,0 +1,3 @@
+setup: allocate a new store
+skip: require fixtures enabled
+cleanup: reset the store

@@ -81,3 +81,64 @@ answer and adjudication bytes consumed by scoring.
 
 This does not qualify production behavior, real A/B, live GitHub/mail adapters,
 runtime supersession, receipts, or merge gates.
+
+## Targeted context preview (PR2)
+
+```sh
+fixture=tests/fixtures/review_followup/context
+out=$(mktemp -d)
+PYTHONPATH=src python -m code_forge.eval.review_followup preview-context "$fixture" \
+  --case example --output "$out/context.json"
+```
+
+This compares an explicitly ordered baseline with a deterministic targeted
+selection over an explicitly supplied catalog. The example is synthetic.
+There is no live scanning, model call, or scoring; the preview can run with
+only the review manifest and input tree. Its input visibility is the PR1
+trusted static fixture boundary, not a sandbox or a way to detect a person
+embedding answers in otherwise authorized review inputs.
+
+The case-local `inputs/<case>/context.json` binds the exact PR1 review input
+SHA-256. It accepts first-review cases only. Group IDs must exactly match the
+frozen grouping. For each group, the request gives the same nonempty diff,
+contract and three lens texts to both arms, a shared byte limit, and an
+ordered baseline list of candidate IDs. These texts are supplied by the
+fixture author; the planner does not reconstruct or attest production
+prompts. The preview records the same group and member order in both arms.
+
+Candidate rows declare a group, revision and relationship, and either a
+candidate artifact ID with a zero-based half-open **byte** span, or three
+nulls (explicitly missing, never empty successful evidence). Every present
+span is checked against the already verified bytes of an artifact owned by
+that group and candidate revision, even if it will not fit. A missing file
+or invalid reference is a rejection, not a declared missing candidate.
+A span must decode as UTF-8, without newline normalization. Limits are 32
+groups and 256 candidate rows per case, and up to 1 MiB measured per group.
+
+Targeted ordering is failure exit, reader, writer, schema, generator, handler,
+test setup, skip, cleanup, then background. Within one relationship the tie
+order is artifact ID, span start, span end, then candidate ID. The baseline
+keeps the caller's list order. In each arm, take the next whole span if it
+fits, continue after skips, and keep a selected exact artifact/span at most
+once per group. Overlapping but unequal spans are separate. The preview
+distinguishes missing, duplicate, over-budget and not-in-baseline; a baseline
+span is displaced only if its exact artifact/span is absent in the targeted
+payload. No partial spans are emitted, so `truncated` is always empty.
+
+The measurement is the length of compact sorted-key UTF-8 JSON for
+`{"required": <group's required object>, "optional": <arm's optional array>}`,
+without trailing newline, using Python JSON with `ensure_ascii=False` and
+separators `(",", ":")`. This includes escaping, separators, provenance and
+all supplied required text. If required context alone exceeds the limit, fail
+without publishing. The preview records each arm's byte length and SHA-256
+over exactly this payload, and a normalized context-request SHA-256
+(candidate rows in targeted order, baseline lists unchanged). The preview
+file's own pretty-printed JSON is not what the budget measures. Neither byte
+counts nor this envelope are provider tokens, billable usage, or proof that
+a production prompt fits. Verify actual prompt equivalence before any A/B.
+
+The synthetic storage group uses 469/469 bytes in baseline and 447/469 in
+targeted: the failure path replaces the overview; a duplicate, missing
+writer and over-budget reader are visible. The tests group fits all three
+whole spans at exactly 712 bytes. Run the same offline pytest command above
+to verify both replay and context preview. No quality gain is claimed.

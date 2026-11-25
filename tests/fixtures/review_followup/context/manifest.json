@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "example",
+      "lineage": "context-example",
+      "split": "calibration",
+      "input": {
+        "path": "inputs/example/review.json",
+        "sha256": "25ec54ceb370c3fc6c41aee7e0490d17cf7bc99efe93ba85ced3bfe577cc4b52"
+      }
+    }
+  ]
+}
