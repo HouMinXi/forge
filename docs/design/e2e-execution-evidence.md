@@ -340,7 +340,10 @@ When the record is refused, the plugin sends its diagnostic directly to
 `warnings.showwarning()` with an explicit `UserWarning` category. This bypasses
 warning filters without replacing them: `-W error` cannot promote the diagnostic
 to an exception, and `-W ignore` cannot drop it. The installed warning display
-hook still decides where the message appears. No temporary global filter window
+hook still decides where the message appears. If that hook raises an ordinary
+exception, the plugin tries stderr; if stderr also fails, it leaves the test
+result alone without a diagnostic. Interrupts are not swallowed.
+No temporary global filter window
 can change how an unrelated thread's warning is handled.
 
 The message also says which of the ways it declined happened — the run had not

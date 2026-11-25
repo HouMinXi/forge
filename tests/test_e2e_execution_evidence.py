@@ -1971,28 +1971,52 @@ class TestTheReviewedCommitIsTrimmed:
 
 
 class TestAConfiguredRunThatProducesNothingSaysSo:
-    def test_a_refused_write_warns_with_the_path(self, tmp_path):
+    def test_a_refused_write_warns_with_the_path(self, tmp_path, monkeypatch, capsys):
         repo = tmp_path / "repo"
         _make_repo(repo, {"tests/test_ok.py": _PASSING})
         blocker = tmp_path / "blocker"
         blocker.write_text("not a directory", encoding="utf-8")
-        os.environ["FORGE_E2E_RECORD"] = str(blocker / "run.json")
-        os.environ["FORGE_E2E_EXECUTION_ID"] = "refused"
-        try:
-            session = _Session()
-            session.pytest_sessionstart(SimpleNamespace(config=SimpleNamespace(rootpath=str(repo))))
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                session.pytest_sessionfinish(None, 0)
-        finally:
-            os.environ.pop("FORGE_E2E_RECORD", None)
-            os.environ.pop("FORGE_E2E_EXECUTION_ID", None)
-
-        assert len(caught) == 1
-        assert str(caught[0].message) == (
+        record = blocker / "run.json"
+        monkeypatch.setenv("FORGE_E2E_RECORD", str(record))
+        monkeypatch.setenv("FORGE_E2E_EXECUTION_ID", "refused")
+        session = _Session()
+        session.pytest_sessionstart(SimpleNamespace(config=SimpleNamespace(rootpath=str(repo))))
+        message = (
             "the execution record was asked for but not written: %s "
-            "(the record could not be written)" % (blocker / "run.json")
+            "(the record could not be written)" % record
         )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            session.pytest_sessionfinish(None, 0)
+        assert len(caught) == 1
+        assert str(caught[0].message) == message
+
+        def broken_display(*args, **kwargs):
+            raise RuntimeError("warning display failed")
+
+        with monkeypatch.context() as display:
+            display.setattr(warnings, "showwarning", broken_display)
+            session.pytest_sessionfinish(None, 0)
+            assert capsys.readouterr().err == f"{message}\n"
+
+            class ClosedStderr:
+                def write(self, _message):
+                    raise OSError("stderr is closed")
+
+            with monkeypatch.context() as streams:
+                streams.setattr(sys, "stderr", ClosedStderr())
+                session.pytest_sessionfinish(None, 1)
+
+        def interrupted_display(*args, **kwargs):
+            raise KeyboardInterrupt
+
+        with monkeypatch.context() as display:
+            display.setattr(warnings, "showwarning", interrupted_display)
+            with pytest.raises(KeyboardInterrupt):
+                session.pytest_sessionfinish(None, 0)
+
+        assert not record.exists()
 
     def test_a_config_with_neither_root_does_not_end_the_session(self, tmp_path, monkeypatch):
         repo = tmp_path / "repo"
