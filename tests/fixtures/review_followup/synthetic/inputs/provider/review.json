@@ -1,0 +1,26 @@
+{
+  "artifacts": [
+    {
+      "case": "provider",
+      "id": "candidate-note",
+      "path": "inputs/provider/candidate.txt",
+      "revision": "synthetic:provider-candidate",
+      "role": "candidate",
+      "sha256": "d887222ed0170b1d07858e883ba11521f59b3657ba318122cfb1dc6785377bbb"
+    }
+  ],
+  "base": "synthetic:provider-base",
+  "candidate": "synthetic:provider-candidate",
+  "case": "provider",
+  "groups": [
+    {
+      "artifacts": [
+        "candidate-note"
+      ],
+      "id": "group-1"
+    }
+  ],
+  "prior_findings": [],
+  "schema": 1,
+  "task": "first_review"
+}

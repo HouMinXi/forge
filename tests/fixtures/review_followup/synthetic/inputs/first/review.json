@@ -1,0 +1,26 @@
+{
+  "artifacts": [
+    {
+      "case": "first",
+      "id": "candidate-note",
+      "path": "inputs/first/candidate.txt",
+      "revision": "synthetic:first-candidate",
+      "role": "candidate",
+      "sha256": "90ebb78eaede4ea392024f391dda6e12f9cbd531baa2404f0d1162b9d15d5f68"
+    }
+  ],
+  "base": "synthetic:first-base",
+  "candidate": "synthetic:first-candidate",
+  "case": "first",
+  "groups": [
+    {
+      "artifacts": [
+        "candidate-note"
+      ],
+      "id": "group-1"
+    }
+  ],
+  "prior_findings": [],
+  "schema": 1,
+  "task": "first_review"
+}

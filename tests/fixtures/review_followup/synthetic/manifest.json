@@ -1,0 +1,50 @@
+{
+  "cases": [
+    {
+      "id": "first",
+      "input": {
+        "path": "inputs/first/review.json",
+        "sha256": "d991953a01bd7a3d032ebfd8348b7c67f1affafb8311b57255f77dd8143322db"
+      },
+      "lineage": "first",
+      "split": "calibration"
+    },
+    {
+      "id": "revision",
+      "input": {
+        "path": "inputs/revision/review.json",
+        "sha256": "7d2f67cb86142196fa907e3be483f2aa3bc5739d0826f40cc0153bb5e796ba9b"
+      },
+      "lineage": "revision",
+      "split": "calibration"
+    },
+    {
+      "id": "empty",
+      "input": {
+        "path": "inputs/empty/review.json",
+        "sha256": "c865f84f7415e6ad8afbcc1f23b90475970f02e734b557342b5f878760042018"
+      },
+      "lineage": "empty",
+      "split": "calibration"
+    },
+    {
+      "id": "provider",
+      "input": {
+        "path": "inputs/provider/review.json",
+        "sha256": "9eb4d6a00cbdae35280b582709da6527e0760fabb70cf92d87c3fb45fc5bb065"
+      },
+      "lineage": "provider",
+      "split": "calibration"
+    },
+    {
+      "id": "invalid",
+      "input": {
+        "path": "inputs/invalid/review.json",
+        "sha256": "0bffee18d3e5b1b235e28ea7cc0d4abaf5dabe4fccb006c19491a47096c95f3f"
+      },
+      "lineage": "invalid",
+      "split": "calibration"
+    }
+  ],
+  "schema": 1
+}

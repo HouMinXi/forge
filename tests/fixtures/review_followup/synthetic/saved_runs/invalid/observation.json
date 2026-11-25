@@ -1,0 +1,19 @@
+{
+  "baseline": {
+    "call_limit": null,
+    "context_limit": null,
+    "failure_policy": "saved-only",
+    "forge_commit": "git:5e82ac79dcb4f69c0684ec04470b0d370d516b09",
+    "model": null,
+    "prompt": null
+  },
+  "candidate": "synthetic:invalid-candidate",
+  "case": "invalid",
+  "diagnostic": "Synthetic saved invalid_response observation.",
+  "findings": [],
+  "input_sha256": "0bffee18d3e5b1b235e28ea7cc0d4abaf5dabe4fccb006c19491a47096c95f3f",
+  "run": "fixture-invalid",
+  "schema": 1,
+  "status": "invalid_response",
+  "usage": null
+}

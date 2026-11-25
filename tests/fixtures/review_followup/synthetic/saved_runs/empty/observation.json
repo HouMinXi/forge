@@ -1,0 +1,19 @@
+{
+  "baseline": {
+    "call_limit": null,
+    "context_limit": null,
+    "failure_policy": "saved-only",
+    "forge_commit": "git:5e82ac79dcb4f69c0684ec04470b0d370d516b09",
+    "model": null,
+    "prompt": null
+  },
+  "candidate": "synthetic:empty-candidate",
+  "case": "empty",
+  "diagnostic": null,
+  "findings": [],
+  "input_sha256": "c865f84f7415e6ad8afbcc1f23b90475970f02e734b557342b5f878760042018",
+  "run": "fixture-empty",
+  "schema": 1,
+  "status": "completed",
+  "usage": 0
+}
