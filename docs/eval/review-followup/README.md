@@ -48,7 +48,8 @@ protection against concurrent replacement. Per-file size limit: 1 MiB;
 cumulative read limit: 32 MiB per batch. JSON rejects invalid UTF-8,
 duplicate keys and nonfinite numbers. Input-envelope references are resolved
 before the artifact phase. For each batch, schema and references are checked
-before files, and all files are read before any digest mismatch is reported;
+before files, including checking every path's syntax before any file lookup.
+All files are read before any digest mismatch is reported;
 manifest order decides ties. SHA-256 hashes the exact read bytes, including
 whitespace and line endings. Consumers receive those verified bytes.
 
@@ -67,7 +68,8 @@ per finding, separately from root hits. Unsupported/unknown observations
 remain visible. An explicitly empty answer key can be scored; an unlabelled
 one cannot. Null usage is not zero. Follow-up uses saved human conclusions,
 not automated closure; missing human labels and insufficient evidence remain
-open. Both scorecards preserve the case and artifact identities used.
+open. Each report case includes the relative paths and SHA-256 of the exact
+answer and adjudication bytes consumed by scoring.
 
 ## Read-only sample
 

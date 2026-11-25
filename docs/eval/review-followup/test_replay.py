@@ -265,3 +265,57 @@ def test_cleanup_failure_after_publication_keeps_success(tree, tmp_path, monkeyp
     finally:
         for path in temp_files:
             unlink(path)
+
+
+@pytest.mark.parametrize(
+    ("kind", "relative_path"),
+    [("answer", "answer_keys/first/key.json"), ("adjudication", "adjudications/first/ruling.json")],
+)
+def test_report_pins_exact_scoring_artifact_bytes(tree, kind, relative_path):
+    def first_row():
+        return next(row for row in pipeline.replay(tree) if row["case"] == "first")
+
+    before = first_row()
+    path = tree / relative_path
+    original = path.read_bytes()
+    revised = original + b"\n"
+    path.write_bytes(revised)
+    modify(
+        tree / "scores.json", lambda index: index["cases"]["first"][kind].update(sha256=digest(revised))
+    )
+    after = first_row()
+    assert before["scoring_artifacts"][kind] == {"path": relative_path, "sha256": digest(original)}
+    assert after["scoring_artifacts"][kind] == {"path": relative_path, "sha256": digest(revised)}
+    assert {k: v for k, v in before.items() if k != "scoring_artifacts"} == {
+        k: v for k, v in after.items() if k != "scoring_artifacts"
+    }
+
+
+def test_bad_path_in_later_artifact_is_reported_before_any_artifact_io(tree, monkeypatch):
+    first = tree / "inputs/first/candidate.txt"
+    original = first.read_bytes()
+    first.unlink()
+
+    review = tree / "inputs/revision/review.json"
+    good = review.read_bytes()
+    updated = modify(
+        review, lambda view: view["artifacts"][0].update(path="inputs/revision//candidate.txt")
+    )
+    modify(tree / "manifest.json", lambda index: index["cases"][1]["input"].update(sha256=updated))
+
+    lstat = Path.lstat
+
+    def guarded(path):
+        assert path.name != "candidate.txt", "artifact lookup preceded batch path validation"
+        return lstat(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "lstat", guarded)
+        with pytest.raises(InputError, match="unsafe-path: revision/artifacts/candidate-note"):
+            pipeline.validate(tree)
+    review.write_bytes(good)
+    modify(tree / "manifest.json", lambda index: index["cases"][1]["input"].update(sha256=digest(good)))
+    with pytest.raises(InputError, match="missing-file: first/artifacts/candidate-note"):
+        pipeline.validate(tree)
+    first.write_bytes(original)
+    assert len(pipeline.validate(tree)) == 5

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from .fixtures import (
     InputError,
-    digest,
     enum,
     fields,
     parse,
@@ -75,8 +74,8 @@ def validate(root):
     for case in cases:
         name = case["id"]
         field = f"{name}/input"
-        raw = inputs[field]
-        view = parse(raw, field)
+        verified_input = inputs[field]
+        view = parse(verified_input.raw, field)
         prior = input_shape(view, case)
         artifacts = {}
         for item in view["artifacts"]:
@@ -103,7 +102,7 @@ def validate(root):
             used.update(members)
             groups.append((group_id, members))
         require(used == artifacts.keys(), field)
-        decoded.append((case, view, digest(raw), prior, tuple(groups), artifacts))
+        decoded.append((case, view, verified_input.sha256, prior, tuple(groups), artifacts))
 
     verified = pinned_files(root, pool)
     return tuple(
@@ -121,8 +120,8 @@ def validate(root):
                     key,
                     item["role"],
                     item["revision"],
-                    digest(verified[f"{case['id']}/artifacts/{key}"]),
-                    verified[f"{case['id']}/artifacts/{key}"],
+                    verified[f"{case['id']}/artifacts/{key}"].sha256,
+                    verified[f"{case['id']}/artifacts/{key}"].raw,
                 )
                 for key, item in artifacts.items()
             ),
@@ -137,8 +136,10 @@ def seal_runs(root, reviews):
     sealed = []
     for review in reviews:
         field = f"{review.case}/observation"
-        raw = saved[field]
-        sealed.append(SealedObservation(review, observation(parse(raw, field), review, digest(raw))))
+        artifact = saved[field]
+        sealed.append(
+            SealedObservation(review, observation(parse(artifact.raw, field), review, artifact.sha256))
+        )
     return tuple(sealed)
 
 
@@ -152,11 +153,18 @@ def score_sealed(root, sealed):
     rows = []
     for item in sealed:
         review = item.review
-        field = f"{review.case}/answer"
-        answer = answer_key(parse(artifacts[field], field), review)
-        field = f"{review.case}/adjudication"
-        human = adjudicate(parse(artifacts[field], field), review, item.result, answer)
-        rows.append(score(review, item.result, answer, human))
+        answer_field = f"{review.case}/answer"
+        answer_artifact = artifacts[answer_field]
+        answer = answer_key(parse(answer_artifact.raw, answer_field), review)
+        ruling_field = f"{review.case}/adjudication"
+        ruling_artifact = artifacts[ruling_field]
+        human = adjudicate(parse(ruling_artifact.raw, ruling_field), review, item.result, answer)
+        row = score(review, item.result, answer, human)
+        row["scoring_artifacts"] = {
+            "answer": answer_artifact.reference(),
+            "adjudication": ruling_artifact.reference(),
+        }
+        rows.append(row)
     return sorted(rows, key=lambda row: row["case"])
 
 

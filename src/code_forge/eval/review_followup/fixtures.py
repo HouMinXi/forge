@@ -5,6 +5,7 @@ import json
 import math
 import re
 import stat
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 MAX_BYTES = 1024 * 1024
@@ -82,7 +83,7 @@ def enum(value, *choices):
     return type(value) is str and value in choices
 
 
-def read_file(root, name, field):
+def _checked_path(name, field):
     path = PurePosixPath(name)
     if (
         path.is_absolute()
@@ -92,6 +93,14 @@ def read_file(root, name, field):
         or "\x00" in name
     ):
         raise InputError("unsafe-path", field)
+    return path
+
+
+def read_file(root, name, field):
+    return _read_checked(root, _checked_path(name, field), field)
+
+
+def _read_checked(root, path, field):
     current = root
     try:
         for index, part in enumerate(path.parts):
@@ -116,20 +125,34 @@ def read_file(root, name, field):
         raise InputError("file-read-failed", field) from exc
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedArtifact:
+    path: str
+    raw: bytes
+    sha256: str
+
+    def reference(self):
+        return {"path": self.path, "sha256": self.sha256}
+
+
 def pinned_files(root, entries):
-    """Check every file read before reporting any digest mismatch."""
+    """Validate all paths, then read all files, then verify their digests."""
+    checked = [(field, ref, _checked_path(ref["path"], field)) for field, ref in entries]
     data = []
     total = 0
-    for field, ref in entries:
-        raw = read_file(root, ref["path"], field)
+    for field, ref, path in checked:
+        raw = _read_checked(root, path, field)
         total += len(raw)
         if total > 32 * MAX_BYTES:
             raise InputError("batch-too-large", field)
-        data.append((field, raw, ref["sha256"]))
-    for field, raw, expected in data:
-        if digest(raw) != expected:
+        data.append((field, ref, raw))
+    verified = {}
+    for field, ref, raw in data:
+        checksum = digest(raw)
+        if checksum != ref["sha256"]:
             raise InputError("digest-mismatch", field)
-    return {field: raw for field, raw, _ in data}
+        verified[field] = VerifiedArtifact(ref["path"], raw, checksum)
+    return verified
 
 
 def ref_shape(ref, field):
