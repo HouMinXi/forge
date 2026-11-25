@@ -14,11 +14,12 @@ can be paired with any receipt that matches its text.
 - For this execution, which commit, source file digest, test digest and
   observer digest were in force.
 - Whether the named line executed, how often, and per node.
-- Whether the node's call phase ran and what it produced. An xfail-marked
-  result keeps its own outcome (`xpassed` / `xfailed`), so it never answers a
-  claim about an ordinary passing or failing call. That includes the strict
-  form: pytest reports a strict XPASS as `failed` without `wasxfail`, so the
-  xfail keyword on the report is what identifies it.
+- Whether the node's call phase ran and what it produced. Expected failures
+  keep their own outcome (`xpassed` / `xfailed`). In pytest 9.2.0 a strict
+  XPASS is reported as `failed`, without `wasxfail`, and its string `longrepr`
+  starts with `[XPASS(strict)]`. The producer checks that type and prefix.
+  An inactive xfail marker or a mismatch with `xfail(raises=...)` remains an
+  ordinary failure; the xfail keyword alone does not identify an XPASS.
 
 ## What it does not answer
 
@@ -30,6 +31,10 @@ can be paired with any receipt that matches its text.
 - It is not a gate, a verdict or an attestation, and it is not wired into CI.
 
 ## Producing
+
+This example assumes the tools and the tested source are in the same
+checkout. To replay the fixed historical sample, use the two-checkout
+commands in [RESULTS.md](RESULTS.md) instead.
 
 ```sh
 PYTHONPATH=src python docs/eval/r3-evidence-packet/packet.py \
@@ -85,12 +90,18 @@ body.
 ## Tests
 
 ```sh
-python -m pytest -q docs/eval/r3-evidence-packet
+PYTEST_ADDOPTS=--rootdir=. python -m pytest -q docs/eval/r3-evidence-packet
 ```
 
-Seven cases cover the packet contents, a matching verification, and the
-refusals above. Withdrawing each refusal in turn turns its covering case red:
-run identity, commit, call phase, hit count and packet digest.
+The command-local rootdir option also reaches the fixture subprocesses. It
+prevents an ancestor checkout's pytest configuration from changing their
+node paths when temporary fixtures live under that checkout.
+
+The manual suite checks matching packets and refusals, including a test node
+in a subdirectory, strict and non-strict XPASS, inactive xfail conditions, and
+`raises` mismatches. These tests are outside the default CI selection; run the
+command explicitly. See [RESULTS.md](RESULTS.md) for the pinned tool and sample
+checkouts and the recorded three-stage replay.
 
 The tracer itself is not duplicated here: the producer loads
 `docs/eval/r3-target-line/target_hits.py` and records its digest in the packet.
