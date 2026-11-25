@@ -61,6 +61,10 @@ says which one changed: a packet that describes opening state cannot also
 describe a tree that changed underneath it. A variant prepared before the run
 is stable by construction, and the packet records its digest.
 
+The target node must be collected once. The producer and verifier refuse a
+repeated target or multiple call reports for that node, because a single
+aggregate hit count cannot be attributed to one of those calls.
+
 ## Verifying
 
 ```sh

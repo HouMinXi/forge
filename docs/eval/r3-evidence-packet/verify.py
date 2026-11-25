@@ -107,6 +107,8 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
     collected = body.get("collected", [])
     if type(collected) is not list or node not in collected:
         raise Refused("node was not collected in this run")
+    if collected.count(node) > 1:
+        raise Refused("target node was collected more than once")
     node_file = node.split("::", 1)[0]
     if any(type(item) is not str or item.split("::", 1)[0] != node_file for item in collected):
         raise Refused(f"{node} does not name a node in {node_file}")
@@ -118,10 +120,12 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
         type(entry) is not list or len(entry) != 2 for entry in node_phases
     ):
         raise Refused("phase entry is not a when/outcome pair")
-    if not any(when == "call" for when, _ in node_phases):
-        raise Refused("node has no call phase: collected but not executed")
     call_outcomes = [outcome for when, outcome in node_phases if when == "call"]
-    if args.expect_call not in call_outcomes:
+    if not call_outcomes:
+        raise Refused("node has no call phase: collected but not executed")
+    if len(call_outcomes) != 1:
+        raise Refused("target node has more than one call report")
+    if call_outcomes[0] != args.expect_call:
         # A failing run says nothing about this node: another node may have
         # failed, or this one may have failed in teardown after a passing call.
         raise Refused(f"node call outcome is {call_outcomes!r}, expected {args.expect_call!r}")

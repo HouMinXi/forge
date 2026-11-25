@@ -197,6 +197,10 @@ def produce(args: argparse.Namespace) -> int:
         # pytest_args decides what actually runs. Refuse unless the recorded
         # node ran and every collected node comes from that same file.
         raise PacketError(f"{args.node} does not name a node in {node_file}")
+    if collector.collected.count(args.node) > 1:
+        raise PacketError("target node was collected more than once")
+    if sum(when == "call" for when, _ in collector.phases.get(args.node, ())) > 1:
+        raise PacketError("target node has more than one call report")
     body = _body(root, collector, identity)
     body["packet_sha256"] = hashlib.sha256(canonical(body)).hexdigest()
     data = json.dumps(body, indent=2, sort_keys=True) + "\n"

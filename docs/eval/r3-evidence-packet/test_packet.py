@@ -125,7 +125,10 @@ def _expectations(
     exit_code: int = 0,
 ) -> list[str]:
     commit = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     return [
         "--expect-run-id",
@@ -157,7 +160,9 @@ def _expectations(
 
 def _verify(packet: Path, args: list[str]):
     return subprocess.run(
-        [sys.executable, str(VERIFY), str(packet), *args], capture_output=True, text=True
+        [sys.executable, str(VERIFY), str(packet), *args],
+        capture_output=True,
+        text=True,
     )
 
 
@@ -347,7 +352,12 @@ def test_a_passing_call_beside_a_failing_node_is_refused(project):
     check = _verify(
         packet,
         _expectations(
-            project, node, announced["run_id"], body["packet_sha256"], call="failed", exit_code=1
+            project,
+            node,
+            announced["run_id"],
+            body["packet_sha256"],
+            call="failed",
+            exit_code=1,
         ),
     )
     assert check.returncode == 1
@@ -450,7 +460,12 @@ def test_a_strict_xpass_is_not_a_plain_failure(project):
     check = _verify(
         packet,
         _expectations(
-            project, node, announced["run_id"], announced["sha256"], call="failed", exit_code=1
+            project,
+            node,
+            announced["run_id"],
+            announced["sha256"],
+            call="failed",
+            exit_code=1,
         ),
     )
     assert check.returncode == 1
@@ -518,3 +533,35 @@ def test_the_recorded_node_must_live_in_the_hashed_test_file(project):
     assert result.returncode == 2
     assert "does not name a node in" in result.stderr
     assert not packet.exists()
+
+
+def test_the_producer_refuses_a_repeated_target(project):
+    node = "test_mod.py::test_hits_the_line"
+    run, packet = _run(project, node, "--keep-duplicates", "test_mod.py", pytest_node="test_mod.py")
+    assert run.returncode == 2, run.stdout + run.stderr
+    assert "target node was collected more than once" in run.stderr
+    assert not packet.exists()
+    assert "forge-r3-packet" not in run.stdout
+
+
+@pytest.mark.parametrize("repeat", ["collection", "call"])
+def test_the_verifier_refuses_ambiguous_target_identity(project, repeat):
+    node = "test_mod.py::test_hits_the_line"
+    run, packet = _run(project, node)
+    assert run.returncode == 0, run.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    if repeat == "collection":
+        body["collected"].append(node)
+        reason = "target node was collected more than once"
+    else:
+        body["phases"][node].append(["call", "failed"])
+        reason = "target node has more than one call report"
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    check = _verify(
+        packet,
+        _expectations(project, node, body["identity"]["run_id"], body["packet_sha256"]),
+    )
+    assert check.returncode == 1, check.stdout + check.stderr
+    assert reason in check.stderr
+    assert "verified" not in check.stdout
