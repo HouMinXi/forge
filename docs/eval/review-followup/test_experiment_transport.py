@@ -12,6 +12,8 @@ import pytest
 from code_forge import llm_invoke
 from code_forge.cli import _estimate_l1_prompt_tokens
 from code_forge.eval.review_followup import experiment, experiment_adapter
+from code_forge.eval.review_followup.attempt_plan import AttemptSlot, PairedAttemptGate
+from code_forge.eval.review_followup.fixtures import InputError
 
 FIXTURE = Path(__file__).resolve().parents[3] / "tests/fixtures/review_followup/context"
 
@@ -44,6 +46,7 @@ def test_openai_wire_body_preserves_frozen_prompts(monkeypatch):
     report = experiment.dry_run(FIXTURE, "example", 16000)
     rows = {(r["path"], r["group"], r["pass"]): r for r in report["rows"]}
     assert set(captures) == {"ordinary", "grouped"}
+    smoke = []
     for path, batches in captures.items():
         assert len(batches) == 3
         for arm, batch in zip(("control", "baseline", "targeted"), batches, strict=True):
@@ -65,8 +68,32 @@ def test_openai_wire_body_preserves_frozen_prompts(monkeypatch):
                     body = json.loads(bodies[-1])
                     observed = body["messages"][0]["content"].encode("utf-8")
                     assert hashlib.sha256(observed).hexdigest() == row[arm]["prompt_sha256"]
+                    if path == "grouped":
+                        frozen = AttemptSlot(
+                            arm, item.group, item.pass_name, hashlib.sha256(bodies[-1]).hexdigest()
+                        )
+                        smoke.append((frozen, bodies[-1]))
     assert len(bodies) == 36
     assert report["sent_requests"] == 0
+    # Feed the exact production-serialized bodies (not rerendered strings)
+    # to the serial offline admission gate. Simulate model drift before slot 1.
+    admission = PairedAttemptGate(
+        ("storage", "tests"),
+        (slot for slot, _ in smoke),
+        arm_order=("baseline", "targeted"),
+        max_body_bytes=64000,
+        attempt_ceiling=12,
+    )
+    first, wire = smoke[0]
+    changed_model = wire.replace(b'"offline-placeholder"', b'"different-model"')
+    assert changed_model != wire
+    with pytest.raises(InputError, match="attempt-body-drift"):
+        admission.reserve(first.arm, first.group, first.pass_name, changed_model)
+    for i, (slot, wire) in enumerate(smoke, 1):
+        ticket = admission.reserve(slot.arm, slot.group, slot.pass_name, wire)
+        assert ticket == i
+        admission.complete(ticket, success=True)
+    assert all(row.state == "completed" for row in admission.rows)
 
 
 def test_threshold_control_does_not_reselect_offline_topology(monkeypatch):

@@ -199,3 +199,44 @@ fixed. This does not run the production CLI selector, network, or a model.
 The [offline record boundary](revision-contract.md) pins the C1–C2 encoding
 and import rules. Its hand-authored decision table gives the later host
 validator and ruling projector expected outcomes, not run results.
+
+## Next gate: one-pair live smoke (not yet authorized or wired)
+
+The first real run is a wiring and cost-accounting smoke, not a quality
+experiment. Select one benign synthetic or appropriately licensed fixture, one or two total
+frozen groups, one factory topology, one concrete model, and three existing
+passes per group. Pin both arms' order before looking at outputs. Use the
+same budget, model parameters and required evidence; only optional context
+can differ. Record the Forge commit, fixture and plan digests, exact
+serialized request-body digests (no headers or credentials), and selected
+and displaced context before authorizing the run.
+
+- **No more than 6 sends for one group or 12 for two.** Each logical slot
+  permits one physical attempt. The offline gate reserves a slot before
+  dispatch and retains failure, unknown outcome and not-started separately.
+  It refuses a late retry, unexpected slot or changed request body. It has no
+  transport and does not itself prevent an uninstrumented send. In
+  particular, Forge's configured outer attempts do not count continuation
+  requests. The future runner must disable retries, continuation, headroom,
+  repairs, redirects and fallback or refuse them before any send. Do not
+  resume an uncertain attempt under a newly initialized gate.
+- **No implicit pool routing.** Establish the exact concrete model and
+  upstream connection, no fallback or redirect, eligible payload policy,
+  output cap, and billing account before use. If depending on promotional
+  credits, verify that the selected upstream bills the credited Personal
+  organization and check its balance separately. An HTTP success or a
+  response model string alone does not prove routing or billing identity.
+- **Keep the whole ledger.** Preserve actual sent bytes privately, response
+  identity, failures and pre-filter/final results; record reported input,
+  cached and output usage and cost without filling missing values with zero.
+  If provider attribution is unresolved, a slot drifts, or a cap cannot be
+  enforced, stop and retain remaining slots as not-started. Keep both arms
+  and their failures in the record. Do not repeat failed slots.
+- **No effect claim.** This pair only establishes that requests were sent as
+  frozen and the attempt/usage records can be reconciled. Preregister a
+  separate blinded, lineage-paired comparison before drawing conclusions
+  about findings or false blockers. All live requests still require approval.
+
+The gate is tested both with no transport and against bodies captured via the
+existing in-memory OpenAI-compatible serialization test. It is not a release,
+receipt or production review gate.
