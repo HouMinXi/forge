@@ -7,7 +7,7 @@ from unittest.mock import patch
 from code_forge import factories, llm_invoke
 from code_forge.backend import BackendConfig
 from code_forge.baseline import ResolvedReview
-from code_forge.lenses import selection_line
+from code_forge.reviewer_json import REVIEW_REPLY_KEYS
 
 from .fixtures import InputError
 
@@ -103,14 +103,24 @@ def capture(path, groups, optional, budget):
             refuse("capture-topology-drift", path)
         group = groups[position // len(PASSES)][1]
         name, role = PASSES[position % len(PASSES)]
-        ending = "\nYou are a " + role + ". Review this diff.\n" + selection_line(name)
-        if active != group or not prompt.endswith(ending):
+        # Identify the pass by its final role sentence. The manual suite
+        # independently verifies the exact lens bytes emitted by the factory.
+        tail = prompt.rsplit("\n", 4)
+        if (
+            active != group
+            or len(tail) != 5
+            or tail[1] != f"You are a {role}. Review this diff."
+            or tail[2] != ""
+            or not tail[3]
+            or tail[4] != ""
+        ):
             refuse("capture-topology-drift", path)
         if (
             kwargs["backend"] is not BACKEND
             or kwargs["max_attempts"] != MAX_ATTEMPTS
             or kwargs["initial_delay_s"] != 0.0
             or kwargs["retry_timeout"]
+            or kwargs.get("reply_keys") != REVIEW_REPLY_KEYS
             or kwargs["review_diff"] != group.diff
             or kwargs["_excerpt_allowance"] is not allowance
         ):

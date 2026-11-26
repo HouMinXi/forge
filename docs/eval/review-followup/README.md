@@ -165,7 +165,8 @@ A third, no-optional-context render pins the insertion point immediately
 before Design Intent. Each arm must equal those exact bytes plus only its
 group-local Context Sources block; missing, duplicated, moved or different
 material is not silently removed. Pass order and names, role suffixes,
-production L1 lens selection, model placeholder, one configured attempt per
+production L1 lens selection, reviewer JSON repair keys, model placeholder,
+one configured attempt per
 slot, zero correction slots and output cap are fixed across the arms. The
 preview's illustrative lens labels are not the real factory's lens text.
 The selected spans are serialized as a compact UTF-8 JSON array; when empty,

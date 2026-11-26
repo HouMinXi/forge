@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from code_forge import factories
+from code_forge import factories, reviewer_json
 from code_forge.diff import annotated_diff_prompt_block
 from code_forge.eval.review_followup import experiment, experiment_adapter
 from code_forge.eval.review_followup.context_plan import preview
@@ -173,3 +173,28 @@ def test_report_records_selection_in_the_rendered_order(tmp_path):
     group = next(item for item in report["planned_context"] if item["group"] == "tests")
     assert group["baseline"]["selected"] == ["cleanup", "skip", "setup"]
     assert group["targeted"]["selected"] == ["setup", "skip", "cleanup"]
+
+
+@pytest.mark.parametrize("path", ["ordinary", "grouped"])
+def test_reply_keys_drift_in_targeted_arm_is_refused(monkeypatch, path):
+    normal = experiment.dry_run(FIXTURE, "example", 16000)
+    group = preview(FIXTURE, "example")["groups"][0]
+    targeted_storage = experiment._encoded(group["targeted"]["optional"]).decode()
+    capture = experiment.capture
+    keys = reviewer_json.REVIEW_REPLY_KEYS
+    changed = replace(keys, items={**keys.items, "findings": keys.items["findings"] - {"excerpt"}})
+    mutated = []
+
+    def inject_reply_drift(active_path, groups, texts, limit):
+        if active_path == path and texts["storage"] == targeted_storage:
+            mutated.append(active_path)
+            with monkeypatch.context() as patch:
+                patch.setattr(reviewer_json, "REVIEW_REPLY_KEYS", changed)
+                return capture(active_path, groups, texts, limit)
+        return capture(active_path, groups, texts, limit)
+
+    monkeypatch.setattr(experiment, "capture", inject_reply_drift)
+    assert normal["sent_requests"] == 0
+    with pytest.raises(InputError, match=f"capture-invocation-drift: {path}/storage/qodo"):
+        experiment.dry_run(FIXTURE, "example", 16000)
+    assert mutated == [path]
