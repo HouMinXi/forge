@@ -403,6 +403,52 @@ def test_a_source_that_differs_from_the_target_is_refused_by_the_verifier(projec
     assert "verified" not in check.stdout
 
 
+def test_an_explicit_zero_hit_count_verifies_when_zero_is_expected(project):
+    node = "test_mod.py::test_misses_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    assert body["hits"] == {node: 0}
+    announced = _announced(result)
+    check = _verify(
+        packet,
+        _expectations(project, node, announced["run_id"], announced["sha256"], hits=0),
+    )
+    assert check.returncode == 0, check.stderr
+    assert check.stdout == "verified one bound pytest execution\n"
+    assert check.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "hits",
+    [
+        pytest.param(None, id="missing-table"),
+        pytest.param({}, id="empty-table"),
+        pytest.param({"test_mod.py::test_other_node": 0}, id="other-node-only"),
+    ],
+)
+def test_a_missing_node_hit_count_is_refused_when_zero_is_expected(project, hits):
+    node = "test_mod.py::test_misses_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    assert body["hits"] == {node: 0}
+    announced = _announced(result)
+    if hits is None:
+        body.pop("hits")
+    else:
+        body["hits"] = hits
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    check = _verify(
+        packet,
+        _expectations(project, node, announced["run_id"], body["packet_sha256"], hits=0),
+    )
+    assert check.returncode == 1
+    assert check.stderr == "packet refused: target hits are None, expected 0\n"
+    assert check.stdout == ""
+
+
 def test_a_green_run_that_missed_the_target_is_refused(project):
     node = "test_mod.py::test_misses_the_line"
     result, packet = _run(project, node)

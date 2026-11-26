@@ -139,7 +139,7 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
     hits = body.get("hits", {})
     if type(hits) is not dict:
         raise Refused("hits is not a record")
-    count = hits.get(node, 0)
+    count = hits.get(node)
     if type(count) is not int:
         # `true` equals an expected hit count of 1, so a boolean would satisfy
         # a positive hit claim without being a count at all.
