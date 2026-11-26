@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "purpose": "evidence-adequacy-only",
+  "claim": "total([-1]) returns a non-negative value",
+  "constraint": {
+    "id": "single-negative-total",
+    "version": 1
+  },
+  "check": {
+    "id": "nonnegative-total",
+    "predicate": "observed >= 0",
+    "target_input": [-1]
+  },
+  "cases": [
+    {
+      "id": "target-check-passed",
+      "candidate_sha": "synthetic:target-fixed",
+      "observation": {"check_id": "nonnegative-total", "input": [-1], "observed": 0, "result": "pass"},
+      "expected_host": "passed",
+      "expected_human": "verified_fixed"
+    },
+    {
+      "id": "target-check-failed",
+      "candidate_sha": "synthetic:target-still-present",
+      "observation": {"check_id": "nonnegative-total", "input": [-1], "observed": -1, "result": "fail"},
+      "expected_host": "passed",
+      "expected_human": "still_present"
+    },
+    {
+      "id": "wrong-input-passed",
+      "candidate_sha": "synthetic:target-fixed",
+      "observation": {"check_id": "nonnegative-total", "input": [3], "observed": 3, "result": "pass"},
+      "expected_host": "passed",
+      "expected_human": "insufficient_evidence"
+    }
+  ]
+}

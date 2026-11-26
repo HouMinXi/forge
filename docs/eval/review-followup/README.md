@@ -193,3 +193,9 @@ and ties the submitted message back to the recorded prompt digest. A
 threshold control shows that varying only optional context could change the
 kernel-enabled CLI's topology choice; the offline adapter keeps its topology
 fixed. This does not run the production CLI selector, network, or a model.
+
+## Revision follow-up records (PR4)
+
+The [offline record boundary](revision-contract.md) pins the C1–C2 encoding
+and import rules. Its hand-authored decision table gives the later host
+validator and ruling projector expected outcomes, not run results.
