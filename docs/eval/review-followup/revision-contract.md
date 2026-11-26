@@ -192,9 +192,12 @@ new ruling.
 Proposal and human-ruling supersession are separate graphs. Declarations
 are checked against their own kind in the complete batch for missing
 targets, self-links, cross-item links and cycles. Such graph errors keep
-the item open and identify the declaring record kind. An invalid proposal
-link type is also a graph error. A valid proposal link records lineage;
-it does not revoke or replace an existing human ruling. Only a direct edge from an eligible
+the item open and identify the declaring record kind. An invalid link
+shape is also a graph error. The host checks graph declarations separately
+from other payload fields: a malformed rationale cannot hide an invalid
+edge, and a well-formed edge cannot make an invalid ruling eligible. A
+valid proposal link records lineage without replacing a human ruling.
+Only a direct edge from an eligible
 ruling to another eligible ruling can remove a head. More than one head
 keeps the item open as a conflict; a correction can name all heads.
 Without an effective ruling, a unanimous proposal processing state is

@@ -49,7 +49,6 @@ def _body_bytes(body):
 def _ruling_shape(body):
     indexes = body["adopted_ref_indexes"]
     gaps = body["remaining_gaps"]
-    supersedes = body["supersedes_ruling_ids"]
     return (
         identifier(body["proposal_id"])
         and sha(body["proposal_digest"])
@@ -63,9 +62,6 @@ def _ruling_shape(body):
         and nonempty(body["reason"])
         and type(gaps) is list
         and all(map(nonempty, gaps))
-        and type(supersedes) is list
-        and all(map(identifier, supersedes))
-        and len(supersedes) == len(set(supersedes))
     )
 
 
@@ -165,12 +161,20 @@ def decide_revision(snapshot: EvidenceSnapshot, raw_records: Iterable[bytes]) ->
     active, states = _validation_states(scoped["host_validation"], proposals, snapshot, diagnostics)
     eligible = {}
     edges = {}
+    ruling_errors = []
     for key, record in scoped["human_ruling"].items():
         body = _body(record)
-        if not _ruling_shape(body):
+        targets = body["supersedes_ruling_ids"]
+        valid_links = (
+            type(targets) is list and all(map(identifier, targets)) and len(targets) == len(set(targets))
+        )
+        if valid_links:
+            edges[key] = targets
+        else:
+            ruling_errors.append(("human_ruling", key, "invalid-supersession-reference"))
+        if not valid_links or not _ruling_shape(body):
             diagnostics.append(("human_ruling", key, "invalid-ruling"))
             continue
-        edges[key] = body["supersedes_ruling_ids"]
         refusal = _ruling_refusal(body, proposals, active)
         if refusal is not None:
             diagnostics.append(("human_ruling", key, refusal))
@@ -191,7 +195,9 @@ def decide_revision(snapshot: EvidenceSnapshot, raw_records: Iterable[bytes]) ->
     errors = proposal_errors + _graph_errors(
         "proposal", proposal_edges, all_graph_records["proposal"], item
     )
-    errors += _graph_errors("human_ruling", edges, all_graph_records["human_ruling"], item)
+    errors += ruling_errors + _graph_errors(
+        "human_ruling", edges, all_graph_records["human_ruling"], item
+    )
     args = (tuple(sorted(states.items())), tuple(sorted(set(diagnostics + errors))))
     if errors:
         return RevisionDecision("graph_error", *args)

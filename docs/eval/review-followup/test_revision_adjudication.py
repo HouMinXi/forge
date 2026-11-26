@@ -356,3 +356,36 @@ def test_malformed_proposal_link_is_distinct_from_no_link(tmp_path):
     assert decision.state == "graph_error"
     assert ("proposal", "p-B", "invalid-supersession-reference") in decision.diagnostics
     assert not decision.closed
+
+
+@pytest.mark.parametrize(
+    ("links", "graph_error"),
+    [
+        (["B"], "supersession-self"),
+        (["A"], None),
+        (["missing"], "supersession-missing"),
+        (["A", "A"], "invalid-supersession-reference"),
+        ("A", "invalid-supersession-reference"),
+    ],
+)
+def test_ruling_payload_failure_cannot_hide_graph_errors_or_grant_supersession(
+    tmp_path, links, graph_error
+):
+    snap = vector_snapshot(tmp_path, "original")
+    item = VECTORS["item"]
+    original = record_triplet("A", item, snap, "X", "verified_fixed")
+    p, v, _ = record_triplet("B", item, snap, "Y", "still_present")
+    broken = ruling(
+        "B", item, p, decode_record(v), "still_present", reason="", supersedes_ruling_ids=links
+    )
+    batch = [*original, p, v, broken]
+    decision = decide_revision(snap, batch)
+    assert ("human_ruling", "B", "invalid-ruling") in decision.diagnostics
+    if graph_error:
+        assert decision.state == "graph_error"
+        assert ("human_ruling", "B", graph_error) in decision.diagnostics
+        assert not decision.closed
+    else:
+        assert decision.effective.record_id == "A"
+        assert decision.closed
+    assert decide_revision(snap, reversed(batch)) == decision
