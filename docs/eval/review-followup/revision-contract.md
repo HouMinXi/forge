@@ -219,7 +219,15 @@ an old projection cannot give a new payload the previous host result. A
 missing projection is allowed only when no proposal exists for that item.
 
 - **Close proposals:** one row per distinct close-proposal ID. Report pending
-  validation or host rejection before semantic judgments. For a proposal which
+  validation or host rejection before semantic judgments. A proposal declaring
+  a malformed, missing or cross-item link, or belonging to a cycle (including
+  a self-link), remains in the denominator as `proposal_graph_rejected` and
+  cannot consume an independent label. This outcome takes precedence over
+  the separately retained host state. Other proposals in the same item,
+  including those merely pointing into a cycle, are not charged with the
+  graph defect. A ruling-graph error alone does not reject proposals.
+  Either graph error still prevents an effective item closure.
+  For a proposal which
   passed mechanical checks, an exact independent label distinguishes correct,
   wrong, and insufficient evidence; without one it remains pending human *in
   the proposal score*, even if the item already has a C4 ruling. An item ruling

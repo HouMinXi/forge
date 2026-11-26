@@ -1,5 +1,6 @@
 """Hand-computed C6 ledger and exact-binding controls, using the C4 entry point."""
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -183,3 +184,53 @@ def test_counts_keep_host_rejection_separate_from_semantic_reviews(ledger):
     }
     assert score.closure_counts == {"confirmed_correct": 1}
     assert score.unused_labels == (rejected_with_review,)
+
+
+@pytest.mark.parametrize(
+    ("links", "ruling_links", "rejected"),
+    [
+        ({"a": "p-missing"}, (), ("a",)),
+        ({"a": "p-a"}, (), ("a",)),
+        ({"a": "p-foreign"}, (), ("a",)),
+        ({"a": []}, (), ("a",)),
+        ({"a": "p-b", "b": "p-a", "c": "p-missing"}, (), ("a", "b", "c")),
+        ({"a": "p-b", "b": "p-a", "c": "p-a"}, (), ("a", "b")),
+        ({}, ("r-missing",), ()),
+    ],
+)
+def test_graph_rejection_only_withholds_credit_from_affected_proposals(
+    tmp_path, links, ruling_links, rejected
+):
+    item = ("finding", "synthetic:current")
+    wire_item = {"finding_id": item[0], "candidate_sha": item[1]}
+    snap = snapshot(tmp_path, wire_item, [("src", "src.py", b"x")])
+    foreign_item = dict(wire_item, finding_id="foreign")
+    foreign = proposal("foreign", foreign_item, "src", FIXED, CONSTRAINT)
+    proposals, batch, labels = [], [foreign], []
+    for key in ("a", "b", "c", "d"):
+        obj = json.loads(proposal(key, wire_item, "src", FIXED, CONSTRAINT))
+        obj["body"]["supersedes_proposal_id"] = links.get(key)
+        raw = json.dumps(obj).encode()
+        proposals.append(raw)
+        batch.append(raw)
+        labels.append(label(decode_record(raw), FIXED))
+        if key == "a" and isinstance(links.get(key), list):
+            continue  # Invalid shape has no matching C3 validation.
+        valid = validate_proposal(raw, snap, validation_id=f"v-{key}")
+        batch.append(valid.canonical)
+        if key == "d" and ruling_links:
+            batch.append(ruling("r-d", wire_item, raw, valid, FIXED, supersedes=ruling_links))
+    decision = decide_revision(snap, batch)
+    assert decision.state == "graph_error"
+    score = score_revision_batch([item], proposals, {item: decision}, labels)
+    assert score.coverage == (0, 1)
+    assert score.closures == ()
+    assert len(score.proposals) == 4
+    assert {row.proposal_id for row in score.proposals if row.outcome == "proposal_graph_rejected"} == {
+        f"p-{key}" for key in rejected
+    }
+    assert {row.proposal_id for row in score.proposals if row.outcome == "confirmed_correct"} == {
+        f"p-{key}" for key in ("a", "b", "c", "d") if key not in rejected
+    }
+    assert {review.record_id for review in score.unused_labels} == {f"p-{key}" for key in rejected}
+    assert decision == decide_revision(snap, reversed(batch))

@@ -134,6 +134,8 @@ def _consume_projection(item, decision, proposals):
     if (
         decision.item != item
         or decision.proposal_digests != tuple((key, p.sha256) for key, p in proposals.items())
+        or any(key not in proposals for key in decision.proposal_graph_rejected)
+        or (decision.proposal_graph_rejected and decision.state != "graph_error")
         or states.keys() != proposals.keys()
         or len(states) != len(decision.proposal_states)
         or any(s not in _PROPOSAL_STATES for s in states.values())
@@ -215,7 +217,9 @@ def score_revision_batch(
     labels = _index_labels(independent_labels, by_item)
     proposal_rows, item_rows, closure_rows = [], [], []
     for item, rows in sorted(by_item.items()):
-        result, states = _consume_projection(item, projections.get(item), rows)
+        decision = projections.get(item)
+        result, states = _consume_projection(item, decision, rows)
+        graph_rejected = frozenset(decision.proposal_graph_rejected) if decision else frozenset()
         item_rows.append(result)
         for p in rows.values():
             suggested = json.loads(p.canonical)["body"]["suggested_status"]
@@ -223,8 +227,12 @@ def score_revision_batch(
                 continue
             host_state = states[p.record_id]
             review = None
-            if host_state == "pending_human":
-                review = labels.pop((item, "proposal", p.record_id, p.sha256), None)
+            if p.record_id in graph_rejected:
+                outcome = "proposal_graph_rejected"
+            else:
+                if host_state == "pending_human":
+                    review = labels.pop((item, "proposal", p.record_id, p.sha256), None)
+                outcome = _proposal_outcome(host_state, suggested, review)
             proposal_rows.append(
                 ProposalScore(
                     item,
@@ -232,7 +240,7 @@ def score_revision_batch(
                     p.sha256,
                     suggested,
                     host_state,
-                    _proposal_outcome(host_state, suggested, review),
+                    outcome,
                     review,
                 )
             )
