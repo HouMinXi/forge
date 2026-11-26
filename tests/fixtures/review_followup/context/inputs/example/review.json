@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "case": "example",
+  "task": "first_review",
+  "base": "synthetic:context-v0",
+  "candidate": "synthetic:context-v1",
+  "groups": [
+    {
+      "id": "storage",
+      "artifacts": [
+        "store"
+      ]
+    },
+    {
+      "id": "tests",
+      "artifacts": [
+        "tests"
+      ]
+    }
+  ],
+  "prior_findings": [],
+  "artifacts": [
+    {
+      "id": "store",
+      "case": "example",
+      "role": "candidate",
+      "revision": "synthetic:context-v1",
+      "sha256": "fa82b5677a5053281560052b82101e9b3ab83f89ea213705381994fd5eb73cc0",
+      "path": "inputs/example/store.txt"
+    },
+    {
+      "id": "tests",
+      "case": "example",
+      "role": "candidate",
+      "revision": "synthetic:context-v1",
+      "sha256": "c69700be91e989cded94f5d70205bbba13de1e397b1770c71581440240f4ca22",
+      "path": "inputs/example/tests.txt"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+Notes: storage fixtures use an in-memory dictionary for the example.
+def read(store, key):
+    return store.get(key)  # café
+def put(store, key, value):
+    if value is None:
+        return False
+    store[key] = value
+    return True
+
+def save_row(store, key, value):
+    if not put(store, key, value):
+        return 1
+    return 0
