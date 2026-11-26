@@ -232,8 +232,10 @@ missing projection is allowed only when no proposal exists for that item.
   wrong, and insufficient evidence; without one it remains pending human *in
   the proposal score*, even if the item already has a C4 ruling. An item ruling
   does not double as an independent proposal label.
-- **Coverage:** determinate effective rulings / preregistered items. Still
-  present counts; insufficient, conflict, graph error and other unresolved
+- **Coverage:** determinate effective rulings that adopt at least one current
+  evidence reference / preregistered items. A `still_present` ruling with no
+  current evidence adopted remains visible and open, but does not count in
+  the numerator. Insufficient, conflict, graph error and other unresolved
   states stay in the denominator. This measures adjudication coverage, not
   independent accuracy.
 - **Final closures:** one row per item with an effective closing ruling.
@@ -255,3 +257,43 @@ The hand-computed ten-item test ledger expects coverage **4/10**,
 four closing proposals (one host-rejected, one human-insufficient, one correct,
 one pending), and one independently correct final closure (**0/1** errors).
 These are fixture accounting checks, not measured review performance.
+
+### PR5: offline read-only summary
+
+Use `replay_revision_summary` with the preregistered item pairs, snapshots
+built from verified PR1 material, saved source bytes, independently pinned
+source associations, sealed revision records, and optional C6 labels.
+The source formats are deliberately small **saved metadata** envelopes, not
+live GitHub or RFC 5322 adapters:
+
+- GitHub: `schema: 1`, `provider: "github"`, `review_id`, `head` (fixture revision).
+- Mail: `schema: 1`, `provider: "mail"`, `message_key`, and a
+  `revision_label` such as `v7` (or null), and `reports_fixed` (boolean or
+  null). These are observations, not tree identity or evidence of a fix.
+
+A `SourcePin` identifies exact bytes by provider, source ID and SHA-256 and
+associates them with a candidate independently established by the fixture
+owner. Do not create pins from a subject, a thread's earlier revision, patch
+similarity, or a source's self-report. A GitHub pin must also agree with the
+saved head. A missing pin leaves the record visible under `unbound_sources`
+without associating it to an item. Bound provenance is indexed once under
+`sources_by_candidate` using the candidate shown on each item. A conflicting
+pin or digest refuses the
+batch. Revision records presented for replay need both a bound source for
+the candidate and a verified evidence snapshot for the item. Bound source
+metadata is provenance, never proof of a fix. PR5 does not fetch the source or
+verify a repository tree itself.
+
+The report carries each item's C4 outcome or open state, proposal processing,
+effective claim and constraint, exact ruling/validation/proposal digests,
+adopted evidence bindings, reason, remaining gaps, and diagnostics. It keeps
+fixed and no-longer-applicable distinct and does not infer that a newly
+mentioned finding was introduced by a patch. Its score is C6's output,
+not a second calculation. The helper returns data only; there are no network,
+comment, receipt, publication, or candidate-execution hooks.
+
+Run the hand-authored end-to-end controls with:
+
+```sh
+PYTHONPATH=src python -m pytest -q docs/eval/review-followup/test_revision_summary.py
+```

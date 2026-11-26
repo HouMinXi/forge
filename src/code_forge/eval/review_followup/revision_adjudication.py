@@ -30,6 +30,7 @@ class RevisionDecision:
     item: tuple[str, str] | None = None
     proposal_digests: tuple[tuple[str, str], ...] = ()
     proposal_graph_rejected: tuple[str, ...] = ()
+    adopts_current_basis: bool = False
 
     @property
     def closed(self) -> bool:
@@ -137,6 +138,10 @@ def _validation_states(validations, proposals, snapshot, diagnostics):
     return passed, states
 
 
+def _adopts_current_basis(body, checks):
+    return any(checks[i]["purpose"] == "current_basis" for i in body["adopted_ref_indexes"])
+
+
 def _ruling_refusal(body, proposals, validations):
     key = body["proposal_id"]
     if key not in proposals or proposals[key].sha256 != body["proposal_digest"]:
@@ -150,9 +155,7 @@ def _ruling_refusal(body, proposals, validations):
     indexes = body["adopted_ref_indexes"]
     if any(i >= len(checks) or checks[i]["binding"] is None for i in indexes):
         return "invalid-adopted-reference"
-    if body["conclusion"] in _CLOSURES and not any(
-        checks[i]["purpose"] == "current_basis" for i in indexes
-    ):
+    if body["conclusion"] in _CLOSURES and not _adopts_current_basis(body, checks):
         return "closure-without-adopted-current-basis"
     return None
 
@@ -160,14 +163,35 @@ def _ruling_refusal(body, proposals, validations):
 def decide_revision(snapshot: EvidenceSnapshot, raw_records: Iterable[bytes]) -> RevisionDecision:
     """Resolve one item from a complete offline batch; preserve unresolved statuses."""
     item = (snapshot.finding_id, snapshot.candidate_sha)
+    return decide_revision_batch((snapshot,), raw_records)[item]
+
+
+def decide_revision_batch(
+    snapshots: Iterable[EvidenceSnapshot], raw_records: Iterable[bytes]
+) -> dict[tuple[str, str], RevisionDecision]:
+    """Index a complete offline batch once, preserving cross-item graph checks."""
+    kinds = ("proposal", "host_validation", "human_ruling")
+    by_item = {}
+    for snapshot in snapshots:
+        item = (snapshot.finding_id, snapshot.candidate_sha)
+        if item in by_item:
+            raise InputError("duplicate-snapshot", item[0])
+        by_item[item] = (snapshot, {kind: {} for kind in kinds})
     all_graph_records = {"proposal": {}, "human_ruling": {}}
-    scoped = {"proposal": {}, "host_validation": {}, "human_ruling": {}}
     for record in import_records(raw_records):
         if record.kind in all_graph_records:
             all_graph_records[record.kind][record.record_id] = record
-        if _item(record) == item:
-            scoped[record.kind][record.record_id] = record
+        match = by_item.get(_item(record))
+        if match is not None:
+            match[1][record.kind][record.record_id] = record
+    return {
+        item: _decide_indexed_revision(snapshot, scoped, all_graph_records)
+        for item, (snapshot, scoped) in sorted(by_item.items())
+    }
 
+
+def _decide_indexed_revision(snapshot, scoped, all_graph_records):
+    item = (snapshot.finding_id, snapshot.candidate_sha)
     diagnostics = []
     proposals = scoped["proposal"]
     active, states = _validation_states(scoped["host_validation"], proposals, snapshot, diagnostics)
@@ -224,7 +248,16 @@ def decide_revision(snapshot: EvidenceSnapshot, raw_records: Iterable[bytes]) ->
         return RevisionDecision("conflict", *args, heads, **binding)
     if heads:
         record, body = eligible[heads[0]]
-        return RevisionDecision("adjudicated", *args, heads, record, body["conclusion"], **binding)
+        checks = active[body["validation_id"]][2]
+        return RevisionDecision(
+            "adjudicated",
+            *args,
+            heads,
+            record,
+            body["conclusion"],
+            adopts_current_basis=_adopts_current_basis(body, checks),
+            **binding,
+        )
     statuses = set(states.values())
     state = next(iter(statuses)) if len(statuses) == 1 else "pending" if statuses else "no_proposal"
     return RevisionDecision(state, *args, **binding)
