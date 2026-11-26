@@ -7,6 +7,7 @@ from unittest.mock import patch
 from code_forge import factories, llm_invoke
 from code_forge.backend import BackendConfig
 from code_forge.baseline import ResolvedReview
+from code_forge.lenses import has_selection_suffix
 from code_forge.reviewer_json import REVIEW_REPLY_KEYS
 
 from .fixtures import InputError
@@ -103,16 +104,15 @@ def capture(path, groups, optional, budget):
             refuse("capture-topology-drift", path)
         group = groups[position // len(PASSES)][1]
         name, role = PASSES[position % len(PASSES)]
-        # Identify the pass by its final role sentence. The manual suite
-        # independently verifies the exact lens bytes emitted by the factory.
+        # Pin both the role and the canonical lens suffix even when all
+        # renders agree with one another.
         tail = prompt.rsplit("\n", 4)
         if (
             active != group
             or len(tail) != 5
             or tail[1] != f"You are a {role}. Review this diff."
             or tail[2] != ""
-            or not tail[3]
-            or tail[4] != ""
+            or not has_selection_suffix(prompt, name)
         ):
             refuse("capture-topology-drift", path)
         if (

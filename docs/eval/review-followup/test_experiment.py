@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from code_forge import factories, reviewer_json
+from code_forge import factories, lenses, reviewer_json
 from code_forge.diff import annotated_diff_prompt_block
 from code_forge.eval.review_followup import experiment, experiment_adapter
 from code_forge.eval.review_followup.context_plan import preview
@@ -198,3 +198,16 @@ def test_reply_keys_drift_in_targeted_arm_is_refused(monkeypatch, path):
     with pytest.raises(InputError, match=f"capture-invocation-drift: {path}/storage/qodo"):
         experiment.dry_run(FIXTURE, "example", 16000)
     assert mutated == [path]
+
+
+def test_both_arms_using_the_same_wrong_lens_are_refused(monkeypatch):
+    normal = lenses.selection_line
+
+    def wrong_lens(pass_name):
+        return normal("expert" if pass_name == "qodo" else pass_name)
+
+    # Corrupt factory output in every render, including the no-context
+    # control. Relative prompt equality alone cannot catch this.
+    monkeypatch.setattr(lenses, "selection_line", wrong_lens)
+    with pytest.raises(InputError, match="capture-topology-drift: ordinary"):
+        experiment.dry_run(FIXTURE, "example", 16000)
