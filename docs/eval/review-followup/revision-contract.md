@@ -94,24 +94,37 @@ evidence answers the claim; a zero exit code alone does not.
 
 ## Acceptance inputs for the next slice
 
-The checked-in `revision/decisions.json` is a hand-authored decision table,
-not an output of the future projector. In the supersession family, all
-rulings concern the same item: A is a verified fix using X, B is a verified
-fix using Y and names A, C is still present using Z and names B, D is a
-correction using Z that names A and C. Each has otherwise valid evidence,
-validation and a human ruling. The changed-X cases keep the same artifact
-ID, display path, revision and role while changing only the admitted
-artifact digest. Revalidate without a new human ruling for the fresh
-validation case. The historical validation stays in the batch but is not
-an active matching validation for the current bytes. Replay the exact same batch in reverse order and with
-duplicates in the order controls.
+### Ruling selection, not evidence adequacy
 
-The table carries exact synthetic observation text (encoded as UTF-8),
-artifact roles and paths, active mappings and the expected verdicts. A
-replacement selects different bytes under the same artifact ID and path.
-These are human-label simulations: the assertion text is saved input, not
-a test this fixture runs. C3–C4 still need to materialize the verified
-catalog, bind records and exercise these cases. Keep its expected outcomes
-independent of the implementation. C5–C7 add summary and independent
-scoring; live adapters, model calls, candidate execution, receipts and merge
-gates are not in this work.
+The nine rows in `revision/decisions.json` test evidence identity and which
+ruling takes effect. The supplied conclusions are hand-authored inputs to
+that test, not judgments independently verified by the fixture. A and B
+are pre-labeled `verified_fixed` using X and Y; B names A. C is pre-labeled
+`still_present` using Z and names B. D also uses Z and names A and C. In
+particular, X/Y show positive **totals** and do not exercise the offending
+`[-1]` input shown in Z. They cannot establish a fix for that input.
+
+A replacement selects different observation bytes under the same artifact
+ID, path, revision and role. The fresh-validation case retains the old
+ruling and historical validation, but introduces a matching validation for
+the replacement bytes without a new ruling. The order control repeats the
+batch in reverse with a duplicate. The table supplies expected outcomes;
+it is not an output of a projector.
+
+### Evidence adequacy, not ruling selection
+
+`revision/evidence-adequacy.json` is a separate set of synthetic, saved
+observations with hand-authored human judgments. The claim is deliberately
+narrow: the single-negative input `[-1]` must return a non-negative total.
+The passing and failing controls use the same check, input and predicate
+on separate labeled candidates. The passing target supports the narrow
+claim; the same check failing supports `still_present`. A legitimate
+passing observation for a positive input alone is admissible to the host
+but leaves the human conclusion `insufficient_evidence`. Do not infer
+that the passing control proves more general behavior, or use these
+labels to test supersession.
+
+This slice does not execute those observations. C3–C4 still need to
+materialize the verified catalog, bind records and exercise these expected
+outcomes. C5–C7 add summary and independent scoring. Live adapters, model
+calls, candidate execution, receipts and merge gates are out of scope.

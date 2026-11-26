@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -93,15 +94,14 @@ def test_identical_repeated_records_still_consume_byte_budget(monkeypatch):
         import_records([GOLDEN] * 33)
 
 
-def test_decision_vectors_supply_original_and_active_bytes_without_using_projection():
-    from pathlib import Path
+def load_revision_fixture(name):
+    root = Path(__file__).resolve().parents[3] / "tests/fixtures/review_followup/revision"
+    return json.loads((root / name).read_bytes())
 
-    vectors = json.loads(
-        (
-            Path(__file__).resolve().parents[3]
-            / "tests/fixtures/review_followup/revision/decisions.json"
-        ).read_bytes()
-    )
+
+def test_decision_vectors_supply_original_and_active_bytes_without_using_projection():
+    vectors = load_revision_fixture("decisions.json")
+    assert vectors["purpose"] == "ruling-selection-only"
     cases = {case["id"]: case for case in vectors["cases"]}
     assert len(cases) == len(vectors["cases"])
     for case in cases.values():
@@ -158,3 +158,33 @@ def test_canonical_distinct_records_must_fit_batch_budget(monkeypatch):
 
     batch = import_records(raw[:30])
     assert import_records(record.canonical for record in batch) == batch
+
+
+def test_adequacy_controls_pin_target_and_keep_human_expectations_separate():
+    vectors = load_revision_fixture("evidence-adequacy.json")
+    assert vectors["purpose"] == "evidence-adequacy-only"
+    check = vectors["check"]
+    assert check["predicate"] == "observed >= 0"
+    assert check["target_input"] == [-1]
+    assert len(vectors["cases"]) == 3
+    cases = {case["id"]: case for case in vectors["cases"]}
+    for case in cases.values():
+        observed = case["observation"]
+        assert observed["check_id"] == check["id"]
+        assert (observed["observed"] >= 0) == (observed["result"] == "pass")
+        assert case["expected_host"] == "passed"
+
+    for name, result, human in (
+        ("target-check-passed", "pass", "verified_fixed"),
+        ("target-check-failed", "fail", "still_present"),
+    ):
+        case = cases[name]
+        assert case["observation"]["input"] == check["target_input"]
+        assert case["observation"]["result"] == result
+        assert case["expected_human"] == human
+
+    wrong_input = cases["wrong-input-passed"]
+    assert wrong_input["candidate_sha"] == cases["target-check-passed"]["candidate_sha"]
+    assert wrong_input["observation"]["input"] != check["target_input"]
+    assert wrong_input["observation"]["result"] == "pass"
+    assert wrong_input["expected_human"] == "insufficient_evidence"

@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "purpose": "ruling-selection-only",
   "item": {
     "finding_id": "wrong-total",
     "candidate_sha": "synthetic:revision-2"
