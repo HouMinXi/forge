@@ -69,16 +69,16 @@ def _ruling_shape(body):
     )
 
 
-def _graph_errors(edges, rulings, item):
+def _graph_errors(kind, edges, records, item):
     errors = []
     for key, targets in edges.items():
         for target in targets:
             if target == key:
-                errors.append(("human_ruling", key, "supersession-self"))
-            elif target not in rulings:
-                errors.append(("human_ruling", key, "supersession-missing"))
-            elif _item(rulings[target]) != item:
-                errors.append(("human_ruling", key, "supersession-cross-item"))
+                errors.append((kind, key, "supersession-self"))
+            elif target not in records:
+                errors.append((kind, key, "supersession-missing"))
+            elif _item(records[target]) != item:
+                errors.append((kind, key, "supersession-cross-item"))
     indegree = dict.fromkeys(edges, 0)
     for targets in edges.values():
         for target in targets:
@@ -94,7 +94,7 @@ def _graph_errors(edges, rulings, item):
                 if indegree[target] == 0:
                     ready.append(target)
     if visited != len(indegree) and not errors:
-        errors.append(("item", item[0], "supersession-cycle"))
+        errors.append((kind, item[0], "supersession-cycle"))
     return errors
 
 
@@ -152,11 +152,11 @@ def _ruling_refusal(body, proposals, validations):
 def decide_revision(snapshot: EvidenceSnapshot, raw_records: Iterable[bytes]) -> RevisionDecision:
     """Resolve one item from a complete offline batch; preserve unresolved statuses."""
     item = (snapshot.finding_id, snapshot.candidate_sha)
-    all_rulings = {}
+    all_graph_records = {"proposal": {}, "human_ruling": {}}
     scoped = {"proposal": {}, "host_validation": {}, "human_ruling": {}}
     for record in import_records(raw_records):
-        if record.kind == "human_ruling":
-            all_rulings[record.record_id] = record
+        if record.kind in all_graph_records:
+            all_graph_records[record.kind][record.record_id] = record
         if _item(record) == item:
             scoped[record.kind][record.record_id] = record
 
@@ -177,7 +177,21 @@ def decide_revision(snapshot: EvidenceSnapshot, raw_records: Iterable[bytes]) ->
             continue
         eligible[key] = (record, body)
 
-    errors = _graph_errors(edges, all_rulings, item)
+    proposal_edges = {}
+    proposal_errors = []
+    for key, record in proposals.items():
+        target = _body(record)["supersedes_proposal_id"]
+        if target is None:
+            proposal_edges[key] = ()
+        elif identifier(target):
+            proposal_edges[key] = (target,)
+        else:
+            proposal_errors.append(("proposal", key, "invalid-supersession-reference"))
+
+    errors = proposal_errors + _graph_errors(
+        "proposal", proposal_edges, all_graph_records["proposal"], item
+    )
+    errors += _graph_errors("human_ruling", edges, all_graph_records["human_ruling"], item)
     args = (tuple(sorted(states.items())), tuple(sorted(set(diagnostics + errors))))
     if errors:
         return RevisionDecision("graph_error", *args)

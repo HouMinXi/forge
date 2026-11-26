@@ -189,9 +189,12 @@ adopt only indexes of valid references; a closure must adopt current
 evidence. An identical proposal with newly validated bytes still needs a
 new ruling.
 
-Well-formed supersession declarations are checked against the complete
-batch for missing targets, self-links, cross-item links and cycles. Such
-graph errors keep the item open. Only a direct edge from an eligible
+Proposal and human-ruling supersession are separate graphs. Declarations
+are checked against their own kind in the complete batch for missing
+targets, self-links, cross-item links and cycles. Such graph errors keep
+the item open and identify the declaring record kind. An invalid proposal
+link type is also a graph error. A valid proposal link records lineage;
+it does not revoke or replace an existing human ruling. Only a direct edge from an eligible
 ruling to another eligible ruling can remove a head. More than one head
 keeps the item open as a conflict; a correction can name all heads.
 Without an effective ruling, a unanimous proposal processing state is

@@ -273,3 +273,86 @@ def test_not_applicable_remains_distinct_from_fixed(tmp_path):
     assert result.conclusion == "no_longer_applicable"
     assert result.closed
     assert result.effective.sha256 == decode_record(records[-1]).sha256
+
+
+def proposal_triplet(key, item, snap, supersedes, *, status="verified_fixed", ruling_edges=()):
+    p = json.loads(proposal(key, item, "X", status, VECTORS["constraint"]))
+    p["body"]["supersedes_proposal_id"] = supersedes
+    p = wire(p)
+    v = validate_proposal(p, snap, validation_id="v-" + key)
+    return p, v.canonical, ruling(key, item, p, v, status, ruling_edges)
+
+
+@pytest.mark.parametrize(
+    ("links", "error"),
+    [
+        ({"A": "p-missing"}, "supersession-missing"),
+        ({"A": "p-A"}, "supersession-self"),
+        ({"A": "p-B", "B": "p-A"}, "supersession-cycle"),
+    ],
+)
+def test_invalid_proposal_graph_cannot_close_an_item(tmp_path, links, error):
+    snap = vector_snapshot(tmp_path, "original")
+    records = [
+        raw
+        for key, target in links.items()
+        for raw in proposal_triplet(key, VECTORS["item"], snap, target)
+    ]
+    result = decide_revision(snap, records)
+    assert result.state == "graph_error"
+    assert result.effective is None
+    assert not result.closed
+    assert error in {code for kind, _, code in result.diagnostics if kind == "proposal"}
+    assert decide_revision(snap, reversed(records)) == result
+
+
+def test_proposal_graph_reports_an_existing_other_item_target(tmp_path):
+    snap = vector_snapshot(tmp_path, "original")
+    item = VECTORS["item"]
+    a = proposal_triplet("A", item, snap, "p-B")
+    other = proposal(
+        "B", dict(item, candidate_sha="synthetic:other"), "X", "still_present", VECTORS["constraint"]
+    )
+    result = decide_revision(snap, [*a, other])
+    assert result.state == "graph_error"
+    assert ("proposal", "p-A", "supersession-cross-item") in result.diagnostics
+    assert not result.closed
+
+
+def test_proposal_correction_retains_old_ruling_until_human_explicitly_supersedes_it(tmp_path):
+    snap = vector_snapshot(tmp_path, "original")
+    item = VECTORS["item"]
+    first = proposal_triplet("A", item, snap, None)
+    second = proposal_triplet("B", item, snap, "p-A", status="still_present", ruling_edges=("A",))
+    # Import the new proposal and its passing host result, but not its human ruling.
+    waiting = decide_revision(snap, [*second[:2], *first])
+    assert waiting.effective.record_id == "A"
+    assert waiting.closed
+    assert dict(waiting.proposal_states)["p-B"] == "pending_human"
+    decided = decide_revision(snap, [*second, *first])
+    assert decided.effective.record_id == "B"
+    assert decided.conclusion == "still_present"
+    assert not decided.closed
+
+
+def test_proposal_cannot_target_a_ruling_with_the_expected_id(tmp_path):
+    snap = vector_snapshot(tmp_path, "original")
+    item = VECTORS["item"]
+    p, v, _ = proposal_triplet("A", item, snap, "shared")
+    human = ruling("shared", item, p, decode_record(v), "verified_fixed")
+    decision = decide_revision(snap, [p, v, human])
+    assert decision.state == "graph_error"
+    assert ("proposal", "p-A", "supersession-missing") in decision.diagnostics
+    assert not decision.closed
+
+
+def test_malformed_proposal_link_is_distinct_from_no_link(tmp_path):
+    snap = vector_snapshot(tmp_path, "original")
+    item = VECTORS["item"]
+    first = proposal_triplet("A", item, snap, None)
+    bad = json.loads(proposal("B", item, "X", "still_present", VECTORS["constraint"]))
+    bad["body"]["supersedes_proposal_id"] = False
+    decision = decide_revision(snap, [*first, wire(bad)])
+    assert decision.state == "graph_error"
+    assert ("proposal", "p-B", "invalid-supersession-reference") in decision.diagnostics
+    assert not decision.closed
