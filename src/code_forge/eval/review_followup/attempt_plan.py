@@ -92,6 +92,20 @@ class PairedAttemptGate:
         self._states = []
         self._pending = None
 
+    def check_bodies(self, request_bodies: tuple[bytes, ...]) -> None:
+        """Check the entire fresh run before any slot is reserved."""
+        if self._states:
+            raise InputError("attempt-plan-already-used", "attempt_plan")
+        require(len(request_bodies) == len(self._slots), "attempt_plan.request_bodies")
+        for slot, body in zip(self._slots, request_bodies, strict=True):
+            self._check_body(slot, body)
+
+    def _check_body(self, slot: AttemptSlot, request_body: bytes) -> None:
+        if type(request_body) is not bytes or not 0 < len(request_body) <= self._max_body_bytes:
+            raise InputError("attempt-body-over-budget", "attempt_plan")
+        if digest(request_body) != slot.request_sha256:
+            raise InputError("attempt-body-drift", "attempt_plan")
+
     def reserve(self, arm: str, group: str, pass_name: str, request_body: bytes) -> int:
         """Admit exactly one slot, returning the 1-based physical attempt number."""
         field = "attempt_plan"
@@ -103,10 +117,7 @@ class PairedAttemptGate:
         slot = self._slots[idx]
         if (arm, group, pass_name) != (slot.arm, slot.group, slot.pass_name):
             raise InputError("attempt-slot-drift", field)
-        if type(request_body) is not bytes or not 0 < len(request_body) <= self._max_body_bytes:
-            raise InputError("attempt-body-over-budget", field)
-        if digest(request_body) != slot.request_sha256:
-            raise InputError("attempt-body-drift", field)
+        self._check_body(slot, request_body)
         self._pending = idx + 1
         self._states.append("unknown_outcome")
         return self._pending

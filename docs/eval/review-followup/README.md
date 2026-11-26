@@ -240,3 +240,26 @@ and displaced context before authorizing the run.
 The gate is tested both with no transport and against bodies captured via the
 existing in-memory OpenAI-compatible serialization test. It is not a release,
 receipt or production review gate.
+
+
+### One-shot runner boundary (fake transport only)
+
+`run_smoke_once` preflights every frozen body before handing anything to a
+sender. Against a trusted, pre-existing local POSIX journal directory, it
+exclusively creates a journal keyed by the preregistered run ID and syncs
+the file and directory. It syncs each reservation **before** invoking the
+sender. Only an exact Boolean can become a terminal outcome, and the
+runner syncs that outcome before updating its in-memory state. A returned
+failure consumes the slot; a lost reply, interrupted process, or result-sync
+failure leaves an unknown reservation and does not advance to later slots.
+A terminal line visible after sync fails is not evidence of durability.
+An existing journal (even empty or partial) refuses a fresh invocation.
+Keep the same journal directory/run ID and retain its marker; this design
+does not support resumption, repointing the directory, or reset.
+
+The journal contains candidate request digests, slot identifiers, and
+attempt outcomes, not prompt bodies, credentials, or provider responses.
+Every sender invocation must itself be single-attempt; the orchestrator
+cannot observe retries hidden inside its caller's transport. The repo
+does not provide a live transport here. The live enablement, pinned route,
+usage attribution and spending decision remain separate.
