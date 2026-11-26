@@ -88,24 +88,18 @@ def check_identity(body: dict, args: argparse.Namespace) -> None:
         raise Refused("target does not match")
     if target.get("path") != args.expect_target_file or target.get("line") != args.expect_line:
         raise Refused("target does not match")
-    source = identity.get("source", {})
-    if type(source) is not dict or source.get("path") != target.get("path"):
+    source = identity["source"]
+    if source.get("path") != target.get("path"):
         # The digest has to describe the traced file, or the packet can hash one
         # file and report hits for another.
         raise Refused("source digest does not describe the traced target")
     node = identity.get("node")
-    test = identity.get("test", {})
-    if (
-        type(node) is not str
-        or type(test) is not dict
-        or node != args.expect_node
-        or node.split("::", 1)[0] != test.get("path")
-    ):
+    test = identity["test"]
+    test_file = test.get("path")
+    if type(node) is not str or node != args.expect_node or node.split("::", 1)[0] != test_file:
         # The test digest and the verified node must name the same file. A
         # packet can otherwise carry one file's digest behind another's result.
-        raise Refused(
-            f"{node} does not name a node in {test.get('path') if type(test) is dict else None}"
-        )
+        raise Refused(f"{node} does not name a node in {test_file}")
 
 
 def check_execution(body: dict, args: argparse.Namespace) -> None:
