@@ -86,9 +86,18 @@ LENS_SOURCES: dict[str, tuple[Source, ...]] = {
 # from estimate_lens_text().
 
 
+def _format_selection_suffix(pass_name: str) -> str:
+    return "\nLenses: " + ", ".join(PASS_LENSES[pass_name]) + ".\n"
+
+
 def selection_line(pass_name: str) -> str:
     """Last line of a pass prompt: which lenses this pass applies."""
-    return "\nLenses: " + ", ".join(PASS_LENSES[pass_name]) + ".\n"
+    return _format_selection_suffix(pass_name)
+
+
+def has_selection_suffix(prompt: str, pass_name: str) -> bool:
+    """Check the exact lens suffix against the canonical pass assignment."""
+    return prompt.endswith(_format_selection_suffix(pass_name))
 
 
 def estimate_lens_text() -> str:
