@@ -143,3 +143,52 @@ diff and replaces the overview. The preview also records a duplicate, a
 missing writer and an over-budget reader. The tests group fits all three
 whole spans at exactly 712 bytes. Run the same offline pytest command above
 to verify both replay and context preview. No quality gain is claimed.
+
+## Paired factory prompt dry run (PR3, rendering slice)
+
+```sh
+fixture=tests/fixtures/review_followup/context
+out=$(mktemp -d)
+PYTHONPATH=src python -m code_forge.eval.review_followup dry-run-context "$fixture" \
+  --case example --max-prompt-bytes 16000 --output "$out/dry-run.json"
+```
+
+The serial offline command captures at the entry to `llm_invoke`, using the
+existing ordinary and grouped L1 factories. The ordinary path runs each
+frozen fixture group separately. The grouped path runs the actual fan-out
+over those same ordered groups. Since the grouped factory only forwards
+**one shared** `context_sources_text`, the offline adapter supplies each
+group's context and contract at child construction. It does not add a
+production group-local argument or run CLI topology selection.
+
+A third, no-optional-context render pins the insertion point immediately
+before Design Intent. Each arm must equal those exact bytes plus only its
+group-local Context Sources block; missing, duplicated, moved or different
+material is not silently removed. Pass order and names, role suffixes,
+production L1 lens selection, model placeholder, one configured attempt per
+slot, zero correction slots and output cap are fixed across the arms. The
+preview's illustrative lens labels are not the real factory's lens text.
+The selected spans are serialized as a compact UTF-8 JSON array; when empty,
+the Context Sources block is absent.
+
+The report records the original preview budget and selected/displaced IDs
+separately from the measured complete-prompt byte limit and per-slot
+digests. Each path/arm render also has an 8 MiB total capture limit.
+Byte-identical arms stay in the report. For the two-group fixture,
+there are six logical slots per arm per path. **Zero requests are sent**,
+and provider usage is unknown, not zero tokens. The offline invoker always
+returns a known synthetic refusal after capture; no verdict, finding or
+receipt is inferred.
+
+The command itself does not exercise provider serialization, credentials, pricing,
+cache, real attempts or CLI ordinary/grouped selection. In particular, a
+live CLI A/B must not let optional context reselect topology, and equal byte
+ceilings do not imply equal input length. Live attempt capture, a preregistered A/B protocol, and separate
+authorization for model use remain necessary. No production review or candidate execution is enabled here.
+
+The manual suite passes all captures through the production OpenAI-compatible
+JSON serializer with an in-memory HTTP stand-in. It checks the exact body
+and ties the submitted message back to the recorded prompt digest. A
+threshold control shows that varying only optional context could change the
+kernel-enabled CLI's topology choice; the offline adapter keeps its topology
+fixed. This does not run the production CLI selector, network, or a model.
