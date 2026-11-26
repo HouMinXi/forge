@@ -44,10 +44,9 @@ def test_preview_and_accounting(request_data):
     assert storage["required"]["diff"] == value["groups"]["storage"]["diff"]
     assert storage["required"]["contract"] == value["groups"]["storage"]["contract"]
     assert storage["baseline"]["bytes"] == storage["limit_bytes"] == 469
-    assert storage["targeted"]["bytes"] == 447
+    assert storage["targeted"]["bytes"] == 456
     assert tests["targeted"]["bytes"] == tests["limit_bytes"] == 712
     assert tests["targeted"]["optional"][2]["text"] == "cleanup: reset the store\n"
-    assert storage["targeted"]["optional"][0]["text"] == "    if value is None:\n        return False\n"
     assert {v["id"]: (v["baseline"], v["targeted"], v["displaced"]) for v in storage["candidates"]} == {
         "overview": ("selected", "over_budget", True),
         "lookup": ("not_in_baseline", "over_budget", False),
@@ -61,6 +60,19 @@ def test_preview_and_accounting(request_data):
             wire = _wire(group, arm)
             assert group[arm]["bytes"] == len(wire) <= group["limit_bytes"]
             assert group[arm]["payload_sha256"] == hashlib.sha256(wire).hexdigest()
+
+
+def test_targeted_storage_adds_caller_failure_handling_outside_diff(request_data):
+    review, value = request_data
+    storage = context_plan.plan_context(review, value)["groups"][0]
+    snippet = storage["targeted"]["optional"][0]["text"]
+    diff_lines = {
+        line[1:].strip()
+        for line in storage["required"]["diff"].splitlines()
+        if line.startswith(("+", "-", " "))
+    }
+    assert {line.strip() for line in snippet.splitlines()}.isdisjoint(diff_lines)
+    assert snippet == "    if not put(store, key, value):\n        return 1\n"
 
 
 def test_shuffled_catalog_is_byte_identical(request_data):
@@ -173,16 +185,16 @@ def test_baseline_order_and_continuation_after_skips(request_data):
     review, value = request_data
     config = value["groups"]["storage"]
     config["baseline"] = ["overview", "error-exit"]
-    config["limit_bytes"] = 447
+    config["limit_bytes"] = 456
     group = context_plan.plan_context(review, value)["groups"][0]
     assert group["baseline"] == group["targeted"]
-    config["limit_bytes"] = 650
+    config["limit_bytes"] = 700
     first = context_plan.plan_context(review, value)["groups"][0]["baseline"]
     config["baseline"].reverse()
     second = context_plan.plan_context(review, value)["groups"][0]["baseline"]
     assert [item["text"].splitlines()[0] for item in first["optional"]] == [
         "Notes: storage fixtures use an in-memory dictionary for the example.",
-        "    if value is None:",
+        "    if not put(store, key, value):",
     ]
     assert second["optional"] == first["optional"][::-1]
 

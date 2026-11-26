@@ -137,8 +137,9 @@ file's own pretty-printed JSON is not what the budget measures. Neither byte
 counts nor this envelope are provider tokens, billable usage, or proof that
 a production prompt fits. Verify actual prompt equivalence before any A/B.
 
-The synthetic storage group uses 469/469 bytes in baseline and 447/469 in
-targeted: the failure path replaces the overview; a duplicate, missing
-writer and over-budget reader are visible. The tests group fits all three
+The synthetic storage group uses 469/469 bytes in baseline and 456/469 in
+targeted: the caller's handling of a failed write is outside the required
+diff and replaces the overview. The preview also records a duplicate, a
+missing writer and an over-budget reader. The tests group fits all three
 whole spans at exactly 712 bytes. Run the same offline pytest command above
 to verify both replay and context preview. No quality gain is claimed.

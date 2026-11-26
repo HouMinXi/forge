@@ -25,7 +25,7 @@
       "case": "example",
       "role": "candidate",
       "revision": "synthetic:context-v1",
-      "sha256": "33ec0666e5b3dfad4f774f3f563b80316b1f10482d4ac99785f563ae9e287c60",
+      "sha256": "fa82b5677a5053281560052b82101e9b3ab83f89ea213705381994fd5eb73cc0",
       "path": "inputs/example/store.txt"
     },
     {

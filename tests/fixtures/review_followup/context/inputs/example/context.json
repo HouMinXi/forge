@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "case": "example",
-  "review_input_sha256": "25ec54ceb370c3fc6c41aee7e0490d17cf7bc99efe93ba85ced3bfe577cc4b52",
+  "review_input_sha256": "1bf77f7233894ac5390334127bf3c6887801f69069f1bc0b97049fd7fe944641",
   "groups": {
     "storage": {
       "diff": "@@ put @@\n+    if value is None:\n+        return False",
@@ -55,8 +55,8 @@
       "revision": "synthetic:context-v1",
       "relationship": "failure_exit",
       "artifact": "store",
-      "start": 154,
-      "end": 197
+      "start": 270,
+      "end": 322
     },
     {
       "id": "error-exit-copy",
@@ -64,8 +64,8 @@
       "revision": "synthetic:context-v1",
       "relationship": "writer",
       "artifact": "store",
-      "start": 154,
-      "end": 197
+      "start": 270,
+      "end": 322
     },
     {
       "id": "writer-not-captured",

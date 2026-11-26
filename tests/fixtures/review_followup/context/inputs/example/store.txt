@@ -6,3 +6,8 @@ def put(store, key, value):
         return False
     store[key] = value
     return True
+
+def save_row(store, key, value):
+    if not put(store, key, value):
+        return 1
+    return 0

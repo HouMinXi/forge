@@ -7,7 +7,7 @@
       "split": "calibration",
       "input": {
         "path": "inputs/example/review.json",
-        "sha256": "25ec54ceb370c3fc6c41aee7e0490d17cf7bc99efe93ba85ced3bfe577cc4b52"
+        "sha256": "1bf77f7233894ac5390334127bf3c6887801f69069f1bc0b97049fd7fe944641"
       }
     }
   ]
