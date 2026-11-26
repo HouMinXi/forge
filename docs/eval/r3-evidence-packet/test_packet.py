@@ -73,7 +73,6 @@ def _run(
     root: Path,
     node: str,
     *extra: str,
-    run_id: str | None = None,
     source: str = "mod.py",
     pytest_node: str | None = None,
 ):
@@ -92,7 +91,7 @@ def _run(
         "--line",
         str(_line_of(MODULE, "return VALUE")),
         "--run-id",
-        run_id or secrets.token_hex(16),
+        secrets.token_hex(16),
         "--output",
         str(output),
         "--",
@@ -242,6 +241,20 @@ def _assign(body: dict, path: tuple[str, ...], value: object) -> None:
     for key in path[:-1]:
         holder = holder[key]
     holder[path[-1]] = value
+
+
+def test_a_test_record_for_another_file_is_refused_even_when_the_digest_holds(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    announced = _announced(result)
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    body["identity"]["test"]["path"] = "test_other.py"
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
+    assert check.returncode == 1
+    assert f"{node} does not name a node in test_other.py" in check.stderr
+    assert "verified" not in check.stdout
 
 
 def test_a_node_from_another_file_is_refused_even_when_the_digest_holds(project):
