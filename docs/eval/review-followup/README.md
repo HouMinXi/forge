@@ -248,8 +248,11 @@ receipt or production review gate.
 sender. Against a trusted, pre-existing local POSIX journal directory, it
 exclusively creates a journal keyed by the preregistered run ID and syncs
 the file and directory. It syncs each reservation **before** invoking the
-sender. A returned failure consumes the slot; a lost reply or interrupted
-process leaves an unknown reservation and does not advance to later slots.
+sender. Only an exact Boolean can become a terminal outcome, and the
+runner syncs that outcome before updating its in-memory state. A returned
+failure consumes the slot; a lost reply, interrupted process, or result-sync
+failure leaves an unknown reservation and does not advance to later slots.
+A terminal line visible after sync fails is not evidence of durability.
 An existing journal (even empty or partial) refuses a fresh invocation.
 Keep the same journal directory/run ID and retain its marker; this design
 does not support resumption, repointing the directory, or reset.

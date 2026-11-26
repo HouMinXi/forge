@@ -155,3 +155,63 @@ def test_process_loss_after_send_blocks_a_new_process_with_same_id(tmp_path):
     assert events[-1]["state"] == "unknown_outcome"
     with pytest.raises(InputError, match="smoke-run-already-started"):
         invoke(tmp_path, lambda _: pytest.fail("restarted run sent another request"))
+
+
+def test_result_sync_failure_leaves_unknown_and_blocks_restart(tmp_path, monkeypatch):
+    real_sync = smoke_runner.os.fsync
+    syncs = 0
+    seen = []
+    admission, bodies = setup_pair()
+
+    def interrupt_terminal_sync(fd):
+        nonlocal syncs
+        syncs += 1
+        if syncs == 4:
+            # Header, directory, and first reservation were already synced.
+            assert len(seen) == 1
+            raise OSError("terminal sync failed")
+        real_sync(fd)
+
+    def succeeded(body):
+        seen.append(body)
+        return True
+
+    monkeypatch.setattr(smoke_runner.os, "fsync", interrupt_terminal_sync)
+    with pytest.raises(OSError, match="terminal sync failed"):
+        smoke_runner.run_smoke_once(
+            journal_dir=tmp_path,
+            run_id="paired-1",
+            gate=admission,
+            request_bodies=bodies,
+            send_once=succeeded,
+        )
+    assert [row.state for row in admission.rows] == ["unknown_outcome", *["not_started"] * 5]
+    # A flushed terminal line may be readable despite fsync failing. Do not
+    # use its presence or absence to assert durability.
+    with pytest.raises(InputError, match="smoke-run-already-started"):
+        invoke(tmp_path, succeeded)
+    assert seen == [bodies[0]]
+
+
+@pytest.mark.parametrize("invalid_reply", [1, None])
+def test_malformed_sender_return_never_publishes_terminal_state(tmp_path, invalid_reply):
+    admission, bodies = setup_pair()
+    seen = []
+
+    def malformed(body):
+        seen.append(body)
+        return invalid_reply
+
+    with pytest.raises(InputError, match=r"attempt_plan\.success"):
+        smoke_runner.run_smoke_once(
+            journal_dir=tmp_path,
+            run_id="paired-1",
+            gate=admission,
+            request_bodies=bodies,
+            send_once=malformed,
+        )
+    assert [event["event"] for event in journal(tmp_path)] == ["started", "reserved"]
+    assert [row.state for row in admission.rows] == ["unknown_outcome", *["not_started"] * 5]
+    with pytest.raises(InputError, match="smoke-run-already-started"):
+        invoke(tmp_path, malformed)
+    assert seen == [bodies[0]]

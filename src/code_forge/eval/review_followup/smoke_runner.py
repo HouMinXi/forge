@@ -62,7 +62,7 @@ def run_smoke_once(
                 ticket = gate.reserve(slot.arm, slot.group, slot.pass_name, body)
                 _append(journal, {"event": "reserved", "attempt": ticket, "state": "unknown_outcome"})
                 success = send_once(body)
-                gate.complete(ticket, success=success)
+                require(type(success) is bool, "attempt_plan.success")
                 _append(
                     journal,
                     {
@@ -71,6 +71,8 @@ def run_smoke_once(
                         "state": "completed" if success else "failed",
                     },
                 )
+                # Do not expose a terminal state before it is durable.
+                gate.complete(ticket, success=success)
         return gate.rows
     finally:
         os.close(directory)
