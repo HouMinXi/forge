@@ -27,6 +27,8 @@ class RevisionDecision:
     heads: tuple[str, ...] = ()
     effective: RevisionRecord | None = None
     conclusion: str | None = None
+    item: tuple[str, str] | None = None
+    proposal_digests: tuple[tuple[str, str], ...] = ()
 
     @property
     def closed(self) -> bool:
@@ -199,15 +201,19 @@ def decide_revision(snapshot: EvidenceSnapshot, raw_records: Iterable[bytes]) ->
         "human_ruling", edges, all_graph_records["human_ruling"], item
     )
     args = (tuple(sorted(states.items())), tuple(sorted(set(diagnostics + errors))))
+    binding = {
+        "item": item,
+        "proposal_digests": tuple(sorted((key, record.sha256) for key, record in proposals.items())),
+    }
     if errors:
-        return RevisionDecision("graph_error", *args)
+        return RevisionDecision("graph_error", *args, **binding)
     replaced = {target for key in eligible for target in edges[key] if target in eligible}
     heads = tuple(sorted(eligible.keys() - replaced))
     if len(heads) > 1:
-        return RevisionDecision("conflict", *args, heads)
+        return RevisionDecision("conflict", *args, heads, **binding)
     if heads:
         record, body = eligible[heads[0]]
-        return RevisionDecision("adjudicated", *args, heads, record, body["conclusion"])
+        return RevisionDecision("adjudicated", *args, heads, record, body["conclusion"], **binding)
     statuses = set(states.values())
     state = next(iter(statuses)) if len(statuses) == 1 else "pending" if statuses else "no_proposal"
-    return RevisionDecision(state, *args)
+    return RevisionDecision(state, *args, **binding)
