@@ -237,6 +237,13 @@ def _rehashed(body: dict) -> None:
     body["packet_sha256"] = module.digest_of(body)
 
 
+def _assign(body: dict, path: tuple[str, ...], value: object) -> None:
+    holder = body
+    for key in path[:-1]:
+        holder = holder[key]
+    holder[path[-1]] = value
+
+
 def test_a_node_from_another_file_is_refused_even_when_the_digest_holds(project):
     node = "test_mod.py::test_hits_the_line"
     result, packet = _run(project, node)
@@ -251,36 +258,122 @@ def test_a_node_from_another_file_is_refused_even_when_the_digest_holds(project)
     assert "verified" not in check.stdout
 
 
-def test_a_malformed_record_is_refused_without_a_traceback(project):
+@pytest.mark.parametrize(
+    ("path", "value", "refusal"),
+    [
+        pytest.param(
+            ("identity", "source"),
+            "not-a-record",
+            "source digest does not match",
+            id="source",
+        ),
+        pytest.param(
+            ("collected",),
+            "test_mod.py::test_hits_the_line",
+            "node was not collected in this run",
+            id="collected-not-list",
+        ),
+        pytest.param(
+            ("collected",),
+            ["test_mod.py::test_other_node"],
+            "node was not collected in this run",
+            id="collected-not-member",
+        ),
+    ],
+)
+def test_a_malformed_record_is_refused_without_a_traceback(project, path, value, refusal):
     node = "test_mod.py::test_hits_the_line"
     result, packet = _run(project, node)
     announced = _announced(result)
     body = json.loads(packet.read_text(encoding="utf-8"))
-    body["identity"]["source"] = "not-a-record"
-    body["collected"] = "nn"
+    _assign(body, path, value)
     _rehashed(body)
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "packet refused:" in check.stderr
+    assert check.stderr == f"packet refused: {refusal}\n"
     assert "Traceback" not in check.stderr
-    assert "verified" not in check.stdout
+    assert check.stdout == ""
 
 
-def test_a_malformed_phase_or_hit_count_is_refused_without_a_traceback(project):
+@pytest.mark.parametrize(
+    ("malformed", "refusal"),
+    [
+        pytest.param(
+            {"phases": {"test_mod.py::test_hits_the_line": 1}},
+            "phase entry is not a when/outcome pair",
+            id="phase-container",
+        ),
+        pytest.param(
+            {"phases": {"test_mod.py::test_hits_the_line": ["xx"]}},
+            "phase entry is not a when/outcome pair",
+            id="phase-entry-type",
+        ),
+        pytest.param(
+            {"phases": {"test_mod.py::test_hits_the_line": [["call"]]}},
+            "phase entry is not a when/outcome pair",
+            id="phase-entry-length",
+        ),
+        pytest.param({"hits": [1]}, "hits is not a record", id="hits"),
+    ],
+)
+def test_a_malformed_execution_record_is_refused_without_a_traceback(project, malformed, refusal):
     node = "test_mod.py::test_hits_the_line"
     result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
     announced = _announced(result)
     body = json.loads(packet.read_text(encoding="utf-8"))
-    body["phases"][node] = ["call"]
-    body["hits"] = [1]
+    body.update(malformed)
     _rehashed(body)
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "packet refused:" in check.stderr
+    assert check.stderr == f"packet refused: {refusal}\n"
     assert "Traceback" not in check.stderr
-    assert "verified" not in check.stdout
+    assert check.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "refusal"),
+    [
+        pytest.param(
+            ("hits", "test_mod.py::test_hits_the_line"),
+            True,
+            "target hits are True, expected 1",
+            id="hit-count",
+        ),
+        pytest.param(
+            ("hits", "test_mod.py::test_hits_the_line"),
+            1.0,
+            "target hits are 1.0, expected 1",
+            id="hit-count-float",
+        ),
+        pytest.param(("pytest_exit",), False, "pytest exit is False, expected 0", id="pytest-exit"),
+        pytest.param(("pytest_exit",), 0.0, "pytest exit is 0.0, expected 0", id="pytest-exit-float"),
+        pytest.param(
+            ("identity", "target", "line"), 5.0, "target does not match", id="target-line-float"
+        ),
+    ],
+)
+def test_a_non_integer_execution_field_is_refused_without_a_traceback(project, path, value, refusal):
+    # A JSON boolean or float is not an integer count, exit status or line number.
+    # Python's equality would otherwise accept `true` for 1, `false` for 0 and
+    # `5.0` for a line of 5. A boolean is not a useful line witness: it cannot
+    # equal the traced line of 5, so the base verifier already refuses it. The
+    # float is the witness that distinguishes the new guard from the old comparison.
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    announced = _announced(result)
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    _assign(body, path, value)
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
+    assert check.returncode == 1
+    assert check.stderr == f"packet refused: {refusal}\n"
+    assert "Traceback" not in check.stderr
+    assert check.stdout == ""
 
 
 def test_a_source_that_differs_from_the_target_is_refused_by_the_verifier(project):
