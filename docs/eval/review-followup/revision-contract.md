@@ -124,10 +124,12 @@ but leaves the human conclusion `insufficient_evidence`. Do not infer
 that the passing control proves more general behavior, or use these
 labels to test supersession.
 
-This slice does not execute those observations. C3–C4 still need to
-materialize the verified catalog, bind records and exercise these expected
-outcomes. C5–C7 add summary and independent scoring. Live adapters, model
-calls, candidate execution, receipts and merge gates are out of scope.
+The C4 tests pin the saved transcripts as candidate excerpts, build real
+C3 host records, and replay the nine prewritten expectations. The separate
+adequacy controls replay human inputs; no test program is executed and
+no human adequacy label is inferred. C5–C7 add summary and independent
+scoring. Live adapters, model calls, candidate execution, receipts and
+merge gates are out of scope.
 
 ## C3 host entry point and selectors
 
@@ -172,3 +174,31 @@ without establishing that the proposed closure is correct. The proposer
 cannot assign its own revision or override the evidence catalog.
 Supersession, active ruling selection, and independent evidence-adequacy
 judgments remain separate work.
+
+
+## C4 effective ruling
+
+`revision_adjudication.decide_revision(snapshot, raw_records)` imports a
+complete offline batch under C2's limits and projects one preregistered
+item. It recomputes C3 results using the **caller-selected active
+snapshot**, not a catalog supplied by a proposal or ruling. To be active,
+a saved validation must match the full recomputed body (including JSON
+types and every ordered reference), proposal ID/digest, and the item. A
+human ruling must also match the exact active validation ID/digest and
+adopt only indexes of valid references; a closure must adopt current
+evidence. An identical proposal with newly validated bytes still needs a
+new ruling.
+
+Well-formed supersession declarations are checked against the complete
+batch for missing targets, self-links, cross-item links and cycles. Such
+graph errors keep the item open. Only a direct edge from an eligible
+ruling to another eligible ruling can remove a head. More than one head
+keeps the item open as a conflict; a correction can name all heads.
+Without an effective ruling, a unanimous proposal processing state is
+reported as-is. Differing proposal states are reported as `pending` with
+each state exposed; no proposals is `no_proposal`. None of these states
+implies a human `insufficient_evidence` conclusion.
+
+The result retains the exact effective ruling (including its digest)
+for later independent scoring. It does not write to the repository,
+resolve comments, or judge whether a human's rationale is sufficient.
