@@ -1,0 +1,227 @@
+{
+  "schema": 1,
+  "item": {
+    "finding_id": "wrong-total",
+    "candidate_sha": "synthetic:revision-2"
+  },
+  "constraint": {
+    "id": "nonnegative-total",
+    "version": 1
+  },
+  "observations": {
+    "X": "assert total([3]) == 3: pass\n",
+    "X2": "assert total([4]) == 4: pass\n",
+    "Y": "assert total([3, -1]) == 2: pass\n",
+    "Y2": "assert total([5, -1]) == 4: pass\n",
+    "Z": "assert total([-1]) >= 0: fail; observed -1\n",
+    "U": "synthetic runner note: original\n",
+    "U2": "synthetic runner note: corrected\n"
+  },
+  "artifacts": {
+    "X": {
+      "path": "observations/x.txt",
+      "role": "observation"
+    },
+    "Y": {
+      "path": "observations/y.txt",
+      "role": "observation"
+    },
+    "Z": {
+      "path": "observations/z.txt",
+      "role": "observation"
+    },
+    "U": {
+      "path": "observations/u.txt",
+      "role": "observation"
+    }
+  },
+  "snapshots": {
+    "original": {
+      "X": "X",
+      "Y": "Y",
+      "Z": "Z",
+      "U": "U"
+    },
+    "X-replaced": {
+      "X": "X2",
+      "Y": "Y",
+      "Z": "Z",
+      "U": "U"
+    },
+    "X-replaced-and-revalidated": {
+      "X": "X2",
+      "Y": "Y",
+      "Z": "Z",
+      "U": "U"
+    },
+    "unrelated-replaced": {
+      "X": "X",
+      "Y": "Y",
+      "Z": "Z",
+      "U": "U2"
+    },
+    "Y-replaced": {
+      "X": "X",
+      "Y": "Y2",
+      "Z": "Z",
+      "U": "U"
+    }
+  },
+  "rulings": {
+    "A": {
+      "adopts": "X",
+      "original_bytes": "X",
+      "conclusion": "verified_fixed",
+      "supersedes": []
+    },
+    "B": {
+      "adopts": "Y",
+      "original_bytes": "Y",
+      "conclusion": "verified_fixed",
+      "supersedes": [
+        "A"
+      ]
+    },
+    "C": {
+      "adopts": "Z",
+      "original_bytes": "Z",
+      "conclusion": "still_present",
+      "supersedes": [
+        "B"
+      ]
+    },
+    "D": {
+      "adopts": "Z",
+      "original_bytes": "Z",
+      "conclusion": "still_present",
+      "supersedes": [
+        "A",
+        "C"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "original-fix",
+      "rulings": [
+        "A"
+      ],
+      "snapshot": "original",
+      "expected_head": "A",
+      "expected_state": "adjudicated",
+      "expected_conclusion": "verified_fixed",
+      "closed": true,
+      "fresh_validation_for": []
+    },
+    {
+      "id": "same-path-replaced-evidence",
+      "rulings": [
+        "A"
+      ],
+      "snapshot": "X-replaced",
+      "expected_head": null,
+      "expected_state": "pending_validation",
+      "expected_conclusion": null,
+      "closed": false,
+      "fresh_validation_for": []
+    },
+    {
+      "id": "replacement-fresh-validation-no-ruling",
+      "rulings": [
+        "A"
+      ],
+      "snapshot": "X-replaced-and-revalidated",
+      "expected_head": null,
+      "expected_state": "pending_human",
+      "expected_conclusion": null,
+      "closed": false,
+      "fresh_validation_for": [
+        "A"
+      ]
+    },
+    {
+      "id": "unrelated-evidence-replaced",
+      "rulings": [
+        "A"
+      ],
+      "snapshot": "unrelated-replaced",
+      "expected_head": "A",
+      "expected_state": "adjudicated",
+      "expected_conclusion": "verified_fixed",
+      "closed": true,
+      "fresh_validation_for": []
+    },
+    {
+      "id": "direct-supersession",
+      "rulings": [
+        "A",
+        "B",
+        "C"
+      ],
+      "snapshot": "original",
+      "expected_head": "C",
+      "expected_state": "adjudicated",
+      "expected_conclusion": "still_present",
+      "closed": false,
+      "fresh_validation_for": []
+    },
+    {
+      "id": "invalid-successor-cannot-supersede",
+      "rulings": [
+        "A",
+        "B"
+      ],
+      "snapshot": "Y-replaced",
+      "expected_head": "A",
+      "expected_state": "adjudicated",
+      "expected_conclusion": "verified_fixed",
+      "closed": true,
+      "fresh_validation_for": []
+    },
+    {
+      "id": "invalid-middle-leaves-two-heads",
+      "rulings": [
+        "A",
+        "B",
+        "C"
+      ],
+      "snapshot": "Y-replaced",
+      "expected_head": null,
+      "expected_state": "conflict",
+      "expected_conclusion": null,
+      "closed": false,
+      "fresh_validation_for": []
+    },
+    {
+      "id": "correction-names-both-heads",
+      "rulings": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "snapshot": "Y-replaced",
+      "expected_head": "D",
+      "expected_state": "adjudicated",
+      "expected_conclusion": "still_present",
+      "closed": false,
+      "fresh_validation_for": []
+    },
+    {
+      "id": "correction-reversed-with-duplicates",
+      "rulings": [
+        "D",
+        "C",
+        "B",
+        "A",
+        "D"
+      ],
+      "snapshot": "Y-replaced",
+      "expected_head": "D",
+      "expected_state": "adjudicated",
+      "expected_conclusion": "still_present",
+      "closed": false,
+      "fresh_validation_for": []
+    }
+  ]
+}
