@@ -154,6 +154,12 @@ are closed objects with `artifact_id, purpose, selector`. Purpose is
 | Session | `kind: session, session_id` | Session ID is present in the admitted observation; no inference about calls or assertions. |
 | Call | `kind: call, session_id, call_id` | Session and call IDs actually present; no inference about the outcome. |
 
+C3 admits at most 1,024 references per proposal, including repeats. Since
+each host binding grows the corresponding reference, an admitted proposal
+must leave space for a round-trippable host record. Above the limit, C3
+returns `too-many-evidence-refs: proposal.evidence_refs` before resolving
+references; it does not truncate them or emit a partial host record.
+
 Each check preserves proposal order and returns either a resolved binding
 (ID, original digest, actual revision, role and selector) or a refusal.
 Malformed input or item mismatch rejects before emitting a host record;

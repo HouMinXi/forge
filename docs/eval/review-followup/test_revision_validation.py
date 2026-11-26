@@ -259,3 +259,38 @@ def test_snapshot_uses_verified_bytes_without_reopening_evidence(root):
     assert old["reference_checks"][0]["binding"]["artifact_sha256"] == admitted.sha256
     assert new["reference_checks"][0]["binding"]["artifact_sha256"] == updated.sha256
     assert old["proposal_digest"] == new["proposal_digest"]
+
+
+def test_reference_limit_allows_maximal_bindings_and_rejects_one_more(root):
+    long_id = "x" * 96
+
+    def long_revision(data):
+        data["candidate"] = "synthetic:" + long_id
+        data["artifacts"][0]["revision"] = data["candidate"]
+
+    review = review_at(root, (long_revision,))
+    artifact = saved(root, review, ids=(long_id,), session=long_id)
+    snap = evidence_snapshot(review, FINDING, [(long_id, artifact)])
+    call = ref(long_id, selector={"kind": "call", "session_id": long_id, "call_id": long_id})
+    body = check(propose(review, [call] * 1024), snap)
+    assert body["result"] == "passed"
+    assert len(body["reference_checks"]) == 1024
+    with pytest.raises(InputError, match=r"^too-many-evidence-refs: proposal.evidence_refs$"):
+        check(propose(review, [call] * 1025), snap)
+
+
+def test_source_proposal_over_reference_limit_is_refused_before_output_expands(root):
+    source = root / "inputs/revision/candidate.txt"
+    source.write_bytes(b"x" * 6000)
+
+    def pin_source(data):
+        data["artifacts"][0]["sha256"] = checksum(source.read_bytes())
+
+    review = review_at(root, (pin_source,))
+    refs = [
+        ref(selector={"kind": "source_bytes", "start": index, "end": index + 1}) for index in range(6000)
+    ]
+    raw = propose(review, refs)
+    assert len(raw) < 1024 * 1024
+    with pytest.raises(InputError, match=r"^too-many-evidence-refs: proposal.evidence_refs$"):
+        check(raw, evidence_snapshot(review, FINDING))

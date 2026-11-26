@@ -3,12 +3,14 @@
 import json
 from dataclasses import dataclass
 
-from .fixtures import digest, enum, fields, identifier, parse, require
+from .fixtures import InputError, digest, enum, fields, identifier, parse, require
 from .models import ReviewInput, distinct_ids, nonempty, version
 from .revision_codec import RevisionRecord, decode_record
 
 _CONCLUSIONS = ("still_present", "verified_fixed", "no_longer_applicable", "insufficient_evidence")
 _CLOSURE = frozenset(("verified_fixed", "no_longer_applicable"))
+# One host binding carries more bytes than its proposal reference.
+_MAX_EVIDENCE_REFS = 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +140,8 @@ def validate_proposal(raw: bytes, snapshot: EvidenceSnapshot, *, validation_id: 
         and type(body["evidence_refs"]) is list,
         "proposal.body",
     )
+    if len(body["evidence_refs"]) > _MAX_EVIDENCE_REFS:
+        raise InputError("too-many-evidence-refs", "proposal.evidence_refs")
     entries = {entry.artifact_id: entry for entry in snapshot.entries}
     current_basis = False
     checks = []
