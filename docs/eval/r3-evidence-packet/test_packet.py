@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import secrets
 import subprocess
 import sys
@@ -717,3 +718,30 @@ def test_the_verifier_refuses_ambiguous_target_identity(project, repeat):
     assert check.returncode == 1, check.stdout + check.stderr
     assert reason in check.stderr
     assert "verified" not in check.stdout
+
+
+@pytest.mark.parametrize(
+    ("raw", "diagnostic"),
+    [(b"\xff", "packet is not valid UTF-8"), (b"{", "packet is not valid JSON")],
+)
+def test_a_malformed_packet_file_is_refused_without_a_traceback(project, tmp_path, raw, diagnostic):
+    node = "test_mod.py::test_hits_the_line"
+    packet = tmp_path / "malformed.json"
+    packet.write_bytes(raw)
+    check = _verify(packet, _expectations(project, node, "a" * 32, "b" * 64))
+    assert check.returncode == 1
+    assert check.stdout == ""
+    assert check.stderr == f"packet refused: {diagnostic}\n"
+
+
+def test_a_json_conversion_error_is_refused(tmp_path, monkeypatch):
+    verifier = runpy.run_path(str(VERIFY))
+    packet = tmp_path / "packet.json"
+    packet.write_text("{}", encoding="utf-8")
+
+    def refuse_numeric_conversion(_text):
+        raise ValueError("numeric limit")
+
+    monkeypatch.setattr(json, "loads", refuse_numeric_conversion)
+    with pytest.raises(verifier["Refused"], match="^packet contains an unsupported JSON value$"):
+        verifier["load"](packet)

@@ -42,9 +42,16 @@ def load(path: Path) -> dict:
     if path.stat().st_size > MAX_PACKET_BYTES:
         raise Refused("packet exceeds size limit")
     try:
-        body = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise Refused("packet is not valid UTF-8") from exc
+    try:
+        body = json.loads(text)
     except json.JSONDecodeError as exc:
         raise Refused("packet is not valid JSON") from exc
+    except ValueError as exc:
+        # Preserve the interpreter's numeric parsing limits.
+        raise Refused("packet contains an unsupported JSON value") from exc
     if type(body) is not dict or body.get("schema") != SCHEMA:
         raise Refused("packet schema differs")
     return body
