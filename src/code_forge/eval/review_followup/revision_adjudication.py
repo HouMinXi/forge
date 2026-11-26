@@ -27,6 +27,9 @@ class RevisionDecision:
     heads: tuple[str, ...] = ()
     effective: RevisionRecord | None = None
     conclusion: str | None = None
+    item: tuple[str, str] | None = None
+    proposal_digests: tuple[tuple[str, str], ...] = ()
+    proposal_graph_rejected: tuple[str, ...] = ()
 
     @property
     def closed(self) -> bool:
@@ -89,7 +92,16 @@ def _graph_errors(kind, edges, records, item):
                 indegree[target] -= 1
                 if indegree[target] == 0:
                     ready.append(target)
-    if visited != len(indegree) and not errors:
+    if kind == "proposal":
+        # A proposal has at most one outgoing edge. Peeling zero-indegree
+        # vertices leaves exactly the cycle members, not proposals feeding
+        # into a cycle. An independent bad edge must not hide a cycle.
+        errors.extend(
+            (kind, key, "supersession-cycle")
+            for key, count in indegree.items()
+            if count and edges[key] != (key,)  # Self-links have their own diagnostic.
+        )
+    elif visited != len(indegree) and not errors:
         errors.append((kind, item[0], "supersession-cycle"))
     return errors
 
@@ -192,22 +204,27 @@ def decide_revision(snapshot: EvidenceSnapshot, raw_records: Iterable[bytes]) ->
         else:
             proposal_errors.append(("proposal", key, "invalid-supersession-reference"))
 
-    errors = proposal_errors + _graph_errors(
-        "proposal", proposal_edges, all_graph_records["proposal"], item
-    )
-    errors += ruling_errors + _graph_errors(
-        "human_ruling", edges, all_graph_records["human_ruling"], item
+    proposal_errors += _graph_errors("proposal", proposal_edges, all_graph_records["proposal"], item)
+    errors = (
+        proposal_errors
+        + ruling_errors
+        + _graph_errors("human_ruling", edges, all_graph_records["human_ruling"], item)
     )
     args = (tuple(sorted(states.items())), tuple(sorted(set(diagnostics + errors))))
+    binding = {
+        "item": item,
+        "proposal_graph_rejected": tuple(sorted({key for _, key, _ in proposal_errors})),
+        "proposal_digests": tuple(sorted((key, record.sha256) for key, record in proposals.items())),
+    }
     if errors:
-        return RevisionDecision("graph_error", *args)
+        return RevisionDecision("graph_error", *args, **binding)
     replaced = {target for key in eligible for target in edges[key] if target in eligible}
     heads = tuple(sorted(eligible.keys() - replaced))
     if len(heads) > 1:
-        return RevisionDecision("conflict", *args, heads)
+        return RevisionDecision("conflict", *args, heads, **binding)
     if heads:
         record, body = eligible[heads[0]]
-        return RevisionDecision("adjudicated", *args, heads, record, body["conclusion"])
+        return RevisionDecision("adjudicated", *args, heads, record, body["conclusion"], **binding)
     statuses = set(states.values())
     state = next(iter(statuses)) if len(statuses) == 1 else "pending" if statuses else "no_proposal"
-    return RevisionDecision(state, *args)
+    return RevisionDecision(state, *args, **binding)

@@ -208,3 +208,50 @@ implies a human `insufficient_evidence` conclusion.
 The result retains the exact effective ruling (including its digest)
 for later independent scoring. It does not write to the repository,
 resolve comments, or judge whether a human's rationale is sufficient.
+
+### C6: independent scoring (offline)
+
+`score_revision_batch(registered_items, proposals, projections, independent_labels)`
+accepts preregistered item pairs, raw proposal records (including rejected
+proposals), and the C4 decisions for the same item/proposal bytes. It neither
+selects rulings nor rechecks evidence. C4 carries item and proposal digests so
+an old projection cannot give a new payload the previous host result. A
+missing projection is allowed only when no proposal exists for that item.
+
+- **Close proposals:** one row per distinct close-proposal ID. Report pending
+  validation or host rejection before semantic judgments. A proposal declaring
+  a malformed, missing or cross-item link, or belonging to a cycle (including
+  a self-link), remains in the denominator as `proposal_graph_rejected` and
+  cannot consume an independent label. This outcome takes precedence over
+  the separately retained host state. Other proposals in the same item,
+  including those merely pointing into a cycle, are not charged with the
+  graph defect. A ruling-graph error alone does not reject proposals.
+  Either graph error still prevents an effective item closure.
+  For a proposal which
+  passed mechanical checks, an exact independent label distinguishes correct,
+  wrong, and insufficient evidence; without one it remains pending human *in
+  the proposal score*, even if the item already has a C4 ruling. An item ruling
+  does not double as an independent proposal label.
+- **Coverage:** determinate effective rulings / preregistered items. Still
+  present counts; insufficient, conflict, graph error and other unresolved
+  states stay in the denominator. This measures adjudication coverage, not
+  independent accuracy.
+- **Final closures:** one row per item with an effective closing ruling.
+  Correct and erroneous closures are scored against the independently supported
+  conclusion. The other type of closure is an error and has its own count.
+  An independent conclusion of insufficient evidence does not support closing.
+  Unreviewed closures are listed but do not enter the error rate. With no
+  independently reviewed closure, the rate is unavailable, not zero.
+
+Labels bind to item, record kind, ID and digest; the caller supplies the
+reconciled independent judgments. Duplicate identical imports do not change
+counts; contradictory labels for the same exact record fail the batch instead
+of choosing a winner. Labels that cannot score a row are retained separately.
+Verification and correction durations are independent optional measurements
+on the label (milliseconds); missing is not zero. The scorer does not assume
+that reviewing a proposal and a ruling were two separate time expenditures.
+
+The hand-computed ten-item test ledger expects coverage **4/10**,
+four closing proposals (one host-rejected, one human-insufficient, one correct,
+one pending), and one independently correct final closure (**0/1** errors).
+These are fixture accounting checks, not measured review performance.
