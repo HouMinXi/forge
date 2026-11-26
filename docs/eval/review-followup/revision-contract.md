@@ -128,3 +128,47 @@ This slice does not execute those observations. C3–C4 still need to
 materialize the verified catalog, bind records and exercise these expected
 outcomes. C5–C7 add summary and independent scoring. Live adapters, model
 calls, candidate execution, receipts and merge gates are out of scope.
+
+## C3 host entry point and selectors
+
+`revision_validation.evidence_snapshot(review, finding_id, saved_observations)`
+takes an independently validated PR1 review and a preregistered finding ID.
+PR1 source evidence supplies its own role, revision, and verified bytes.
+The optional saved observations are pairs of caller-assigned artifact IDs
+and `VerifiedArtifact`s from the pinned loader under
+`saved_observations/<case>/`. Their closed schema is
+`schema, case, input_sha256, candidate, session, call_ids`. The host checks
+case, admitted candidate, and exact review-input digest against the review
+and requires unique observed call IDs. It does not treat a completed PR1
+review run as evidence of an individual call. Only current-candidate
+observations are admitted here; historical source is allowed as background.
+
+`validate_proposal(raw, snapshot, validation_id=...)` accepts an offline
+proposal record and emits a canonical host-validation record. References
+are closed objects with `artifact_id, purpose, selector`. Purpose is
+`current_basis` or `historical_context`. Supported selectors:
+
+| Selector | Exact fields | Check |
+| --- | --- | --- |
+| Source excerpt | `kind: source_bytes, start, end` | Nonempty half-open range, measured in original bytes from zero. |
+| Session | `kind: session, session_id` | Session ID is present in the admitted observation; no inference about calls or assertions. |
+| Call | `kind: call, session_id, call_id` | Session and call IDs actually present; no inference about the outcome. |
+
+C3 admits at most 1,024 references per proposal, including repeats. Since
+each host binding grows the corresponding reference, an admitted proposal
+must leave space for a round-trippable host record. Above the limit, C3
+returns `too-many-evidence-refs: proposal.evidence_refs` before resolving
+references; it does not truncate them or emit a partial host record.
+
+Each check preserves proposal order and returns either a resolved binding
+(ID, original digest, actual revision, role and selector) or a refusal.
+Malformed input or item mismatch rejects before emitting a host record;
+a syntactically valid but unresolved or wrong-role reference yields a
+rejected host record. The proposal's suggested conclusion must be one of
+the four semantic outcomes, but the validator does not endorse it.
+Closure proposals must have at least one passing current reference.
+A valid whole session can therefore pass the host for a closure proposal
+without establishing that the proposed closure is correct. The proposer
+cannot assign its own revision or override the evidence catalog.
+Supersession, active ruling selection, and independent evidence-adequacy
+judgments remain separate work.
