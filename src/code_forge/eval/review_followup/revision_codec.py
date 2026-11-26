@@ -78,6 +78,8 @@ def decode_record(raw: bytes) -> RevisionRecord:
     canonical = json.dumps(
         record, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("ascii")
+    if len(canonical) > MAX_BYTES:
+        raise InputError("canonical-record-too-large", "revision_record")
     return RevisionRecord(
         kind, record["id"], item["finding_id"], item["candidate_sha"], canonical, digest(canonical)
     )

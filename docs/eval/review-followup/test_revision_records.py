@@ -119,3 +119,42 @@ def test_decision_vectors_supply_original_and_active_bytes_without_using_project
         != hashlib.sha256(observation[original["X"]].encode()).digest()
     )
     assert cases["replacement-fresh-validation-no-ruling"]["fresh_validation_for"] == ["A"]
+
+
+def test_canonical_unicode_expansion_must_fit_single_record():
+    from code_forge.eval.review_followup.fixtures import MAX_BYTES
+
+    value = json.loads(GOLDEN)
+    value["body"]["claim"] = ""
+    # An ASCII escape for U+6D4B costs six bytes; UTF-8 costs three.
+    overhead = len(GOLDEN) - len(rb"r\u00e9sum\u00e9\n\ud83d\udc09")
+    repeats, padding = divmod(MAX_BYTES - overhead, 6)
+    value["body"]["claim"] = "测" * repeats + "a" * padding
+    raw = encode(value)
+    assert len(raw) < MAX_BYTES
+    record = decode_record(raw)
+    assert len(record.canonical) == MAX_BYTES
+    assert decode_record(record.canonical) == record
+
+    value["body"]["claim"] += "a"
+    oversized = encode(value)
+    assert len(oversized) < MAX_BYTES
+    with pytest.raises(InputError, match=r"^canonical-record-too-large: revision_record$"):
+        decode_record(oversized)
+
+
+def test_canonical_distinct_records_must_fit_batch_budget(monkeypatch):
+    from code_forge.eval.review_followup import revision_import
+
+    monkeypatch.setattr(revision_import, "MAX_BYTES", 512)
+    value = json.loads(GOLDEN)
+    value["body"]["claim"] = "测" * 40
+    raw = [encode(dict(value, id=f"record-{i:02d}")) for i in range(40)]
+    canonical = [decode_record(blob).canonical for blob in raw]
+    budget = 32 * 512
+    assert sum(map(len, raw)) < budget < sum(map(len, canonical))
+    with pytest.raises(InputError, match=r"^canonical-batch-too-large: revision_records$"):
+        import_records(raw)
+
+    batch = import_records(raw[:30])
+    assert import_records(record.canonical for record in batch) == batch

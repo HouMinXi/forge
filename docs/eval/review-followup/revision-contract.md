@@ -33,7 +33,11 @@ sequences (no lone surrogates). Permit null, booleans and integers in
 ±(2^53−1); reject floats, including integral-valued floats, and duplicate
 keys on decode. Inputs are UTF-8 JSON using the existing per-file and batch
 byte limits, with a maximum nesting depth of 32 (envelope at depth 1; keys and values
-of members sit one level below their containing object).
+of members sit one level below their containing object). The 1 MiB
+per-record and 32 MiB per-batch limits apply separately to both the UTF-8
+input and the canonical output; the output budget counts distinct records,
+while repeated input still consumes input budget. This ensures any
+successful batch can be re-imported from its canonical records unchanged.
 SHA-256 hashes the entire canonical envelope; the digest is not a field in
 that envelope. This is not the encoding for PR1 artifacts: their digest
 continues to hash the original, unmodified bytes.
