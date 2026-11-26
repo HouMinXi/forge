@@ -16,7 +16,7 @@ from test_revision_scoring import CONSTRAINT, FIXED, INSUFFICIENT, NA, label
 from test_revision_validation import FINDING as FIXTURE_FINDING
 from test_revision_validation import FIXTURES as PR1_FIXTURES
 from test_revision_validation import propose as propose_from_review
-from test_revision_validation import ref, review_at
+from test_revision_validation import ref, review_at, saved, session_ref
 
 ITEM = ("lost-exit-status", "synthetic:revision-7")
 OLD = (ITEM[0], "synthetic:revision-6")
@@ -249,3 +249,66 @@ def test_still_present_adopting_only_history_does_not_count_even_with_current_re
     assert row["conclusion"] == "still_present" and not row["closed"]
     assert not row["adopts_current_basis"]
     assert report["score"]["coverage"] == (0, 1)
+
+
+def test_summary_distinguishes_host_refusal_from_human_evidence_gap(tmp_path):
+    root = tmp_path / "fixture"
+    shutil.copytree(PR1_FIXTURES, root)
+    review = review_at(root)
+    item = (FIXTURE_FINDING, review.candidate)
+    fixture_item = {"finding_id": item[0], "candidate_sha": item[1]}
+    observation = saved(root, review, ids=("other",))
+    active = evidence_snapshot(review, item[0], [("observation", observation)])
+    proposal_session = propose_from_review(review, [session_ref()], FIXED)
+    absent_obj = json.loads(propose_from_review(review, [session_ref("call", call_id="target")], FIXED))
+    absent_obj["id"] = "call-proposal"
+    proposal_call = wire(absent_obj)
+    valid = validate_proposal(proposal_session, active, validation_id="h-session")
+    rejected = validate_proposal(proposal_call, active, validation_id="h-call")
+    human = ruling(
+        "r-session",
+        fixture_item,
+        proposal_session,
+        valid,
+        INSUFFICIENT,
+        remaining_gaps=["target call was not observed"],
+    )
+    altered = json.loads(rejected.canonical)
+    altered["id"] = "h-unmatched"
+    altered["body"]["reference_checks"][0]["error"] = "session-not-observed"
+    raw, pin = source("github", item[1])
+    args = dict(registered_items=[item], saved_sources=[raw], source_pins=[pin])
+    records = [
+        proposal_session,
+        valid.canonical,
+        human,
+        proposal_call,
+        rejected.canonical,
+        wire(altered),
+    ]
+    report = replay_revision_summary(snapshots={item: active}, raw_records=records, **args)
+    (row,) = report["items"]
+    proposals = {p["id"]: p for p in row["proposals"]}
+    assert not row["closed"] and row["conclusion"] == INSUFFICIENT
+    assert row["effective"]["remaining_gaps"] == ["target call was not observed"]
+    assert proposals["proposal"]["host_rejections"] == []
+    assert proposals["call-proposal"]["processing"] == "host_rejected"
+    assert proposals["call-proposal"]["host_rejections"] == [
+        {
+            "validation_id": "h-call",
+            "validation_sha256": rejected.sha256,
+            "reason": "closure-without-current-basis",
+            "reference_errors": [{"index": 0, "error": "call-not-observed"}],
+        }
+    ]
+    assert ("host_validation", "h-unmatched", "inactive-or-invalid-validation") in row["diagnostics"]
+    assert report["score"]["coverage"] == (0, 1)
+    assert report["score"]["closures"] == ()
+
+    newer_observation = saved(root, review, ids=("target",))
+    newer = evidence_snapshot(review, item[0], [("observation", newer_observation)])
+    later = replay_revision_summary(snapshots={item: newer}, raw_records=reversed(records), **args)
+    (row,) = later["items"]
+    assert not row["closed"]
+    assert all(not p["host_rejections"] for p in row["proposals"])
+    assert ("host_validation", "h-call", "inactive-or-invalid-validation") in row["diagnostics"]

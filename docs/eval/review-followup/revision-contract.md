@@ -286,7 +286,13 @@ verify a repository tree itself.
 
 The report carries each item's C4 outcome or open state, proposal processing,
 effective claim and constraint, exact ruling/validation/proposal digests,
-adopted evidence bindings, reason, remaining gaps, and diagnostics. It keeps
+adopted evidence bindings, reason, remaining gaps, and diagnostics. Each
+proposal lists only saved host rejections whose check body is reproduced
+against the active snapshot: exact validation ID and SHA-256, proposal-level
+reason, and ordered reference indices and error codes (null for no error).
+A stale or mismatched record is only an admission diagnostic, not a current
+reason to reject. Mechanical refusal stays distinct from human insufficiency.
+The report keeps
 fixed and no-longer-applicable distinct and does not infer that a newly
 mentioned finding was introduced by a patch. Its score is C6's output,
 not a second calculation. The helper returns data only; there are no network,

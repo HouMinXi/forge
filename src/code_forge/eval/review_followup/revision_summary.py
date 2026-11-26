@@ -76,6 +76,19 @@ def replay_revision_summary(
     )
 
     proposal_states = {item: dict(decision.proposal_states) for item, decision in decisions.items()}
+    host_rejections = defaultdict(list)
+    for decision in decisions.values():
+        for rejection in decision.host_rejections:
+            host_rejections[rejection.proposal_id].append(
+                {
+                    "validation_id": rejection.validation_id,
+                    "validation_sha256": rejection.validation_sha256,
+                    "reason": rejection.reason,
+                    "reference_errors": [
+                        {"index": index, "error": error} for index, error in rejection.reference_errors
+                    ],
+                }
+            )
     proposal_rows = defaultdict(list)
     for r in records:
         if r.kind != "proposal":
@@ -87,6 +100,7 @@ def replay_revision_summary(
                 "id": r.record_id,
                 "sha256": r.sha256,
                 "processing": proposal_states[item][r.record_id],
+                "host_rejections": host_rejections[r.record_id],
                 "claim": body["claim"],
                 "constraint": body["constraint_ref"],
             }

@@ -18,6 +18,17 @@ _CLOSURES = frozenset(("verified_fixed", "no_longer_applicable"))
 
 
 @dataclass(frozen=True, slots=True)
+class HostRejection:
+    """A saved rejection reproduced against the active evidence snapshot."""
+
+    proposal_id: str
+    validation_id: str
+    validation_sha256: str
+    reason: str | None
+    reference_errors: tuple[tuple[int, str | None], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RevisionDecision:
     """Read-only item status and the exact effective human record, if any."""
 
@@ -31,6 +42,7 @@ class RevisionDecision:
     proposal_digests: tuple[tuple[str, str], ...] = ()
     proposal_graph_rejected: tuple[str, ...] = ()
     adopts_current_basis: bool = False
+    host_rejections: tuple[HostRejection, ...] = ()
 
     @property
     def closed(self) -> bool:
@@ -110,6 +122,7 @@ def _graph_errors(kind, edges, records, item):
 def _validation_states(validations, proposals, snapshot, diagnostics):
     """Retain only host records reproduced against the active snapshot."""
     passed = {}
+    rejected = []
     states = dict.fromkeys(proposals, "pending_validation")
     recomputed = {}
     for record in validations.values():
@@ -133,9 +146,19 @@ def _validation_states(validations, proposals, snapshot, diagnostics):
         elif body["result"] == "passed":
             passed[record.record_id] = (record, key, body["reference_checks"])
             states[key] = "pending_human"
-        elif states[key] == "pending_validation":
-            states[key] = "host_rejected"
-    return passed, states
+        else:
+            rejected.append(
+                HostRejection(
+                    key,
+                    record.record_id,
+                    record.sha256,
+                    body["reason"],
+                    tuple((row["index"], row["error"]) for row in body["reference_checks"]),
+                )
+            )
+            if states[key] == "pending_validation":
+                states[key] = "host_rejected"
+    return passed, states, tuple(rejected)
 
 
 def _adopts_current_basis(body, checks):
@@ -194,7 +217,9 @@ def _decide_indexed_revision(snapshot, scoped, all_graph_records):
     item = (snapshot.finding_id, snapshot.candidate_sha)
     diagnostics = []
     proposals = scoped["proposal"]
-    active, states = _validation_states(scoped["host_validation"], proposals, snapshot, diagnostics)
+    active, states, host_rejections = _validation_states(
+        scoped["host_validation"], proposals, snapshot, diagnostics
+    )
     eligible = {}
     edges = {}
     ruling_errors = []
@@ -237,6 +262,7 @@ def _decide_indexed_revision(snapshot, scoped, all_graph_records):
     args = (tuple(sorted(states.items())), tuple(sorted(set(diagnostics + errors))))
     binding = {
         "item": item,
+        "host_rejections": host_rejections,
         "proposal_graph_rejected": tuple(sorted({key for _, key, _ in proposal_errors})),
         "proposal_digests": tuple(sorted((key, record.sha256) for key, record in proposals.items())),
     }
