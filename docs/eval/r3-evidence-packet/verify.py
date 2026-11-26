@@ -80,6 +80,12 @@ def check_identity(body: dict, args: argparse.Namespace) -> None:
     target = identity.get("target", {})
     if type(target) is not dict:
         raise Refused("target is not a record")
+    if type(target.get("line")) is not int:
+        # JSON `true` compares equal to an expected line of 1, so a boolean
+        # would name the traced line without ever being an integer. Keep the
+        # existing wording so a value refused before this change reports the
+        # same text it always did.
+        raise Refused("target does not match")
     if target.get("path") != args.expect_target_file or target.get("line") != args.expect_line:
         raise Refused("target does not match")
     source = identity.get("source", {})
@@ -129,12 +135,21 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
         # A failing run says nothing about this node: another node may have
         # failed, or this one may have failed in teardown after a passing call.
         raise Refused(f"node call outcome is {call_outcomes!r}, expected {args.expect_call!r}")
-    if body.get("pytest_exit") != args.expect_exit:
-        raise Refused(f"pytest exit is {body.get('pytest_exit')!r}, expected {args.expect_exit}")
+    exit_status = body.get("pytest_exit")
+    if type(exit_status) is not int:
+        # A JSON `false` equals an expected 0 in Python, so a boolean could
+        # stand in for the producer's recorded exit status of a clean run.
+        raise Refused(f"pytest exit is {exit_status!r}, expected {args.expect_exit}")
+    if exit_status != args.expect_exit:
+        raise Refused(f"pytest exit is {exit_status!r}, expected {args.expect_exit!r}")
     hits = body.get("hits", {})
     if type(hits) is not dict:
         raise Refused("hits is not a record")
     count = hits.get(node, 0)
+    if type(count) is not int:
+        # `true` equals an expected hit count of 1, so a boolean would satisfy
+        # a positive hit claim without being a count at all.
+        raise Refused(f"target hits are {count!r}, expected {args.expect_hits}")
     if count != args.expect_hits:
         raise Refused(f"target hits are {count!r}, expected {args.expect_hits}")
 
