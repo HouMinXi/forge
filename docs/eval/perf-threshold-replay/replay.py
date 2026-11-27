@@ -8,6 +8,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -27,8 +28,15 @@ def sha(p):
 
 
 def write(p, obj):
-    with (root / p).open("x") as f:
-        json.dump(obj, f, sort_keys=True, indent=2)
+    # Publish only a complete JSON file; keep exclusive creation semantics.
+    with tempfile.NamedTemporaryFile(mode="w", dir=root, prefix=f".{p}.", delete=False) as f:
+        temporary = Path(f.name)
+    try:
+        with temporary.open("w", encoding="utf-8") as f:
+            json.dump(obj, f, sort_keys=True, indent=2, allow_nan=False)
+        os.link(temporary, root / p)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 REVISION = "0e87b3c61c0cd1e1a5408b76c030044dc20b7259"
@@ -40,19 +48,13 @@ fixed = root / "fixed"
 
 def blob(p):
     b = p.read_bytes()
-    return hashlib.sha1(
-        f"blob {len(b)}\0".encode() + b, usedforsecurity=False
-    ).hexdigest()
+    return hashlib.sha1(f"blob {len(b)}\0".encode() + b, usedforsecurity=False).hexdigest()
 
 
 assert blob(fixed / loc) == "067e7e91a1273712f338368d028a3228b2be319c"
 assert blob(fixed / script) == "ebad4386014cd44c130546c453045d86e6627b7d"
-assert (
-    blob(fixed / "src/code_forge/diff.py") == "a64dea02687e3c2b0da82f73e3095abfe6b1c2f9"
-)
-fingerprint = {
-    n: sha(fixed / n) for n in ["scripts/perf_regression.py", "src/code_forge/diff.py"]
-}
+assert blob(fixed / "src/code_forge/diff.py") == "a64dea02687e3c2b0da82f73e3095abfe6b1c2f9"
+fingerprint = {n: sha(fixed / n) for n in ["scripts/perf_regression.py", "src/code_forge/diff.py"]}
 code = fixed.joinpath(loc).read_bytes()
 needle = b'    for line in diff_text.splitlines():\n        if line.startswith("diff --git "):\n'
 assert code.count(needle) == 1
@@ -105,19 +107,18 @@ def env():
             s
             for s in entries
             if any(
-                l.split(":", 1)[0].strip() == "processor"
-                and l.split(":", 1)[1].strip() == str(n)
-                for l in s.splitlines()
-                if ":" in l
+                line.split(":", 1)[0].strip() == "processor" and line.split(":", 1)[1].strip() == str(n)
+                for line in s.splitlines()
+                if ":" in line
             )
         ),
         "",
     )
     stable = {
-        l.split(":", 1)[0].strip(): l.split(":", 1)[1].strip()
-        for l in model.splitlines()
-        if ":" in l
-        and l.split(":", 1)[0].strip()
+        line.split(":", 1)[0].strip(): line.split(":", 1)[1].strip()
+        for line in model.splitlines()
+        if ":" in line
+        and line.split(":", 1)[0].strip()
         in ("model name", "model", "stepping", "vendor_id", "microcode")
     }
     return {
@@ -239,9 +240,7 @@ def run(n, mode, *args):
         check=False,
     )
     assert not result.stderr, result.stderr
-    assert result.returncode in ((0, 1, 2) if mode == "cli" else (0,)), (
-        result.returncode
-    )
+    assert result.returncode in ((0, 1, 2) if mode == "cli" else (0,)), result.returncode
     return {"exit": result.returncode, "record": json.loads(result.stdout)}
 
 
@@ -252,9 +251,7 @@ def cli(n, *args, runner=runner):
 traces = {label: run(n, "trace")["record"] for label, n in selected.items()}
 assert traces == prior["traces"]
 assert fingerprint == prior["other_source_sha256"]
-assert all(
-    variants[v][1] == prior["imported_parser_sha256"][k] for k, v in selected.items()
-)
+assert all(variants[v][1] == prior["imported_parser_sha256"][k] for k, v in selected.items())
 # Use non-overlapping windows. Each block measures a fresh clean reference
 # and a distinct clean control and both fixed perturbations, in balanced order.
 groups, size, threshold = 6, 9, 1.5
@@ -267,11 +264,7 @@ patterns = [
 ]
 schedule = [[patterns[(w * size + b) % 4] for b in range(size)] for w in range(groups)]
 assert all(
-    abs(
-        sum(seq[pos] == role for window in schedule for seq in window)
-        - groups * size / 4
-    )
-    <= 0.5
+    abs(sum(seq[pos] == role for window in schedule for seq in window) - groups * size / 4) <= 0.5
     for role in arms
     for pos in range(4)
 )
@@ -282,9 +275,7 @@ def verdict(ratios):
         raise ValueError("requires nine finite positive ratios")
     sr = sorted(ratios)
     low, high = sr[1], sr[-2]
-    tag = (
-        "within" if high <= threshold else "slower" if low > threshold else "uncertain"
-    )
+    tag = "within" if high <= threshold else "slower" if low > threshold else "uncertain"
     return {"verdict": tag, "low": low, "high": high, "median": sr[4]}
 
 
@@ -317,7 +308,7 @@ design = {
     "baseline": "fresh independent clean reference process in each block; each process uses the unchanged seven-call median",
     "decision": "second to eighth sorted ratios in each nonoverlapping nine-block window; upper <=1.5 within, lower >1.5 slower, else uncertain",
     "criterion": "all six windows must classify each arm as expected; report every wrong and uncertain outcome; no reruns or exclusions",
-    "limits": "single shared runner; separate processes are not proof of statistical independence; no confidence level claimed; paired reference and aggregation tested jointly",
+    "limits": "single runner; operator reports isolation conditions separately; separate processes are not proof of statistical independence; no confidence level claimed; paired reference and aggregation tested jointly",
 }
 write("design.json", design)
 frozen = sha(root / "design.json")
@@ -327,25 +318,27 @@ envsig = None
 for i, orders in enumerate(schedule):
     assert sha(root / "design.json") == frozen and env() == environment
     rows = []
-    for order in orders:
+    for block, order in enumerate(orders, start=1):
         rec = {}
         for role in order:
             row = cli(selected.get(role, 0), "--record")
             assert row["exit"] == 0
             row = row["record"]
             assert (
-                row["definition"] == "forge-perf-regression-v2"
-                and row["workload"] == "parse_diff_files"
+                row["definition"] == "forge-perf-regression-v2" and row["workload"] == "parse_diff_files"
             )
             if envsig is None:
                 envsig = row["environment"]
             assert row["environment"] == envsig
             assert math.isfinite(row["median_s"]) and row["median_s"] > 0
             rec[role] = row
+        write(
+            f"block-{i + 1}-{block}.json",
+            {"design_sha256": frozen, "window": i + 1, "block": block, "records": rec},
+        )
         rows.append(rec)
     ratios = {
-        role: [r[role]["median_s"] / r["reference"]["median_s"] for r in rows]
-        for role in expected
+        role: [r[role]["median_s"] / r["reference"]["median_s"] for r in rows] for role in expected
     }
     window = {
         "records": rows,
@@ -363,10 +356,7 @@ counts = {
     }
     for role in expected
 }
-single = {
-    role: sum(v > threshold for w in windows for v in w["ratios"][role])
-    for role in expected
-}
+single = {role: sum(v > threshold for w in windows for v in w["ratios"][role]) for role in expected}
 success = all(counts[k][v] == groups for k, v in expected.items())
 write(
     "summary.json",
