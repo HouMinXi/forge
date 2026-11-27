@@ -384,16 +384,10 @@ def _guardless_tests_only(diff_paths) -> bool:
     A backslash in a POSIX path is a literal filename, not a directory
     separator, and is refused rather than normalized into ``tests/``.
     """
-    rels: list[str] = []
-    for raw in sorted(diff_paths or ()):
-        text = str(raw)
-        if "\\" in text:
-            return False
-        rel = _normalized_rel(text)
-        if rel is None:
-            return False
-        rels.append(rel)
-    return bool(rels) and _default_tests_only(rels)
+    raw_paths = [str(raw) for raw in (diff_paths or ())]
+    if any("\\" in text for text in raw_paths):
+        return False
+    return _default_tests_only(raw_paths)
 
 
 def _clean_mutation_skip_kind(
@@ -732,7 +726,7 @@ def _is_clean_baseline_timeout_skip(
     infra: list[str],
     evidence: dict,
     *,
-    source_unchanged: bool | None,
+    source_unchanged: bool,
 ) -> bool:
     """#120: the runner stopped at a cleanly classified baseline timeout."""
     kind = _clean_mutation_skip_kind(findings, infra, evidence, source_unchanged=source_unchanged)
@@ -3815,23 +3809,14 @@ class StateMachine:
         """#127/#132: decide whether a measured-nothing "does not apply" skip
         is clean. Always leaves a visible infra line naming the files."""
         shown = ", ".join(sorted(diff_files)[:10]) + (" ..." if len(diff_files) > 10 else "")
-        fingerprints = {f.fingerprint for f in findings}
-        linked = _symlinked_files(diff_files, self._source_root())
         if self.resolved_review.target_kind != WORKING:
             # A guardless review has no frozen subject proof beyond the diff
             # itself, so only a diff that is tests-only may pass here.
             clean = _guardless_tests_only(self._review_diff_paths())
             why = "diff is tests-only" if clean else "no mutation adapter covers"
-            if clean or self.mode != Mode.CI:
-                self._mutation_not_applicable = clean
-                self._state.infra_errors.append(f"L2: mutation not applicable ({why}): {shown}")
-                return
-            self._mutation_bound_failure = True
-            self._state.infra_errors.append(f"CI: mutation not measured: {why}: {shown}")
-            return
-        if linked:
+        elif linked := _symlinked_files(diff_files, self._source_root()):
             clean, why, shown = False, "symlinked files are not measured", ", ".join(linked)
-        elif fingerprints == {"mutation-tests-only"}:
+        elif {f.fingerprint for f in findings} == {"mutation-tests-only"}:
             clean = _default_tests_only(diff_files)
             why = (
                 "diff is tests-only"

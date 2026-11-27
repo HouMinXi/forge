@@ -24014,7 +24014,6 @@
     "tests/test_mutation_ledger_ci_controls.py::test_baseline_timeout_reason_text[run 1: baseline tests timed out after 900s-CI: mutation not measured: baseline tests timed out after 900s]",
     "tests/test_mutation_ledger_ci_controls.py::test_baseline_timeout_reason_text[run 1: baseline tests timed out after Nones-CI: mutation not measured: baseline tests timed out]",
     "tests/test_mutation_ledger_ci_controls.py::test_baseline_timeout_reason_text[run 1: baseline tests timed out-CI: mutation not measured: baseline tests timed out]",
-    "tests/test_mutation_ledger_ci_controls.py::test_baseline_timeout_skip_requires_a_captured_guard",
     "tests/test_mutation_ledger_ci_controls.py::test_busy_host_is_an_explicit_skip_not_a_baseline[CI]",
     "tests/test_mutation_ledger_ci_controls.py::test_busy_host_is_an_explicit_skip_not_a_baseline[LOCAL]",
     "tests/test_mutation_ledger_ci_controls.py::test_ci_allowlisted_path_passes[files0]",

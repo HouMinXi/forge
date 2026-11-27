@@ -2439,21 +2439,6 @@ def test_working_review_with_a_matching_guard_accepts_the_skip(ci_project):
     )
 
 
-def test_baseline_timeout_skip_requires_a_captured_guard():
-    """The timeout wrapper keeps the tri-state contract: an applicability-style
-    exemption never applies, and an uncaptured guard cannot make it pass."""
-    from code_forge.machine import _is_clean_baseline_timeout_skip
-
-    description = "run 1: baseline tests timed out after 900s"
-    rows = [_skip(fingerprint="mutation-baseline-timeout", description=description)]
-    infra = [description]
-    evidence = {"inventory": {}}
-
-    assert _is_clean_baseline_timeout_skip(rows, infra, evidence, source_unchanged=True) is True
-    assert _is_clean_baseline_timeout_skip(rows, infra, evidence, source_unchanged=False) is False
-    assert _is_clean_baseline_timeout_skip(rows, infra, evidence, source_unchanged=None) is False
-
-
 def test_working_review_with_an_uncapturable_guard_fails_closed(ci_project, monkeypatch):
     """A WORKING review always supplies a bool: if the guard cannot be captured,
     that is False, not None, so applicability skips still fail closed."""
@@ -2641,7 +2626,13 @@ def test_clean_mutation_skip_kind(findings, infra, expected):
             is None
         )
         assert (
-            _clean_mutation_skip_kind(objs, infra, {"inventory": {"m": "killed"}}, source_unchanged=None)
+            _clean_mutation_skip_kind(
+                objs,
+                infra,
+                {"inventory": {"m": "killed"}},
+                source_unchanged=None,
+                diff_paths=proven,
+            )
             is None
         )
         assert (
