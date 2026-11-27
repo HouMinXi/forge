@@ -165,7 +165,7 @@ def _adopts_current_basis(body, checks):
     return any(checks[i]["purpose"] == "current_basis" for i in body["adopted_ref_indexes"])
 
 
-def _ruling_refusal(body, proposals, validations):
+def _ruling_refusal(body, proposals, validations, snapshot):
     key = body["proposal_id"]
     if key not in proposals or proposals[key].sha256 != body["proposal_digest"]:
         return "proposal-binding-mismatch"
@@ -178,8 +178,11 @@ def _ruling_refusal(body, proposals, validations):
     indexes = body["adopted_ref_indexes"]
     if any(i >= len(checks) or checks[i]["binding"] is None for i in indexes):
         return "invalid-adopted-reference"
-    if body["conclusion"] in _CLOSURES and not _adopts_current_basis(body, checks):
-        return "closure-without-adopted-current-basis"
+    if body["conclusion"] in _CLOSURES:
+        if snapshot.unavailable_revisions:
+            return "capture-revision-unavailable"
+        if not _adopts_current_basis(body, checks):
+            return "closure-without-adopted-current-basis"
     return None
 
 
@@ -236,7 +239,7 @@ def _decide_indexed_revision(snapshot, scoped, all_graph_records):
         if not valid_links or not _ruling_shape(body):
             diagnostics.append(("human_ruling", key, "invalid-ruling"))
             continue
-        refusal = _ruling_refusal(body, proposals, active)
+        refusal = _ruling_refusal(body, proposals, active, snapshot)
         if refusal is not None:
             diagnostics.append(("human_ruling", key, refusal))
             continue

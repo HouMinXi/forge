@@ -22,6 +22,16 @@ def main(argv=None):
             sub.add_argument("--case", required=True)
         if command == "dry-run-context":
             sub.add_argument("--max-prompt-bytes", type=int, required=True)
+    capture = commands.add_parser("capture-revision")
+    capture.add_argument("repository", type=Path)
+    capture.add_argument("request", type=Path)
+    capture.add_argument("--output", type=Path, required=True)
+    check = commands.add_parser("validate-captured-proposal")
+    check.add_argument("repository", type=Path)
+    check.add_argument("request", type=Path)
+    check.add_argument("proposal", type=Path)
+    check.add_argument("--validation-id", required=True)
+    check.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "validate":
@@ -30,6 +40,19 @@ def main(argv=None):
             publish_local(args.output, build_report(replay(args.root)))
         elif args.command == "preview-context":
             publish_local(args.output, preview(args.root, args.case))
+        elif args.command == "capture-revision":
+            from .revision_capture import capture_revision_evidence
+
+            publish_local(args.output, capture_revision_evidence(args.repository, args.request))
+        elif args.command == "validate-captured-proposal":
+            from .revision_capture import validate_captured_proposal
+
+            publish_local(
+                args.output,
+                validate_captured_proposal(
+                    args.repository, args.request, args.proposal, args.validation_id
+                ),
+            )
         else:
             from .experiment import dry_run
 

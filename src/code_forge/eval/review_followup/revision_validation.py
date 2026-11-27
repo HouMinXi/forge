@@ -29,6 +29,8 @@ class EvidenceSnapshot:
     finding_id: str
     candidate_sha: str
     entries: tuple[_Evidence, ...]
+    unavailable_revisions: tuple[str, ...] = ()
+    unavailable_artifacts: tuple[str, ...] = ()
 
 
 def evidence_snapshot(review: ReviewInput, finding_id: str, saved_observations=()) -> EvidenceSnapshot:
@@ -155,7 +157,11 @@ def validate_proposal(raw: bytes, snapshot: EvidenceSnapshot, *, validation_id: 
         )
         _selector_shape(ref["selector"], f"{field}/selector")
         entry = entries.get(ref["artifact_id"])
-        error = _reference_error(ref, entry, snapshot.candidate_sha)
+        error = (
+            "source-capture-unavailable"
+            if ref["artifact_id"] in snapshot.unavailable_artifacts
+            else _reference_error(ref, entry, snapshot.candidate_sha)
+        )
         binding = None
         if error is None:
             binding = {
@@ -169,8 +175,11 @@ def validate_proposal(raw: bytes, snapshot: EvidenceSnapshot, *, validation_id: 
         checks.append({"index": index, "purpose": ref["purpose"], "error": error, "binding": binding})
 
     reason = None
-    if body["suggested_status"] in _CLOSURE and not current_basis:
-        reason = "closure-without-current-basis"
+    if body["suggested_status"] in _CLOSURE:
+        if snapshot.unavailable_revisions:
+            reason = "capture-revision-unavailable"
+        elif not current_basis:
+            reason = "closure-without-current-basis"
     output = {
         "schema": 1,
         "kind": "host_validation",

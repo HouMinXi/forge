@@ -345,3 +345,72 @@ qualifies the client boundary only. The model echo is not provider or billing
 attribution. Before an approved live smoke, separately pin and verify the
 upstream and billing account, cap enforcement, actual elapsed-time budget,
 and a private destination and deletion window for the retained bodies. No real model was called by these tests.
+
+## Collect pinned source for a revision follow-up
+
+The optional offline capture command takes an operator-selected local checkout
+root or bare repository and a JSON request. It reads Git objects, not working
+tree or index bytes. It does not fetch missing objects, infer renamed paths,
+execute candidate code, or sign a semantic conclusion.
+
+```sh
+PYTHONPATH=src python -m code_forge.eval.review_followup capture-revision \
+  /path/to/local/repo request.json --output capture.json
+```
+
+For example, substitute actual SHA-1 commit IDs and byte ranges:
+
+```json
+{
+  "schema": 1,
+  "finding_id": "f-1",
+  "base": "git:1111111111111111111111111111111111111111",
+  "candidate": "git:2222222222222222222222222222222222222222",
+  "selections": [
+    {"id": "before", "role": "base", "path": "src/old.py", "start": 5, "end": 42},
+    {"id": "after", "role": "candidate", "path": "src/new.py", "start": 9, "end": 51}
+  ]
+}
+```
+
+Use exact repository-relative paths (select old and new paths independently)
+and zero-based, half-open byte offsets in the committed blob. The request
+accepts 1–16 uniquely named selections; each blob is limited to 1 MiB, each
+excerpt to 64 KiB. Only regular Git blobs and strictly UTF-8 excerpts are
+supported. Git process calls have a five-second timeout. Use a trusted local
+repository and an operator-owned request and output path.
+
+The report preserves request order and binds the exact request bytes, each
+revision, Git blob ID, SHA-256 of the full blob, and SHA-256 of the selected
+bytes. To use an excerpt as a saved source artifact, encode its `text` value
+as UTF-8 without adding a newline and confirm its `artifact_sha256`; the
+included `source_bytes` selector is relative to that artifact, not to the
+original file. Capture alone does not pin a provider record, admit a replay
+fixture, or provide a human ruling. The top-level `revision_errors` maps both
+`base` and `candidate` to null for a verified commit object or an error, even
+without a selection on that side. Per-selection errors retain their existing
+meaning: missing commits, paths, and unusable spans yield no artifact for
+affected selections. A report with gaps still exits zero. No inference of
+removal or repair follows from a missing path. Keep the report local unless
+its included source is authorized for sharing.
+
+To mechanically validate a saved revision proposal against freshly captured
+source in one offline pass:
+
+```sh
+PYTHONPATH=src python -m code_forge.eval.review_followup validate-captured-proposal \
+  /path/to/local/repo request.json proposal.json \
+  --validation-id capture-check --output checked.json
+```
+
+The output contains the capture and host validation record, not a ruling.
+A previously saved capture JSON is not an input or a source of authority.
+A proposed `verified_fixed` or `no_longer_applicable` is rejected when either
+revision is unavailable, even without selections on that side. The offline
+adjudicator also rejects a closing ruling against the incomplete capture
+snapshot, even if its proposal only suggested a non-closing status. Referencing a
+failed selection is rejected; an unrelated failed selection stays visible
+without invalidating a usable reference. Existing role and byte-range
+checks still apply. Exit zero means the report was written; inspect
+`host_validation.body.result`. A pass establishes only mechanical provenance
+and is not a semantic conclusion or production receipt.
