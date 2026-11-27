@@ -48,7 +48,7 @@ from .disposition import (
 from .errors import CorruptedStateError
 from .falsify import Falsifier
 from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
-from .git import WORKING
+from .git import INDEX, WORKING
 from .hold import check_escalated_frozen
 from .ledger import (
     LedgerRow,
@@ -396,12 +396,13 @@ def _clean_mutation_skip_kind(
     - ``"not-applicable"`` (#127): only ``mutation-no-adapter`` /
       ``mutation-tests-only`` skips and no infra lines at all. These skip
       because the diff has nothing to mutate, not because a measurement was
-      taken. ``source_unchanged`` is tri-state here: ``None`` means the review
-      kind cannot carry the WORKING-only source guard (INDEX and COMMIT
-      reviews), so for this pair the guard cannot invalidate the skip. A
-      WORKING review always supplies ``True`` or ``False``, and ``False``
-      still fails closed. Measured kinds below require a captured guard in
-      every case.
+      taken. ``source_unchanged`` is tri-state here: ``None`` means an
+      explicit INDEX or COMMIT baseline, the only reviews that cannot carry
+      the WORKING-only source guard, so for this pair the guard cannot
+      invalidate the skip. A WORKING review supplies ``True`` or ``False``,
+      and every other subject -- including an empty or snapshot baseline with
+      no git target -- stays ``False`` and fails closed. Measured kinds below
+      require a captured guard in every case.
 
     - ``"other-adapter-only"`` (#133): only a ``mutation-other-adapter`` note
       with exactly its own infra line. Ambiguous (real code in another
@@ -673,6 +674,24 @@ def _default_tests_only(paths: list[str]) -> bool:
         if not any(p.fullmatch(posix) or p.match(posix) for p in patterns):
             return False
     return True
+
+
+_GUARDLESS_REVIEW_KINDS = (INDEX, "COMMIT")
+
+
+def _source_guard_state(target_kind: str | None, source_before: bool, source_after: bool) -> bool | None:
+    """Tri-state guard verdict for ``_clean_mutation_skip_kind``.
+
+    ``None`` is reserved for the review kinds that cannot carry the
+    WORKING-only guard: an explicit INDEX or COMMIT baseline. A WORKING review
+    reports whether its guard still matches, and any other subject -- an empty
+    or snapshot baseline with no git target -- stays fail-closed.
+    """
+    if target_kind == WORKING:
+        return bool(source_before and source_after)
+    if target_kind in _GUARDLESS_REVIEW_KINDS:
+        return None
+    return False
 
 
 def _is_clean_baseline_timeout_skip(
@@ -3662,10 +3681,8 @@ class StateMachine:
                         l2_findings,
                         l2_infra,
                         evidence,
-                        source_unchanged=(
-                            bool(source_before and source_after)
-                            if self.resolved_review.target_kind == WORKING
-                            else None
+                        source_unchanged=_source_guard_state(
+                            self.resolved_review.target_kind, source_before, source_after
                         ),
                     )
                     if kind is None:

@@ -43,7 +43,7 @@ import pytest
 
 from code_forge import cli, mutation
 from code_forge.autofix import StubAutoFixer
-from code_forge.baseline import GitRefBaseline, resolve_baseline
+from code_forge.baseline import ResolvedReview, GitRefBaseline, resolve_baseline
 from code_forge.disposition import Disposition
 from code_forge.factories import build_l1_provider, build_l2_runner
 from code_forge.falsify import StubFalsifier
@@ -2472,6 +2472,43 @@ def test_working_review_with_an_uncapturable_guard_fails_closed(ci_project, monk
         GitRefBaseline("WORKING"),
         [Path(rel)],
         p.root,
+    )
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    machine._run_l2_phase()
+
+    assert machine._mutation_bound_failure is True
+    assert any(
+        e.startswith("L2: invalid bound mutation measurement") for e in machine._state.infra_errors
+    )
+
+
+def test_source_guard_state_only_excuses_explicit_index_or_commit():
+    """Only an explicit INDEX/COMMIT baseline may skip the guard; an empty or
+    snapshot review with no git target stays fail-closed."""
+    from code_forge.machine import _source_guard_state
+
+    assert _source_guard_state("WORKING", True, True) is True
+    assert _source_guard_state("WORKING", True, False) is False
+    assert _source_guard_state("WORKING", False, False) is False
+    assert _source_guard_state("INDEX", False, False) is None
+    assert _source_guard_state("COMMIT", False, False) is None
+    assert _source_guard_state(None, False, False) is False
+    assert _source_guard_state("SNAPSHOT", False, False) is False
+
+
+def test_empty_baseline_review_still_rejects_the_skip(ci_project):
+    """A review with no git target has no guard to excuse it: the applicability
+    skip keeps the bound failure that the permissive branch would drop."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+
+    review = ResolvedReview(
+        source_files=[Path(rel)],
+        baseline_content=None,
+        git_diff=None,
+        mode_hint="non-git",
     )
     machine = _machine(p, runner=mutation.run_mutation, review=review)
     machine._run_l2_phase()
