@@ -120,22 +120,41 @@ def test_changed_active_bytes_keep_old_ruling_open_and_traceable(candidate):
     assert len(report["score"]["unused_labels"]) == 1
 
 
-def test_honest_but_weak_observation_and_nonapplicability_remain_distinct(candidate):
-    item, _, weak, _ = candidate
-    p = proposal("weak", item, "target", FIXED, CONSTRAINT)
-    v = validate_proposal(p, weak, validation_id="h-weak")
-    r = ruling("r-weak", item, p, v, INSUFFICIENT, remaining_gaps=["target assertion not observed"])
-    report = replay("mail", weak, [p, v.canonical, r])
-    row = report["items"][0]
-    assert row["conclusion"] == INSUFFICIENT and not row["closed"]
-    assert row["effective"]["remaining_gaps"] == ["target assertion not observed"]
-    assert report["score"]["coverage"] == (0, 1)
-    later = ruling("r-na", item, p, v, NA, supersedes=("r-weak",))
-    report = replay("mail", weak, [p, v.canonical, r, later])
-    row = report["items"][0]
-    # This is a supplied synthetic ruling to test projection, not a claim
-    # that the same weak observation demonstrates removal of the premise.
+def test_no_longer_applicable_uses_evidence_that_the_original_path_was_removed(tmp_path):
+    item = {"finding_id": ITEM[0], "candidate_sha": ITEM[1]}
+    # The synthetic contract applies only to the removed create-and-refresh
+    # path. This complete candidate entry point now only reads existing data.
+    entrypoint = b"def summarize(repository):\n    return repository.read_existing()\n"
+    snap = snapshot(tmp_path / "read-only", item, [("entrypoint", "summary.py", entrypoint)])
+    constraint = {"id": "preserve-create-error-when-summarize-creates", "version": 1}
+    payload = json.loads(
+        proposal("removed-path", item, "entrypoint", NA, constraint, end=len(entrypoint))
+    )
+    payload["body"]["claim"] = (
+        "summarize no longer creates a record, so the creation-error rule does not apply."
+    )
+    p = wire(payload)
+    v = validate_proposal(p, snap, validation_id="h-removed-path")
+    r = ruling(
+        "r-removed-path",
+        item,
+        p,
+        v,
+        NA,
+        reason="The complete candidate entry point only reads existing records; the creation prerequisite is gone.",
+    )
+    report = replay("mail", snap, [p, v.canonical, r], [label(decode_record(r), NA)])
+
+    (row,) = report["items"]
     assert row["conclusion"] == NA and row["closed"]
+    assert row["effective"]["constraint"] == constraint
+    assert row["effective"]["reason"].startswith("The complete candidate entry point")
+    (chosen,) = row["effective"]["adopted_evidence"]
+    assert chosen["binding"]["artifact_sha256"] == digest(entrypoint)
+    assert chosen["binding"]["selector"] == {"kind": "source_bytes", "start": 0, "end": len(entrypoint)}
+    assert report["score"]["coverage"] == (1, 1)
+    assert report["score"]["closure_counts"] == {"confirmed_correct": 1}
+    assert report["score"]["closure_error_rate"] == (0, 1)
 
 
 def test_source_pins_bind_bytes_and_cannot_rewrite_a_github_head():
