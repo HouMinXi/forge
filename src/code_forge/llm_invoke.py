@@ -4732,7 +4732,15 @@ def _invoke_api(
                         if {"input_tokens", "output_tokens"} <= runaway_spent.known_fields
                         else None
                     )
-                elif runaway_spent is not None and exc.observed_usage is not None:
+                elif (
+                    runaway_spent is not None
+                    and exc.observed_usage is not None
+                    and not getattr(exc, "reasoning_runaway", False)
+                ):
+                    # A reasoning runaway was recorded into runaway_spent a few
+                    # lines above, so adding its own observed_usage again would
+                    # count the same reply twice. Only a later reply that
+                    # reported usage of its own still needs merging.
                     total = _sum_usage(runaway_spent, exc.observed_usage)
                     exc.observed_usage = total
                     exc.usage = (

@@ -20700,6 +20700,7 @@
     "tests/test_llm_invoke.py::test_reasoning_runaway_needs_reported_reasoning_tokens",
     "tests/test_llm_invoke.py::test_runaway_is_not_filed_as_a_provider_capacity_failure",
     "tests/test_llm_invoke.py::test_second_runaway_in_one_call_stops_with_the_diagnosis_intact",
+    "tests/test_llm_invoke.py::test_single_attempt_runaway_counts_its_tokens_once",
     "tests/test_llm_invoke.py::test_unusable_caps_do_not_take_the_runaway_branch[-5-no usable output cap]",
     "tests/test_llm_invoke.py::test_unusable_caps_do_not_take_the_runaway_branch[True-output capacity]",
     "tests/test_llm_invoke.py::test_zero_width_next_to_real_text_is_still_an_answer",

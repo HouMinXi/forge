@@ -7853,6 +7853,36 @@ def test_generic_empty_reply_does_not_consume_the_run_breaker(monkeypatch):
     assert breaker.count == 0
 
 
+def test_single_attempt_runaway_counts_its_tokens_once(monkeypatch):
+    """One request must not be booked twice.
+
+    With max_attempts=1 the runaway reply is both the current error and the
+    only thing recorded so far. Adding it to itself reports double.
+    """
+    monkeypatch.setenv("K", "key")
+    body = _length_body(
+        "",
+        {
+            "prompt_tokens": 900,
+            "completion_tokens": 4096,
+            "completion_tokens_details": {"reasoning_tokens": 4096},
+        },
+    )
+    with patch("urllib.request.urlopen", return_value=_mock_body(body)) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke(
+                "p",
+                backend=_runaway_backend(max_tokens=4096),
+                max_attempts=1,
+                initial_delay_s=0,
+            )
+    error = exc_info.value
+    assert opened.call_count == 1
+    assert error.observed_usage is not None
+    assert error.observed_usage.input_tokens == 900
+    assert error.observed_usage.output_tokens == 4096
+
+
 def test_auth_failure_on_retry_keeps_the_tokens_already_spent(monkeypatch):
     """A 401 on the retry reports nothing, but the first reply already spent.
 
