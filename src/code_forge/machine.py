@@ -690,7 +690,11 @@ def _tree_has_path(root, tree: str, rel: str) -> bool:
         )
     except (OSError, subprocess.TimeoutExpired):
         return True
-    return out.returncode == 0 and bool([r for r in out.stdout.split(b"\0") if r.strip()])
+    if out.returncode != 0:
+        # An errored query proves nothing about the path. Report it as present
+        # so the caller refuses the exemption instead of assuming absence.
+        return True
+    return bool([r for r in out.stdout.split(b"\0") if r.strip()])
 
 
 def _docs_only_files(paths: list[str], root, diff_paths=(), post_image=None, has_path=None) -> bool:

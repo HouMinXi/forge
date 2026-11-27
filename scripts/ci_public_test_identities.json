@@ -24510,6 +24510,7 @@
     "tests/test_mutation_ledger_ci_controls.py::test_timeout_identity_collision_keeps_current_ordinary_blocker[result-ci]",
     "tests/test_mutation_ledger_ci_controls.py::test_timeout_rendering_escapes_and_bounds_without_identity_collision[result-ci]",
     "tests/test_mutation_ledger_ci_controls.py::test_timeout_rendering_escapes_and_bounds_without_identity_collision[review-cli]",
+    "tests/test_mutation_ledger_ci_controls.py::test_tree_has_path_fails_closed_when_git_errors",
     "tests/test_mutation_ledger_ci_controls.py::test_trusted_mutation_globs_sources",
     "tests/test_mutation_ledger_ci_controls.py::test_working_review_with_a_matching_guard_accepts_the_skip",
     "tests/test_mutation_ledger_ci_controls.py::test_working_review_with_a_source_change_rejects_the_skip",

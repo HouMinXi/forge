@@ -2873,6 +2873,30 @@ def test_resolve_git_ref_follows_replacement_history(ci_project):
     assert resolve_git_ref("HEAD^", p.root) != raw_parent
 
 
+def test_tree_has_path_fails_closed_when_git_errors(ci_project):
+    """A failing ls-tree is an unknown answer, not proof the path is absent."""
+    from code_forge.machine import _docs_only_files, _tree_has_path
+
+    p = ci_project
+    (p.root / "README.md").write_text("# docs\n", encoding="utf-8")
+    _git(p.root, "add", "README.md")
+    _git(p.root, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "docs")
+    tree = _git(p.root, "rev-parse", "HEAD^{tree}")
+
+    assert _tree_has_path(p.root, tree, "missing/__init__.py") is False
+    assert _tree_has_path(p.root, "0" * 40, "missing/__init__.py") is True
+
+    content = b"# notes\n"
+    docs_ok = _docs_only_files(
+        ["pkg/notes.md"],
+        p.root,
+        diff_paths=["pkg/notes.md"],
+        post_image=lambda rel: (0o100644, content),
+        has_path=lambda rel: _tree_has_path(p.root, "0" * 40, rel),
+    )
+    assert docs_ok is False
+
+
 def _tests_only_review_without_a_tree(p, monkeypatch):
     rel = "tests/test_sample.py"
     (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
