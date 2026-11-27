@@ -439,8 +439,8 @@ def _clean_mutation_skip_kind(
     inventory = evidence.get("inventory", {})
     if kinds <= {"mutation-no-adapter", "mutation-tests-only"}:
         if source_unchanged is False:
-            # The guard was captured and the source moved: the skip cannot be
-            # trusted even though it claims no measurement.
+            # Guard unavailable, invalid, or changed: the skip claims no
+            # measurement, but nothing proves it stayed that way.
             return None
         ok = list(infra) == [] and not mutant_phase and inventory == {}
         return "not-applicable" if ok else None
