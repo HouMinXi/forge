@@ -2536,6 +2536,32 @@ def test_no_adapter_skip_needs_a_captured_guard():
         )
 
 
+def test_missing_mutmut_factory_does_not_claim_the_docs_exemption(ci_project):
+    """The factory route reports availability instead of the classifier's
+    exception. Pin that it stays clean for a tests-only review and never turns a
+    guardless review into a docs-only claim."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("INDEX"),
+        [Path(rel)],
+        p.root,
+    )
+    from code_forge.factories import _MissingMutmutRunner
+
+    machine = _machine(p, runner=_MissingMutmutRunner(p.root), review=review)
+    machine._run_l2_phase()
+
+    assert machine._mutation_bound_failure is False
+    assert machine._mutation_not_applicable is False
+    assert not any("docs-only" in line for line in machine._state.infra_errors)
+
+
 def test_other_adapter_note_does_not_extend_the_applicability_pair():
     from code_forge.machine import _clean_mutation_skip_kind
 

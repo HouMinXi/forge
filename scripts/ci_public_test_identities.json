@@ -24447,6 +24447,7 @@
     "tests/test_mutation_ledger_ci_controls.py::test_local_results_timeout_with_measured_inventory_is_not_clean[timeout]",
     "tests/test_mutation_ledger_ci_controls.py::test_local_unmeasured_shebang_file_stays_a_skip_with_note",
     "tests/test_mutation_ledger_ci_controls.py::test_machine_admission_receives_review_baseline",
+    "tests/test_mutation_ledger_ci_controls.py::test_missing_mutmut_factory_does_not_claim_the_docs_exemption",
     "tests/test_mutation_ledger_ci_controls.py::test_native_133_skips_have_accurate_reason[CI-mutation-no-mutants-mutmut generated no mutants; no mutation measurement was made-infra2-extra2-CI: mutation not measured: mutmut generated no mutants]",
     "tests/test_mutation_ledger_ci_controls.py::test_native_133_skips_have_accurate_reason[CI-mutation-other-adapter-app.ts: ts adapter registered-infra4-extra4-CI: mutation not measured: other-language adapters are not invoked by this run: app.ts: ts adapter registered]",
     "tests/test_mutation_ledger_ci_controls.py::test_native_133_skips_have_accurate_reason[CI-mutation-probe-timeout-mutmut import probe timed out in baseline test env; x-infra1-extra1-CI: mutation not measured: mutmut import probe timed out in baseline test env]",
