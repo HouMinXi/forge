@@ -255,6 +255,7 @@ def test_capture_proposal_checks_both_revisions_and_only_referenced_artifacts(
     body = report["host_validation"]["body"]
     assert body["result"] == ("rejected" if reason or ref_error else "passed")
     assert body["reason"] == reason
+    assert body["capture_base"] == obj["base"]
     assert body["reference_checks"][0]["error"] is None
     if adopt_missing:
         assert body["reference_checks"][1]["error"] == ref_error
@@ -289,9 +290,10 @@ def test_capture_proposal_checks_both_revisions_and_only_referenced_artifacts(
         assert ("human_ruling", "ruling", "capture-revision-unavailable") in decision.diagnostics
 
 
-@pytest.mark.parametrize("change", ["path", "offset", "unreferenced"])
+@pytest.mark.parametrize("change", ["path", "offset", "base", "unreferenced"])
 def test_captured_ruling_remains_bound_to_original_git_location(tmp_path, change):
     repo, obj = _fixture(tmp_path)
+    alternate_base = obj["candidate"]
     raw_file = b"same\nsame\n"
     (repo / "first.txt").write_bytes(raw_file)
     (repo / "second.txt").write_bytes(raw_file)
@@ -352,14 +354,27 @@ def test_captured_ruling_remains_bound_to_original_git_location(tmp_path, change
         obj["selections"][0]["path"] = "second.txt"
     elif change == "offset":
         obj["selections"][0].update(start=5, end=10)
+    elif change == "base":
+        obj["base"] = alternate_base
     else:
         obj["selections"][1]["path"] = "missing.txt"
     request.write_text(json.dumps(obj), encoding="utf-8")
     second_capture, after = capture_evidence_snapshot(repo, request)
     assert first_capture["request_sha256"] != second_capture["request_sha256"]
     assert first_capture["evidence"][0]["artifact"] == second_capture["evidence"][0]["artifact"]
+    if change == "base":
+        assert first_capture["evidence"] == second_capture["evidence"]
+        assert (
+            first_capture["revision_errors"]
+            == second_capture["revision_errors"]
+            == {
+                "base": None,
+                "candidate": None,
+            }
+        )
     new = validate_proposal(proposal, after, validation_id="validation")
     decision = decide_revision(after, records)
+    assert json.loads(new.canonical)["body"]["capture_base"] == obj["base"]
     if change == "unreferenced":
         assert second_capture["evidence"][1]["error"] == "path-not-in-tree"
         assert new.canonical == validation.canonical

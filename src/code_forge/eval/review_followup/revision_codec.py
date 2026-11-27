@@ -73,7 +73,16 @@ def decode_record(raw: bytes) -> RevisionRecord:
     fields(item, "finding_id candidate_sha", "revision_record.item")
     require(identifier(item["finding_id"]), "revision_record.item.finding_id")
     require(revision(item["candidate_sha"]), "revision_record.item.candidate_sha")
-    fields(record["body"], _BODY_FIELDS[kind], "revision_record.body")
+    body = record["body"]
+    keys = _BODY_FIELDS[kind]
+    if kind == "host_validation" and type(body) is dict and "capture_base" in body:
+        keys += " capture_base"
+        base = body["capture_base"]
+        require(
+            revision(base) and base.startswith("git:") and base != item["candidate_sha"],
+            "revision_record.body.capture_base",
+        )
+    fields(body, keys, "revision_record.body")
     _json_domain(record, 1, "revision_record")
     canonical = json.dumps(
         record, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False

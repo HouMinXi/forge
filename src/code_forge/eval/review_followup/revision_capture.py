@@ -211,6 +211,7 @@ def capture_evidence_snapshot(repository, request_file):
         tuple(entries),
         tuple(role for role, error in capture["revision_errors"].items() if error is not None),
         tuple(missing),
+        capture_base=capture["base"],
     )
     return capture, snapshot
 

@@ -32,6 +32,7 @@ class EvidenceSnapshot:
     entries: tuple[_Evidence, ...]
     unavailable_revisions: tuple[str, ...] = ()
     unavailable_artifacts: tuple[str, ...] = ()
+    capture_base: str | None = None
 
 
 def evidence_snapshot(review: ReviewInput, finding_id: str, saved_observations=()) -> EvidenceSnapshot:
@@ -197,4 +198,6 @@ def validate_proposal(raw: bytes, snapshot: EvidenceSnapshot, *, validation_id: 
             "reference_checks": checks,
         },
     }
+    if snapshot.capture_base is not None:
+        output["body"]["capture_base"] = snapshot.capture_base
     return decode_record(json.dumps(output, ensure_ascii=True, separators=(",", ":")).encode("ascii"))
