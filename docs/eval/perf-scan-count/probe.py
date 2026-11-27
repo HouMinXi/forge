@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -94,6 +95,30 @@ def measure(expected_sha):
     print(json.dumps(rows))
 
 
+def parse_measurements(stdout):
+    rows = json.loads(stdout)
+    expected = {"20-file": 4060, "40-file": 8120}
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        raise ValueError("expected two measurement rows")
+    for row, (label, lines) in zip(rows, expected.items(), strict=True):
+        if not isinstance(row, dict) or row.get("fixture") != label or row.get("input_lines") != lines:
+            raise ValueError(f"invalid measurement row for {label}")
+        for field in ("input_sha256", "output_sha256"):
+            if not isinstance(row.get(field), str) or not re.fullmatch(r"[0-9a-f]{64}", row[field]):
+                raise ValueError(f"invalid {field} for {label}")
+        counts = row.get("counts")
+        target = {"splitlines_calls": 1, "iterations": 1, "visited_lines": lines}
+        if (
+            not isinstance(counts, dict)
+            or counts.keys() != target.keys()
+            or any(type(value) is not int or value < 0 for value in counts.values())
+        ):
+            raise ValueError(f"invalid counts for {label}")
+        if row.get("within_budget") is not (counts == target):
+            raise ValueError(f"inconsistent count verdict for {label}")
+    return rows
+
+
 def run(tree, data):
     with tempfile.TemporaryDirectory(prefix="forge-scan-import-") as scratch:
         result = subprocess.run(
@@ -116,7 +141,7 @@ def run(tree, data):
             text=True,
             timeout=30,
         )
-    return json.loads(result.stdout)
+    return parse_measurements(result.stdout)
 
 
 def main(fixed, root):
@@ -174,9 +199,30 @@ def main(fixed, root):
     )
 
 
+def check(source):
+    try:
+        source = source.resolve(strict=True)
+        parser_bytes = (source / PARSER).read_bytes()
+        rows = run(source, parser_bytes)
+    except subprocess.CalledProcessError as error:
+        print(f"Measurement error: parser process exited {error.returncode}.", file=sys.stderr)
+        if error.stderr:
+            print(error.stderr, file=sys.stderr, end="")
+        return 2
+    except subprocess.TimeoutExpired:
+        print("Measurement error: parser process exceeded 30 seconds.", file=sys.stderr)
+        return 2
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"Measurement error: {error}", file=sys.stderr)
+        return 2
+    print(json.dumps({"parser_sha256": sha(parser_bytes), "results": rows}, indent=2))
+    return 0 if all(row["within_budget"] for row in rows) else 1
+
+
 if __name__ == "__main__":
     if not __debug__:
-        raise SystemExit("Run without -O.")
+        print("Measurement error: run without -O.", file=sys.stderr)
+        raise SystemExit(2)
     if len(sys.argv) == 3 and sys.argv[1] == "--child":
         measure(sys.argv[2])
     else:
@@ -188,18 +234,8 @@ if __name__ == "__main__":
             "--check", action="store_true", help="Measure the supplied parser without mutation"
         )
         args = parser.parse_args()
-        source = args.source.resolve(strict=True)
         if args.check:
-            parser_bytes = (source / PARSER).read_bytes()
-            try:
-                rows = run(source, parser_bytes)
-            except subprocess.CalledProcessError as error:
-                print(error.stderr, file=sys.stderr, end="")
-                raise SystemExit(2) from None
-            except subprocess.TimeoutExpired:
-                print("Parser measurement exceeded 30 seconds.", file=sys.stderr)
-                raise SystemExit(2) from None
-            print(json.dumps({"parser_sha256": sha(parser_bytes), "results": rows}, indent=2))
-            raise SystemExit(0 if all(row["within_budget"] for row in rows) else 1)
+            raise SystemExit(check(args.source))
+        source = args.source.resolve(strict=True)
         with tempfile.TemporaryDirectory(prefix="forge-scan-probe-") as scratch:
             main(source, Path(scratch))
