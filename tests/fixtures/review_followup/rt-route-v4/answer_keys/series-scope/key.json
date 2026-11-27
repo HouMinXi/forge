@@ -1,0 +1,8 @@
+{
+  "candidate": "git:e32b5eb4f237a5ddcf936c53e9ca387bb4cdd31c",
+  "case": "series-scope",
+  "roots": [
+    "geneve-required-flag"
+  ],
+  "schema": 1
+}

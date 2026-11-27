@@ -1,0 +1,25 @@
+{
+  "baseline": {
+    "call_limit": null,
+    "context_limit": null,
+    "failure_policy": "saved-only",
+    "forge_commit": "git:cb413f7eaa32d484888fbe0e5e49ee96a3028be8",
+    "model": null,
+    "prompt": null
+  },
+  "candidate": "git:e32b5eb4f237a5ddcf936c53e9ca387bb4cdd31c",
+  "case": "patch-scope",
+  "diagnostic": null,
+  "findings": [
+    {
+      "blocking": true,
+      "claim": "The rt-route Geneve options encoding does not carry both the outer options and inner Geneve NLA_F_NESTED flags together.",
+      "id": "geneve"
+    }
+  ],
+  "input_sha256": "16fcba8470afd05dcb37741db8dd4f85e53f7b3a6de696448f50ff412c61351b",
+  "run": "handwritten",
+  "schema": 1,
+  "status": "completed",
+  "usage": null
+}

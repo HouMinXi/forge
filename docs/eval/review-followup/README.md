@@ -459,3 +459,30 @@ C or headers, or rerun the Linux generator.
 ```bash
 PYTHONPATH=src python -m pytest -q docs/eval/review-followup/test_ovs_v6_calibration.py
 ```
+
+### rt-route v4: findings need the right baseline
+
+[Patch 4](https://lists.openwall.net/netdev/2026/10/08/229) is a second
+real calibration lineage, not a holdout. The
+[Sashiko review](https://lists.openwall.net/netdev/2026/10/09/176) correctly
+identified a missing nested flag in the candidate. The directly preceding
+schema misses the flag at the outer options layer instead; the kernel's
+attribute-specific strict policy matters even when the caller uses a
+deprecated parser. The pre-series opaque route data can preserve both flags.
+
+Both handwritten observations ask the same question: does the rt-route
+Geneve encoding carry both the outer options and inner Geneve nested flags
+together? The candidate and its immediate parent both lack the pair, so the
+gap is preexisting in that comparison, even though the missing flag changes
+layers. The pre-series baseline can carry both, so the gap is introduced in
+that comparison. Neither comparison proves that a complete old route request
+succeeded or determines whether the candidate should block a real merge.
+Both blocking judgments remain uncertain; neither is counted as a false
+blocker.
+The test checks the frozen measurement and separate hand-written rulings
+against their bound inputs. It does not run the encoder/generator again,
+send a route request, adjudicate text automatically, or estimate review lift.
+
+```bash
+PYTHONPATH=src python -m pytest -q docs/eval/review-followup/test_rt_route_v4_calibration.py
+```

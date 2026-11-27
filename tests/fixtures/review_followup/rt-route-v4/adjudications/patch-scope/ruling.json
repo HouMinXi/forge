@@ -1,0 +1,17 @@
+{
+  "candidate": "git:e32b5eb4f237a5ddcf936c53e9ca387bb4cdd31c",
+  "case": "patch-scope",
+  "findings": [
+    {
+      "attribution": "preexisting",
+      "blocking": "uncertain",
+      "factual": "supported",
+      "finding": "geneve",
+      "root": "geneve-required-flag"
+    }
+  ],
+  "observation_sha256": "fae5991d2ce488c2b8a18773bef246b66b351287b67f0f251c41aa4afc5e7631",
+  "revisions": [],
+  "run": "handwritten",
+  "schema": 1
+}

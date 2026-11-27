@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "id": "patch-scope",
+      "input": {
+        "path": "inputs/patch-scope/review.json",
+        "sha256": "16fcba8470afd05dcb37741db8dd4f85e53f7b3a6de696448f50ff412c61351b"
+      },
+      "lineage": "rt-route-lwtunnel-v4",
+      "split": "calibration"
+    },
+    {
+      "id": "series-scope",
+      "input": {
+        "path": "inputs/series-scope/review.json",
+        "sha256": "0c2a8486e0e70ea30ff4e55efee612a526155122c4b4f3fe6e594accd8bfc03f"
+      },
+      "lineage": "rt-route-lwtunnel-v4",
+      "split": "calibration"
+    }
+  ],
+  "schema": 1
+}
