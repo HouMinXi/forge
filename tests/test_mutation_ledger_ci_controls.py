@@ -2541,8 +2541,20 @@ def test_no_adapter_skip_needs_a_captured_guard():
     )
     proven = ["tests/test_sample.py"]
     assert (
-        _clean_mutation_skip_kind(tests_only, [], evidence, source_unchanged=None, diff_paths=proven)
+        _clean_mutation_skip_kind(
+            tests_only,
+            [],
+            evidence,
+            source_unchanged=None,
+            diff_paths=proven,
+            has_subject_tree=True,
+        )
         == "not-applicable"
+    )
+    # No frozen subject tree, no exemption.
+    assert (
+        _clean_mutation_skip_kind(tests_only, [], evidence, source_unchanged=None, diff_paths=proven)
+        is None
     )
     # The captured diff has to prove the scope; a bare or widened path list does not.
     assert _clean_mutation_skip_kind(tests_only, [], evidence, source_unchanged=None) is None
@@ -2553,16 +2565,21 @@ def test_no_adapter_skip_needs_a_captured_guard():
     ):
         assert (
             _clean_mutation_skip_kind(
-                tests_only, [], evidence, source_unchanged=None, diff_paths=widening
+                tests_only,
+                [],
+                evidence,
+                source_unchanged=None,
+                diff_paths=widening,
+                has_subject_tree=True,
             )
             is None
         )
 
 
-def test_missing_mutmut_factory_does_not_claim_the_docs_exemption(ci_project):
-    """The factory route reports availability instead of the classifier's
-    exception. Pin that it stays clean for a tests-only review and never turns a
-    guardless review into a docs-only claim."""
+def test_missing_mutmut_factory_applies_the_same_policy(ci_project):
+    """The factory route reaches the same applicability policy as the native
+    runner, so a tests-only review keeps its exemption and never turns into a
+    docs-only claim."""
     p = ci_project
     rel = "tests/test_sample.py"
     (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -2581,7 +2598,13 @@ def test_missing_mutmut_factory_does_not_claim_the_docs_exemption(ci_project):
     machine._run_l2_phase()
 
     assert machine._mutation_bound_failure is False
-    assert machine._mutation_not_applicable is False
+    assert machine._mutation_not_applicable is True
+    assert (
+        machine._state.infra_errors.count(
+            "L2: mutation not applicable (diff is tests-only): tests/test_sample.py"
+        )
+        == 1
+    )
     assert not any("docs-only" in line for line in machine._state.infra_errors)
 
 
@@ -2850,6 +2873,48 @@ def test_resolve_git_ref_follows_replacement_history(ci_project):
     assert resolve_git_ref("HEAD^", p.root) != raw_parent
 
 
+def _tests_only_review_without_a_tree(p, monkeypatch):
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+    monkeypatch.setattr("code_forge.baseline.write_tree", lambda cwd: None)
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("INDEX"),
+        [Path(rel)],
+        p.root,
+    )
+    assert review.subject_tree is None
+    return review
+
+
+def test_tests_only_skip_needs_a_frozen_subject_native(ci_project, monkeypatch):
+    """A failed freeze is not an exemption, even for a tests-only diff."""
+    p = ci_project
+    review = _tests_only_review_without_a_tree(p, monkeypatch)
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+
+    machine._run_l2_phase()
+
+    assert machine._mutation_not_applicable is False
+    assert machine._mutation_bound_failure is True
+
+
+def test_tests_only_skip_needs_a_frozen_subject_factory(ci_project, monkeypatch):
+    """The missing-mutmut route applies the same rule."""
+    p = ci_project
+    review = _tests_only_review_without_a_tree(p, monkeypatch)
+    from code_forge.factories import _MissingMutmutRunner
+
+    machine = _machine(p, runner=_MissingMutmutRunner(p.root), review=review, mode=Mode.CI)
+
+    machine._run_l2_phase()
+
+    assert machine._mutation_not_applicable is False
+    assert machine._mutation_bound_failure is True
+
+
 def test_other_adapter_note_does_not_extend_the_applicability_pair():
     from code_forge.machine import _clean_mutation_skip_kind
 
@@ -2927,7 +2992,12 @@ def test_clean_mutation_skip_kind(findings, infra, expected):
     tests_only = bool(findings) and all(fp == "mutation-tests-only" for fp, _ in findings)
     proven = ["tests/test_sample.py"] if tests_only else None
     assert _clean_mutation_skip_kind(
-        objs, infra, evidence, source_unchanged=None, diff_paths=proven
+        objs,
+        infra,
+        evidence,
+        source_unchanged=None,
+        diff_paths=proven,
+        has_subject_tree=True,
     ) == ("not-applicable" if expected == "not-applicable" and tests_only else None)
     if expected is not None:
         # A captured guard that saw the source move always fails closed.

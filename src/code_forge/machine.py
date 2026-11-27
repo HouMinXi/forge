@@ -430,10 +430,10 @@ def _clean_mutation_skip_kind(
       taken. ``source_unchanged`` is tri-state here: ``None`` means an
       explicit INDEX or COMMIT baseline, the only reviews that cannot carry
       the WORKING-only source guard, so for this pair the guard cannot
-      invalidate the skip. That exemption is limited to a tests-only diff:
-      "no adapter covers this" is a claim about product code and still needs a
-      captured guard, because a guardless review cannot prove what the
-      reviewed subject contains. A WORKING review supplies ``True`` or
+      invalidate the skip. That exemption is limited to a captured diff that
+      proves its scope and a frozen subject tree: "no adapter covers this" is
+      a claim about product code and still needs a captured guard, because a
+      guardless review cannot prove what the reviewed subject contains. A WORKING review supplies ``True`` or
       ``False``, and every other subject -- including an empty or snapshot
       baseline with no git target -- stays ``False`` and fails closed.
       Measured kinds below require a captured guard in every case.
@@ -477,7 +477,7 @@ def _clean_mutation_skip_kind(
             # measurement, but nothing proves it stayed that way.
             return None
         if source_unchanged is None and not (
-            _guardless_tests_only(diff_paths) or (has_subject_tree and _guardless_docs_scope(diff_paths))
+            has_subject_tree and (_guardless_tests_only(diff_paths) or _guardless_docs_scope(diff_paths))
         ):
             # A review that cannot carry the guard may only excuse a captured
             # diff that proves it holds no product code, or a document-scoped
@@ -3866,11 +3866,10 @@ class StateMachine:
                         # is a clean skip in both modes.
                         self._mutation_bound_failure = True
                         self._state.infra_errors.append(_ci_skip_reason(kind, l2_findings))
-            elif (
-                self.mode == Mode.CI
-                and not needs_baseline
-                and type(self.l2_runner) is _MissingMutmutRunner
-            ):
+            elif self.mode == Mode.CI and type(self.l2_runner) is _MissingMutmutRunner:
+                # A missing mutation engine is not evidence of anything: the
+                # same applicability policy decides, and it needs a frozen
+                # subject for every exemption.
                 self._apply_not_applicable_policy(l2_findings, diff_files)
             elif self.mode == Mode.CI and any(
                 f.id == "MUTATION_SKIPPED"
@@ -3929,7 +3928,7 @@ class StateMachine:
             # A guardless review decides from its frozen subject: the captured
             # diff for scope, the pinned tree for document content. A tree that
             # cannot be produced is not an exemption.
-            scope_ok = _guardless_tests_only(self._review_diff_paths())
+            scope_ok = subject_tree is not None and _guardless_tests_only(self._review_diff_paths())
             docs_ok = subject_tree is not None and _docs_only_files(
                 diff_files, root, self._review_diff_paths(), post_image=post_image, has_path=has_path
             )
