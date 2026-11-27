@@ -77,7 +77,7 @@ def check_identity(body: dict, args: argparse.Namespace) -> None:
     ]
     for label, actual, expected in pairs:
         if actual != expected:
-            raise Refused(f"{label} is {actual!r}, expected {expected!r}")
+            raise Refused(f"{label} does not match")
     for label, key, expected in (
         ("source digest", "source", args.expect_source_sha256),
         ("test digest", "test", args.expect_test_sha256),
@@ -120,7 +120,7 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
         raise Refused("target node was collected more than once")
     node_file = node.split("::", 1)[0]
     if any(type(item) is not str or item.split("::", 1)[0] != node_file for item in collected):
-        raise Refused(f"{node} does not name a node in {node_file}")
+        raise Refused("collected nodes do not all belong to the traced test file")
     phases = body.get("phases", {})
     if type(phases) is not dict:
         raise Refused("phases is not a record")
@@ -137,14 +137,14 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
     if call_outcomes[0] != args.expect_call:
         # A failing run says nothing about this node: another node may have
         # failed, or this one may have failed in teardown after a passing call.
-        raise Refused(f"node call outcome is {call_outcomes!r}, expected {args.expect_call!r}")
+        raise Refused("node call outcome does not match")
     exit_status = body.get("pytest_exit")
     if type(exit_status) is not int:
         # A JSON `false` equals an expected 0 in Python, so a boolean could
         # stand in for the producer's recorded exit status of a clean run.
-        raise Refused(f"pytest exit is {exit_status!r}, expected {args.expect_exit}")
+        raise Refused("pytest exit is not a number")
     if exit_status != args.expect_exit:
-        raise Refused(f"pytest exit is {exit_status!r}, expected {args.expect_exit!r}")
+        raise Refused("pytest exit does not match")
     hits = body.get("hits", {})
     if type(hits) is not dict:
         raise Refused("hits is not a record")
@@ -152,9 +152,9 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
     if type(count) is not int:
         # `true` equals an expected hit count of 1, so a boolean would satisfy
         # a positive hit claim without being a count at all.
-        raise Refused(f"target hits are {count!r}, expected {args.expect_hits}")
+        raise Refused("target hits are not a number")
     if count != args.expect_hits:
-        raise Refused(f"target hits are {count!r}, expected {args.expect_hits}")
+        raise Refused("target hits do not match")
 
 
 def main() -> int:

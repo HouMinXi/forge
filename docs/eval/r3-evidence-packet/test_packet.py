@@ -268,7 +268,7 @@ def test_a_node_from_another_file_is_refused_even_when_the_digest_holds(project)
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "does not name a node in" in check.stderr
+    assert "node does not name a node in the traced test file" in check.stderr
     assert "verified" not in check.stdout
 
 
@@ -353,17 +353,17 @@ def test_a_malformed_execution_record_is_refused_without_a_traceback(project, ma
         pytest.param(
             ("hits", "test_mod.py::test_hits_the_line"),
             True,
-            "target hits are True, expected 1",
+            "target hits are not a number",
             id="hit-count",
         ),
         pytest.param(
             ("hits", "test_mod.py::test_hits_the_line"),
             1.0,
-            "target hits are 1.0, expected 1",
+            "target hits are not a number",
             id="hit-count-float",
         ),
-        pytest.param(("pytest_exit",), False, "pytest exit is False, expected 0", id="pytest-exit"),
-        pytest.param(("pytest_exit",), 0.0, "pytest exit is 0.0, expected 0", id="pytest-exit-float"),
+        pytest.param(("pytest_exit",), False, "pytest exit is not a number", id="pytest-exit"),
+        pytest.param(("pytest_exit",), 0.0, "pytest exit is not a number", id="pytest-exit-float"),
         pytest.param(
             ("identity", "target", "line"), 5.0, "target does not match", id="target-line-float"
         ),
@@ -446,7 +446,7 @@ def test_a_missing_node_hit_count_is_refused_when_zero_is_expected(project, hits
         _expectations(project, node, announced["run_id"], body["packet_sha256"], hits=0),
     )
     assert check.returncode == 1
-    assert check.stderr == "packet refused: target hits are None, expected 0\n"
+    assert check.stderr == "packet refused: target hits are not a number\n"
     assert check.stdout == ""
 
 
@@ -460,7 +460,7 @@ def test_a_green_run_that_missed_the_target_is_refused(project):
         _expectations(project, node, announced["run_id"], announced["sha256"]),
     )
     assert check.returncode == 1
-    assert "target hits are 0" in check.stderr
+    assert "target hits do not match" in check.stderr
 
 
 def test_a_collected_node_that_never_ran_is_refused(project):
@@ -514,7 +514,7 @@ def test_a_passing_call_beside_a_failing_node_is_refused(project):
         ),
     )
     assert check.returncode == 1
-    assert "does not name a node in" in check.stderr
+    assert "collected nodes do not all belong to the traced test file" in check.stderr
     assert "verified" not in check.stdout
 
 
@@ -566,7 +566,7 @@ def test_an_xpass_does_not_count_as_a_plain_pass(project):
     announced = _announced(result)
     check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
     assert check.returncode == 1
-    assert "call outcome is ['xpassed']" in check.stderr
+    assert "node call outcome does not match" in check.stderr
 
 
 def test_a_tree_that_changes_during_the_run_is_refused(project):
@@ -622,7 +622,7 @@ def test_a_strict_xpass_is_not_a_plain_failure(project):
         ),
     )
     assert check.returncode == 1
-    assert "call outcome is ['xpassed']" in check.stderr
+    assert "node call outcome does not match" in check.stderr
 
 
 INACTIVE_XFAIL = """\
@@ -811,3 +811,33 @@ def test_a_node_mismatch_refuses_without_echoing_the_name(project):
     assert check.returncode == 1
     assert leaked not in check.stderr
     assert check.stdout == ""
+
+
+def test_a_different_node_in_the_same_file_is_refused(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    body["identity"]["node"] = "test_mod.py::test_some_other_node"
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    announced = _announced(result)
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
+    assert check.returncode == 1
+    assert "node does not name a node in the traced test file" in check.stderr
+
+
+def test_a_node_mismatch_does_not_echo_the_test_path(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    leaked = "secret-test-path"
+    body["identity"]["node"] = leaked + "::nope"
+    body["identity"]["test"]["path"] = leaked
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    announced = _announced(result)
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
+    assert check.returncode == 1
+    assert leaked not in check.stderr
