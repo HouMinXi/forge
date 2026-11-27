@@ -375,12 +375,34 @@ _CYCLE_PRESERVED_LOG = (
 )
 
 
+def _guardless_tests_only(diff_paths) -> bool:
+    """True only if the captured diff itself is a tests-only change.
+
+    Used when a review cannot carry the source guard: the exemption then has to
+    come from the frozen diff, not from a submitted path list, so rename
+    sources, deleted product files and Git pathspec expansions are all included.
+    A backslash in a POSIX path is a literal filename, not a directory
+    separator, and is refused rather than normalized into ``tests/``.
+    """
+    rels: list[str] = []
+    for raw in sorted(diff_paths or ()):
+        text = str(raw)
+        if "\\" in text:
+            return False
+        rel = _normalized_rel(text)
+        if rel is None:
+            return False
+        rels.append(rel)
+    return bool(rels) and _default_tests_only(rels)
+
+
 def _clean_mutation_skip_kind(
     findings: list,
     infra: list[str],
     evidence: dict,
     *,
     source_unchanged: bool | None,
+    diff_paths=None,
 ) -> str | None:
     """Classify a native carrier that measured nothing, or return None.
 
@@ -445,10 +467,13 @@ def _clean_mutation_skip_kind(
             # Guard unavailable, invalid, or changed: the skip claims no
             # measurement, but nothing proves it stayed that way.
             return None
-        if source_unchanged is None and "mutation-no-adapter" in kinds:
-            # A review that cannot carry the guard may only excuse a diff whose
-            # paths prove it holds no product code. "No adapter covers this"
-            # still needs a captured guard.
+        if source_unchanged is None and (
+            "mutation-no-adapter" in kinds or not _guardless_tests_only(diff_paths)
+        ):
+            # A review that cannot carry the guard may only excuse the captured
+            # diff that proves it holds no product code. "No adapter covers
+            # this", an unproven path list and a widened scope all still need
+            # the captured guard.
             return None
         ok = list(infra) == [] and not mutant_phase and inventory == {}
         return "not-applicable" if ok else None
@@ -3692,6 +3717,7 @@ class StateMachine:
                         source_unchanged=_source_guard_state(
                             self.resolved_review.target_kind, source_before, source_after
                         ),
+                        diff_paths=self._review_diff_paths(),
                     )
                     if kind is None:
                         self._mutation_bound_failure = True
@@ -3791,6 +3817,18 @@ class StateMachine:
         shown = ", ".join(sorted(diff_files)[:10]) + (" ..." if len(diff_files) > 10 else "")
         fingerprints = {f.fingerprint for f in findings}
         linked = _symlinked_files(diff_files, self._source_root())
+        if self.resolved_review.target_kind != WORKING:
+            # A guardless review has no frozen subject proof beyond the diff
+            # itself, so only a diff that is tests-only may pass here.
+            clean = _guardless_tests_only(self._review_diff_paths())
+            why = "diff is tests-only" if clean else "no mutation adapter covers"
+            if clean or self.mode != Mode.CI:
+                self._mutation_not_applicable = clean
+                self._state.infra_errors.append(f"L2: mutation not applicable ({why}): {shown}")
+                return
+            self._mutation_bound_failure = True
+            self._state.infra_errors.append(f"CI: mutation not measured: {why}: {shown}")
+            return
         if linked:
             clean, why, shown = False, "symlinked files are not measured", ", ".join(linked)
         elif fingerprints == {"mutation-tests-only"}:

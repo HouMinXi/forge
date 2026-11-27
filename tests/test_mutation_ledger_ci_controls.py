@@ -2531,7 +2531,24 @@ def test_no_adapter_skip_needs_a_captured_guard():
 
     assert _clean_mutation_skip_kind(no_adapter, [], evidence, source_unchanged=None) is None
     assert _clean_mutation_skip_kind(no_adapter, [], evidence, source_unchanged=True) == "not-applicable"
-    assert _clean_mutation_skip_kind(tests_only, [], evidence, source_unchanged=None) == "not-applicable"
+    proven = ["tests/test_sample.py"]
+    assert (
+        _clean_mutation_skip_kind(tests_only, [], evidence, source_unchanged=None, diff_paths=proven)
+        == "not-applicable"
+    )
+    # The captured diff has to prove the scope; a bare or widened path list does not.
+    assert _clean_mutation_skip_kind(tests_only, [], evidence, source_unchanged=None) is None
+    for widening in (
+        ["tests/*.py", "tests/conftest.py"],
+        ["policy.py", "tests/policy.py"],
+        ["tests\\policy.py"],
+    ):
+        assert (
+            _clean_mutation_skip_kind(
+                tests_only, [], evidence, source_unchanged=None, diff_paths=widening
+            )
+            is None
+        )
 
 
 def test_other_adapter_note_does_not_extend_the_applicability_pair():
@@ -2609,9 +2626,10 @@ def test_clean_mutation_skip_kind(findings, infra, expected):
     # A review that cannot carry the guard excuses only a tests-only skip: a
     # "no adapter covers this" claim still needs the captured guard.
     tests_only = bool(findings) and all(fp == "mutation-tests-only" for fp, _ in findings)
-    assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=None) == (
-        "not-applicable" if expected == "not-applicable" and tests_only else None
-    )
+    proven = ["tests/test_sample.py"] if tests_only else None
+    assert _clean_mutation_skip_kind(
+        objs, infra, evidence, source_unchanged=None, diff_paths=proven
+    ) == ("not-applicable" if expected == "not-applicable" and tests_only else None)
     if expected is not None:
         # A captured guard that saw the source move always fails closed.
         assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=False) is None
