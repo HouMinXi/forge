@@ -37,6 +37,7 @@ class WireReceipt:
         "unfinished_response",
         "no_usable_reply",
         "private_reply_rejected",
+        "private_reply_unstored",
     ]
     response_sha256: str | None = None
     reported_model: str | None = None
@@ -274,7 +275,12 @@ class DirectSmokeTransport:
             if self.api_key.encode("ascii") in raw or _has_key(doc, self.api_key):
                 outcome = "private_reply_rejected"
             else:
-                retain_reply(raw)
+                try:
+                    retain_reply(raw)
+                except OSError:
+                    # The wire reply is known even though its body could not
+                    # be retained. Keep accounting without exposing I/O details.
+                    outcome = "private_reply_unstored"
         return WireReceipt(
             status,
             outcome,

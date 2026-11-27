@@ -493,14 +493,39 @@ def test_disk_error_never_publishes_unstored_evidence_or_resends(
 
     monkeypatch.setattr(smoke_artifacts.os, "open", record_open)
     monkeypatch.setattr(smoke_artifacts.os, "fsync", sync)
-    peer[0].append(response())
-    with pytest.raises(OSError if kind == "request" else smoke_runner.ArtifactWriteError):
-        run_retained(tmp_path, retention, request())
-    assert [entry["event"] for entry in journal(tmp_path)] == (
-        ["started"] if kind == "request" else ["started", "reserved"]
-    )
+    raw = json.dumps(OK).encode()
+    server_id = b"header-only-id"
+    peer[0].append(response(raw, other=b"X-Request-Id: " + server_id + b"\r\n"))
+    body = request()
+    if kind == "request":
+        with pytest.raises(OSError, match="fake sync failure"):
+            run_retained(tmp_path, retention, body)
+        assert [entry["event"] for entry in journal(tmp_path)] == ["started"]
+    else:
+        rows = run_retained(tmp_path, retention, body)
+        assert [row.state for row in rows] == ["failed", *["not_started"] * 5]
+        start, reservation, terminal = journal(tmp_path)
+        assert start["event"] == "started"
+        assert reservation["event"] == "reserved"
+        assert observed(peer[1][0], reservation["client_request_id"]) == body
+        assert terminal == {
+            "event": "finished",
+            "attempt": reservation["attempt"],
+            "state": "failed",
+            "wire": {
+                "status": 200,
+                "outcome": "private_reply_unstored",
+                "response_sha256": digest(raw),
+                "reported_model": MODEL,
+                "finish_reason": "stop",
+                "input_tokens": 13,
+                "cached_input_tokens": 0,
+                "output_tokens": 2,
+                "server_request_id_sha256": digest(server_id),
+            },
+        }
     with pytest.raises(InputError, match="already-started"):
-        run_retained(tmp_path, retention, request())
+        run_retained(tmp_path, retention, body)
     assert len(peer[1]) == (kind == "response")
 
 

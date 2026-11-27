@@ -317,9 +317,12 @@ length and SHA-256, not the private root path or raw content. The request
 must be durable before the reservation and POST; a retained reply must be
 durable before its terminal journal event. An I/O interruption can leave
 unreferenced or incomplete files; only journal-referenced bytes matching
-their digests are evidence. A storage failure stops the run, never permits
-resume or reuse, and does not turn a received but unrecorded reply into a
-completed attempt.
+their digests are evidence. If reply storage fails but the journal is still
+writable, the run records a failed attempt (`private_reply_unstored`) with
+the sanitized wire receipt, available usage, and no response artifact
+reference. It stops without sending the next slot. If the terminal journal
+event cannot be made durable, no terminal state is exposed. Neither failure
+allows resume or reuse.
 
 The manual offline suite drives the real HTTP serializer/parser over a
 socketpair and does not open a network connection or perform TLS. This

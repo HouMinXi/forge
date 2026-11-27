@@ -15,10 +15,6 @@ from .smoke_artifacts import private_root, run_artifacts, store_payload
 from .smoke_transport import DirectSmokeTransport, WireReceipt
 
 
-class ArtifactWriteError(RuntimeError):
-    """A reply arrived, but no durable retained result can be reported."""
-
-
 def _append(journal: BinaryIO, event: dict) -> None:
     journal.write((json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"))
     journal.flush()
@@ -100,11 +96,7 @@ def run_smoke_once(
                 def retain_reply(raw: bytes, number: int = ticket) -> None:
                     nonlocal response_artifact
                     assert artifacts is not None
-                    try:
-                        response_artifact = store_payload(artifacts, f"{number:02d}-response.json", raw)
-                    except OSError:
-                        # A received reply whose retention failed is still not resumable.
-                        raise ArtifactWriteError("smoke_response_artifact_write") from None
+                    response_artifact = store_payload(artifacts, f"{number:02d}-response.json", raw)
 
                 if type(send_once) is DirectSmokeTransport:
                     request_id = uuid.uuid4().hex
