@@ -12,58 +12,70 @@ import unittest
 
 import scripts.perf_regression as perf
 
+ENV = perf.environment("test-runner")
+SCRIPT = [sys.executable, "scripts/perf_regression.py"]
+COMMAND = [*SCRIPT, "--runner", ENV["runner"]]
+
+
+def record(median, definition=perf.DEFINITION, workload=perf.WORKLOAD):
+    return {"definition": definition, "workload": workload, "median_s": median, "environment": ENV}
+
 
 class Compare(unittest.TestCase):
-    def record(self, median, definition=perf.DEFINITION, workload=perf.WORKLOAD):
-        return {"definition": definition, "workload": workload, "median_s": median}
-
     def test_a_small_change_stays_within(self):
-        self.assertEqual(perf.compare(self.record(1.0), 1.2), "within")
+        self.assertEqual(perf.compare(record(1.0), 1.2, ENV), "within")
 
     def test_past_the_limit_is_slower(self):
-        self.assertEqual(perf.compare(self.record(1.0), 1.6), "slower")
+        self.assertEqual(perf.compare(record(1.0), 1.6, ENV), "slower")
 
     def test_exactly_at_the_limit_stays_within(self):
-        self.assertEqual(perf.compare(self.record(1.0), 1.5), "within")
+        self.assertEqual(perf.compare(record(1.0), 1.5, ENV), "within")
 
     def test_a_faster_result_stays_within(self):
-        self.assertEqual(perf.compare(self.record(1.0), 0.4), "within")
+        self.assertEqual(perf.compare(record(1.0), 0.4, ENV), "within")
 
     def test_a_non_finite_baseline_is_incomparable(self):
         for value in (float("nan"), float("inf"), 0.0, -1.0):
-            self.assertEqual(perf.compare(self.record(value), 1.0), "incomparable", value)
+            self.assertEqual(perf.compare(record(value), 1.0, ENV), "incomparable", value)
 
     def test_a_bool_baseline_is_incomparable(self):
         # True is an int in Python, so a type check that stops at int accepts it
         # and treats the baseline as one second.
-        self.assertEqual(perf.compare(self.record(True), 1.0), "incomparable")
+        self.assertEqual(perf.compare(record(True), 1.0, ENV), "incomparable")
 
     def test_an_integer_too_large_to_convert_is_incomparable(self):
         # math.isfinite accepts any int, but multiplying one past the float range
         # raises. That is not a slowdown.
-        self.assertEqual(perf.compare(self.record(10**10000), 0.001), "incomparable")
+        self.assertEqual(perf.compare(record(10**10000), 0.001, ENV), "incomparable")
 
     def test_a_non_finite_result_is_still_json(self):
-        result = perf.report(self.record(float("nan")), 1.0)
+        result = perf.report(record(float("nan")), 1.0, ENV)
         self.assertEqual(result["verdict"], "incomparable")
         self.assertIsNone(result["baseline_s"])
         json.dumps(result)
 
     def test_a_different_workload_is_incomparable(self):
-        self.assertEqual(perf.compare(self.record(1.0, workload="other"), 1.0), "incomparable")
+        self.assertEqual(perf.compare(record(1.0, workload="other"), 1.0, ENV), "incomparable")
+        baseline = record(1.0)
+        for field in ENV:
+            with self.subTest(field=field):
+                changed = dict(ENV, **{field: "different"})
+                self.assertEqual(perf.compare(baseline, 1.0, changed), "incomparable")
+                self.assertEqual(perf.compare(baseline, 1.0, ENV), "within")
+        del baseline["environment"]
+        self.assertEqual(perf.compare(baseline, 1.0, ENV), "incomparable")
 
     def test_the_limit_is_part_of_the_definition(self):
         self.assertEqual(perf.SLOWDOWN, 0.5)
-        self.assertEqual(perf.compare(self.record(1.0), 1.6, slowdown=2.0), "within")
+        self.assertEqual(perf.compare(record(1.0), 1.6, ENV, slowdown=2.0), "within")
 
 
 class Report(unittest.TestCase):
     def test_a_slow_result_carries_the_definition(self):
-        result = perf.report(
-            {"definition": perf.DEFINITION, "workload": perf.WORKLOAD, "median_s": 1.0}, 1.6
-        )
-        self.assertEqual(result["definition"], "forge-perf-regression-v1")
+        result = perf.report(record(1.0), 1.6, ENV)
+        self.assertEqual(result["definition"], "forge-perf-regression-v2")
         self.assertEqual(result["workload"], "parse_diff_files")
+        self.assertEqual(result["environment"], ENV)
         self.assertEqual(result["verdict"], "slower")
         self.assertEqual(result["baseline_s"], 1.0)
         self.assertEqual(result["median_s"], 1.6)
@@ -71,22 +83,30 @@ class Report(unittest.TestCase):
     def test_the_command_exits_nonzero_when_slower(self):
         import tempfile
 
-        record = {"definition": perf.DEFINITION, "workload": perf.WORKLOAD, "median_s": 1e-7}
+        baseline = record(1e-7)
         with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
-            json.dump(record, handle)
+            json.dump(baseline, handle)
             handle.flush()
             run = subprocess.run(
-                [sys.executable, "scripts/perf_regression.py", "--baseline", handle.name],
+                [*COMMAND, "--baseline", handle.name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            other = subprocess.run(
+                [*SCRIPT, "--baseline", handle.name, "--runner", "other-runner"],
                 capture_output=True,
                 text=True,
                 check=False,
             )
         self.assertEqual(run.returncode, 1)
         self.assertEqual(json.loads(run.stdout)["verdict"], "slower")
+        self.assertEqual(other.returncode, 2)
+        self.assertEqual(json.loads(other.stdout)["verdict"], "incomparable")
 
     def test_the_command_rejects_a_record_it_cannot_read(self):
         run = subprocess.run(
-            [sys.executable, "scripts/perf_regression.py", "--baseline", "no-such-file.json"],
+            [*COMMAND, "--baseline", "no-such-file.json"],
             capture_output=True,
             text=True,
             check=False,
@@ -102,7 +122,7 @@ class Report(unittest.TestCase):
             json.dump(record, handle)
             handle.flush()
             run = subprocess.run(
-                [sys.executable, "scripts/perf_regression.py", "--baseline", handle.name],
+                [*COMMAND, "--baseline", handle.name],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -117,7 +137,7 @@ class Report(unittest.TestCase):
             handle.write(b"\xff\xfe not json")
             handle.flush()
             run = subprocess.run(
-                [sys.executable, "scripts/perf_regression.py", "--baseline", handle.name],
+                [*COMMAND, "--baseline", handle.name],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -132,12 +152,12 @@ class Report(unittest.TestCase):
 
         with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:
             handle.write(
-                '{"definition": "forge-perf-regression-v1",'
+                '{"definition": "forge-perf-regression-v2",'
                 ' "workload": "parse_diff_files", "median_s": ' + "9" * 5001 + "}"
             )
             handle.flush()
             run = subprocess.run(
-                [sys.executable, "scripts/perf_regression.py", "--baseline", handle.name],
+                [*COMMAND, "--baseline", handle.name],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -160,6 +180,19 @@ class Workload(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 perf.measure(runs=1)
 
+        # Keep both counts unchanged, so a size-only check would pass.
+        actual = perf.parse_diff_files(perf._DIFF)
+        wrong_path = actual.copy()
+        wrong_path["renamed.py"] = wrong_path.pop("f0.py")
+        wrong_lines = dict(actual, **{"f0.py": [0] * len(actual["f0.py"])})
+        for label, wrong in (("path", wrong_path), ("line numbers", wrong_lines)):
+            with (
+                self.subTest(label=label),
+                unittest.mock.patch.object(perf, "parse_diff_files", return_value=wrong),
+                self.assertRaisesRegex(RuntimeError, "unexpected paths or line numbers"),
+            ):
+                perf.measure(runs=1)
+
     def test_one_slow_sample_does_not_move_the_median(self):
         # Five fast samples and two slow ones: the median is one of the fast
         # ones, so a single stall is not reported as a regression.
@@ -169,8 +202,9 @@ class Workload(unittest.TestCase):
         self.assertEqual(statistics.median(samples), 0.01)
         self.assertEqual(
             perf.compare(
-                {"definition": perf.DEFINITION, "workload": perf.WORKLOAD, "median_s": 0.01},
+                record(0.01),
                 statistics.median(samples),
+                ENV,
             ),
             "within",
         )
