@@ -414,3 +414,13 @@ without invalidating a usable reference. Existing role and byte-range
 checks still apply. Exit zero means the report was written; inspect
 `host_validation.body.result`. A pass establishes only mechanical provenance
 and is not a semantic conclusion or production receipt.
+
+Each valid captured reference binds its location with
+`capture_location_sha256`: SHA-256 of the compact ASCII JSON array
+`["forge-capture-location-v1", revision, path, git_blob, start, end]`
+using ASCII escaping and no added whitespace or trailing newline. The
+offsets are in the original blob, separate from the reference's
+excerpt-relative selector. The compact digest keeps validation size bounded.
+The evidence's content hash is still checked independently. Changing a
+referenced location invalidates old validation even when the selected bytes
+match. Unreferenced selection changes do not invalidate a binding.

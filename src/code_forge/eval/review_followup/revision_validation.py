@@ -22,6 +22,7 @@ class _Evidence:
     length: int
     session_id: str | None = None
     call_ids: tuple[str, ...] = ()
+    capture_location_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +172,8 @@ def validate_proposal(raw: bytes, snapshot: EvidenceSnapshot, *, validation_id: 
                 "role": entry.role,
                 "selector": ref["selector"],
             }
+            if entry.capture_location_sha256 is not None:
+                binding["capture_location_sha256"] = entry.capture_location_sha256
             current_basis |= ref["purpose"] == "current_basis"
         checks.append({"index": index, "purpose": ref["purpose"], "error": error, "binding": binding})
 

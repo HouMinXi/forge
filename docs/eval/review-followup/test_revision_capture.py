@@ -10,6 +10,7 @@ from code_forge.eval.review_followup.__main__ import main
 from code_forge.eval.review_followup.revision_adjudication import decide_revision
 from code_forge.eval.review_followup.revision_capture import capture_evidence_snapshot
 from code_forge.eval.review_followup.revision_codec import decode_record
+from code_forge.eval.review_followup.revision_validation import validate_proposal
 
 
 def _git(root, *args):
@@ -286,3 +287,88 @@ def test_capture_proposal_checks_both_revisions_and_only_referenced_artifacts(
         decision = decide_revision(snapshot, [raw, vraw, json.dumps(ruling).encode()])
         assert decision.conclusion is None
         assert ("human_ruling", "ruling", "capture-revision-unavailable") in decision.diagnostics
+
+
+@pytest.mark.parametrize("change", ["path", "offset", "unreferenced"])
+def test_captured_ruling_remains_bound_to_original_git_location(tmp_path, change):
+    repo, obj = _fixture(tmp_path)
+    raw_file = b"same\nsame\n"
+    (repo / "first.txt").write_bytes(raw_file)
+    (repo / "second.txt").write_bytes(raw_file)
+    obj["candidate"] = _commit(repo)
+    obj["selections"] = [
+        _item("current", "candidate", "first.txt"),
+        _item("ignored", "candidate", "second.txt"),
+    ]
+    assert _call(tmp_path, repo, obj)[0] == 0
+    request = tmp_path / "request.json"
+    item = {"finding_id": obj["finding_id"], "candidate_sha": obj["candidate"]}
+    proposal = json.dumps(
+        {
+            "schema": 1,
+            "kind": "proposal",
+            "id": "proposal",
+            "item": item,
+            "body": {
+                "claim": "Synthetic claim",
+                "constraint_ref": {"id": "behavior", "version": 1},
+                "suggested_status": "verified_fixed",
+                "supersedes_proposal_id": None,
+                "evidence_refs": [
+                    {
+                        "artifact_id": "current",
+                        "purpose": "current_basis",
+                        "selector": {"kind": "source_bytes", "start": 0, "end": 5},
+                    }
+                ],
+            },
+        }
+    ).encode()
+    first_capture, before = capture_evidence_snapshot(repo, request)
+    validation = validate_proposal(proposal, before, validation_id="validation")
+    ruling = json.dumps(
+        {
+            "schema": 1,
+            "kind": "human_ruling",
+            "id": "ruling",
+            "item": item,
+            "body": {
+                "proposal_id": "proposal",
+                "proposal_digest": decode_record(proposal).sha256,
+                "validation_id": "validation",
+                "validation_digest": validation.sha256,
+                "adopted_ref_indexes": [0],
+                "reviewer_id": "fixture-reviewer",
+                "conclusion": "verified_fixed",
+                "reason": "Synthetic control",
+                "remaining_gaps": [],
+                "supersedes_ruling_ids": [],
+            },
+        }
+    ).encode()
+    records = [proposal, validation.canonical, ruling]
+    assert decide_revision(before, records).conclusion == "verified_fixed"
+    if change == "path":
+        obj["selections"][0]["path"] = "second.txt"
+    elif change == "offset":
+        obj["selections"][0].update(start=5, end=10)
+    else:
+        obj["selections"][1]["path"] = "missing.txt"
+    request.write_text(json.dumps(obj), encoding="utf-8")
+    second_capture, after = capture_evidence_snapshot(repo, request)
+    assert first_capture["request_sha256"] != second_capture["request_sha256"]
+    assert first_capture["evidence"][0]["artifact"] == second_capture["evidence"][0]["artifact"]
+    new = validate_proposal(proposal, after, validation_id="validation")
+    decision = decide_revision(after, records)
+    if change == "unreferenced":
+        assert second_capture["evidence"][1]["error"] == "path-not-in-tree"
+        assert new.canonical == validation.canonical
+        assert decision.conclusion == "verified_fixed"
+    else:
+        assert new.sha256 != validation.sha256
+        assert decision.conclusion is None
+        assert (
+            "host_validation",
+            "validation",
+            "inactive-or-invalid-validation",
+        ) in decision.diagnostics

@@ -1,5 +1,6 @@
 """Collect bounded source excerpts from local Git commits, not worktree files."""
 
+import json
 import os
 from pathlib import Path
 import re
@@ -168,6 +169,20 @@ def capture_revision_evidence(repository, request_file):
     }
 
 
+def _location_digest(row):
+    # Hash only this selection's origin. The rest of the request may change
+    # without affecting a proposal that did not reference those selections.
+    location = [
+        "forge-capture-location-v1",
+        row["revision"],
+        row["path"],
+        row["artifact"]["git_blob"],
+        row["start"],
+        row["end"],
+    ]
+    return digest(json.dumps(location, ensure_ascii=True, separators=(",", ":")).encode("ascii"))
+
+
 def capture_evidence_snapshot(repository, request_file):
     """Return fresh source and a snapshot for the existing offline validator."""
     from .revision_validation import EvidenceSnapshot, _Evidence
@@ -187,6 +202,7 @@ def capture_evidence_snapshot(repository, request_file):
                 row["revision"],
                 payload["artifact_sha256"],
                 len(payload["text"].encode("utf-8")),
+                capture_location_sha256=_location_digest(row),
             )
         )
     snapshot = EvidenceSnapshot(
@@ -201,8 +217,6 @@ def capture_evidence_snapshot(repository, request_file):
 
 def validate_captured_proposal(repository, request_file, proposal_file, validation_id):
     """Reacquire source from trusted local Git and mechanically check a proposal."""
-    import json
-
     from .revision_validation import validate_proposal
 
     raw = read_file(proposal_file.parent, proposal_file.name, "proposal")
