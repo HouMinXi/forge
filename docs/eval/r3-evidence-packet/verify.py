@@ -45,6 +45,8 @@ def load(path: Path) -> dict:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise Refused("packet is not valid UTF-8") from exc
+    except OSError as exc:
+        raise Refused("packet cannot be read") from exc
     try:
         body = json.loads(text)
     except json.JSONDecodeError as exc:
