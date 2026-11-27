@@ -13,7 +13,7 @@
   "findings": [
     {
       "blocking": true,
-      "claim": "Schema-driven Geneve options omit a required nesting flag.",
+      "claim": "The rt-route Geneve options encoding does not carry both the outer options and inner Geneve NLA_F_NESTED flags together.",
       "id": "geneve"
     }
   ],

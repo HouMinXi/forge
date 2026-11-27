@@ -3,7 +3,7 @@
     "patch-scope": {
       "adjudication": {
         "path": "adjudications/patch-scope/ruling.json",
-        "sha256": "13df2d2852b26063be30d0b91245d26008f098cd0d0f4e3cfda59df18f1eea74"
+        "sha256": "40f199ea549b76d9969e5ae9d3526b36ee87e9d56884b0faf599a39eef00ebd4"
       },
       "answer": {
         "path": "answer_keys/patch-scope/key.json",
@@ -13,7 +13,7 @@
     "series-scope": {
       "adjudication": {
         "path": "adjudications/series-scope/ruling.json",
-        "sha256": "787eafdb1d4bbcd14262a3873252566c42229b6a4306502f082cffba53fe08d1"
+        "sha256": "a933629684ff4e26308b17cf9554d845c9d41cec261a4f6b936e4ef1bf61cd26"
       },
       "answer": {
         "path": "answer_keys/series-scope/key.json",

@@ -48,6 +48,20 @@ def test_same_candidate_can_have_different_attribution_by_scope(tmp_path):
         "series-scope": revisions["series-base"]["revision"],
     }
     assert patch["lineage"] == series["lineage"]
+    observations = [item.result.findings for item in sealed]
+    assert observations[0] == observations[1]
+    assert observations[0][0].claim == (
+        "The rt-route Geneve options encoding does not carry both the outer options and inner "
+        "Geneve NLA_F_NESTED flags together."
+    )
+
+    def carries_both(side):
+        options = evidence["measurement"]["schemas"][side]["options"]
+        return all(row["opts_nested"] and row["geneve_nested"] for row in options.values())
+
+    assert not carries_both("patch-4")
+    assert not carries_both("patch-4-parent")
+    assert carries_both("series-base")
     assert patch["hits"] == series["hits"] == 1
     assert patch["usage"] is series["usage"] is None
 
@@ -55,9 +69,9 @@ def test_same_candidate_can_have_different_attribution_by_scope(tmp_path):
         judgment = row["findings"][0]["judgment"]
         return judgment["factual"], judgment["attribution"], judgment["blocking"]
 
-    assert disposition(patch) == ("supported", "preexisting", "should_not_block")
+    assert disposition(patch) == ("supported", "preexisting", "uncertain")
     assert disposition(series) == ("supported", "introduced", "uncertain")
-    assert (patch["false_blockers"], patch["pending_findings"]) == (1, 0)
+    assert (patch["false_blockers"], patch["pending_findings"]) == (0, 1)
     assert (series["false_blockers"], series["pending_findings"]) == (0, 1)
 
 
