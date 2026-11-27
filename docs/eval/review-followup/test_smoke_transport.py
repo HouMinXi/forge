@@ -7,7 +7,7 @@ from dataclasses import replace
 
 import pytest
 
-from code_forge.eval.review_followup import smoke_runner
+from code_forge.eval.review_followup import smoke_deadline, smoke_runner
 from code_forge.eval.review_followup.attempt_plan import AttemptSlot
 from code_forge.eval.review_followup.fixtures import InputError, digest
 from code_forge.eval.review_followup.smoke_transport import DirectSmokeTransport, SmokeWireError
@@ -365,7 +365,7 @@ def retention(tmp_path):
     return private
 
 
-def run_retained(root, private, body, *, last=None):
+def run_retained(root, private, body, *, last=None, max_elapsed_s=None):
     admission, bodies = plan(body, last)
     return smoke_runner.run_smoke_once(
         journal_dir=root,
@@ -374,6 +374,7 @@ def run_retained(root, private, body, *, last=None):
         request_bodies=bodies,
         send_once=transport(),
         artifact_dir=private,
+        max_elapsed_s=max_elapsed_s,
     )
 
 
@@ -561,3 +562,150 @@ def test_retention_requires_direct_transport(tmp_path, retention):
             artifact_dir=retention,
         )
     assert not list(tmp_path.glob("*.jsonl")) and not list(retention.iterdir()) and not calls
+
+
+@pytest.mark.parametrize("framing", ["length", "chunked"])
+def test_elapsed_budget_accepts_normal_framing(tmp_path, retention, peer, framing):
+    peer[0].extend([response(framing=framing)] * 6)
+    rows = run_retained(tmp_path, retention, request(), max_elapsed_s=5)
+    assert all(row.state == "completed" for row in rows)
+    assert journal(tmp_path)[0]["max_elapsed_s"] == 5
+    assert len(peer[1]) == 6
+
+
+def test_elapsed_during_durable_reservation_sends_nothing(tmp_path, retention, peer, monkeypatch):
+    now = 100.0
+    append = smoke_runner._append
+
+    def persist(stream, event):
+        nonlocal now
+        append(stream, event)
+        if event["event"] == "reserved":
+            now += 2
+
+    monkeypatch.setattr(smoke_deadline.time, "monotonic", lambda: now)
+    monkeypatch.setattr(smoke_runner, "_append", persist)
+    with pytest.raises(smoke_deadline.SmokeDeadlineExpired, match="smoke_deadline_exceeded"):
+        run_retained(tmp_path, retention, request(), max_elapsed_s=1)
+    assert [event["event"] for event in journal(tmp_path)] == ["started", "reserved"]
+    assert not peer[1]
+    with pytest.raises(InputError, match="already-started"):
+        run_retained(tmp_path, retention, request(), max_elapsed_s=1)
+    assert not peer[1]
+
+
+def test_late_connection_sends_no_http_bytes(tmp_path, retention, peer, monkeypatch):
+    now = 100.0
+    connect = http.client.HTTPSConnection.connect
+    peer[0].append(b"")
+
+    def slow_connect(connection):
+        nonlocal now
+        connect(connection)
+        now += 2
+
+    monkeypatch.setattr(smoke_deadline.time, "monotonic", lambda: now)
+    monkeypatch.setattr(http.client.HTTPSConnection, "connect", slow_connect)
+    with pytest.raises(smoke_deadline.SmokeDeadlineExpired):
+        run_retained(tmp_path, retention, request(), max_elapsed_s=1)
+    assert len(peer[1]) == 1 and peer[1][0].recv(8192) == b""
+    assert journal(tmp_path)[-1]["state"] == "unknown_outcome"
+
+
+def test_fast_individual_reads_cannot_extend_elapsed_budget(tmp_path, retention, peer, monkeypatch):
+    now = 100.0
+    connect = http.client.HTTPSConnection.connect
+    wire = response()
+    body_offset = wire.index(b"\r\n\r\n") + 4
+    peer[0].extend([wire, response()])
+
+    class DripSocket:
+        def __init__(self, sock):
+            self.sock = sock
+            self.timeouts = []
+            self.sent = bytearray()
+
+        def sendall(self, data):
+            self.sock.sendall(data)
+            self.sent.extend(data)
+
+        def __getattr__(self, name):
+            return getattr(self.sock, name)
+
+        def settimeout(self, timeout):
+            self.timeouts.append(timeout)
+            self.sock.settimeout(timeout)
+
+        def makefile(self, *args, **kwargs):
+            raw = self.sock.makefile(*args, **kwargs)
+            remaining_header = body_offset
+
+            class Drip:
+                def readinto(self, buffer):
+                    nonlocal now, remaining_header
+                    if remaining_header:
+                        count = raw.readinto(memoryview(buffer)[:remaining_header])
+                        remaining_header -= count
+                        return count
+                    count = raw.readinto(memoryview(buffer)[:8])
+                    if count:
+                        now += 0.125
+                    return count
+
+                def close(self):
+                    raw.close()
+
+            return Drip()
+
+    drips = []
+
+    def connect_with_drips(connection):
+        connect(connection)
+        connection.sock = DripSocket(connection.sock)
+        drips.append(connection.sock)
+
+    monkeypatch.setattr(smoke_deadline.time, "monotonic", lambda: now)
+    monkeypatch.setattr(http.client.HTTPSConnection, "connect", connect_with_drips)
+    with pytest.raises(smoke_deadline.SmokeDeadlineExpired):
+        run_retained(tmp_path, retention, request(), max_elapsed_s=0.5)
+    assert len(drips) == 1
+    assert drips[0].timeouts[-3:] == [0.375, 0.25, 0.125]
+    start, reserved = journal(tmp_path)
+    assert reserved["state"] == "unknown_outcome"
+    headers, body = bytes(drips[0].sent).split(b"\r\n\r\n", 1)
+    assert body == request()
+    assert b"X-Client-Request-Id: " + reserved["client_request_id"].encode() in headers
+    assert not (retention / start["artifact_namespace"] / "01-response.json").exists()
+    with pytest.raises(InputError, match="already-started"):
+        run_retained(tmp_path, retention, request(), max_elapsed_s=0.5)
+    assert len(peer[1]) == 1 and len(peer[0]) == 1
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, float("nan"), float("inf"), 3601])
+def test_invalid_elapsed_budget_does_not_start(tmp_path, retention, peer, value):
+    with pytest.raises(InputError, match="smoke_run.max_elapsed_s"):
+        run_retained(tmp_path, retention, request(), max_elapsed_s=value)
+    assert not list(tmp_path.glob("*.jsonl")) and not peer[1]
+
+
+def test_slow_terminal_write_preserves_receipt_but_blocks_next_post(
+    tmp_path, retention, peer, monkeypatch
+):
+    now = 100.0
+    append = smoke_runner._append
+    peer[0].extend([response(), response()])
+
+    def persist(stream, event):
+        nonlocal now
+        append(stream, event)
+        if event["event"] == "finished":
+            now += 2
+
+    monkeypatch.setattr(smoke_deadline.time, "monotonic", lambda: now)
+    monkeypatch.setattr(smoke_runner, "_append", persist)
+    with pytest.raises(smoke_deadline.SmokeDeadlineExpired):
+        run_retained(tmp_path, retention, request(), max_elapsed_s=1)
+    done = journal(tmp_path)[-1]
+    assert done["state"] == "completed"
+    assert done["response_artifact"]["sha256"] == done["wire"]["response_sha256"]
+    assert len(peer[1]) == len(peer[0]) == 1

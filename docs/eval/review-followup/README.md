@@ -274,7 +274,9 @@ has a fresh HTTP connection and one POST; there is no SDK, application proxy,
 redirect handling, retry, context repair, continuation, or fallback. All
 bodies must pass preflight before reservation: one pinned model, plain text
 messages, no streaming or tools, and one explicit bounded output-token limit.
-The timeout is for blocking socket operations, not a whole-run deadline.
+The socket timeout is an idle/operation limit. Use a separate
+`max_elapsed_s` (direct transport only, in seconds, greater than zero and
+at most 3,600) for a live run's elapsed budget.
 
 The durable journal binds the connection policy to the slot digests and
 saves a per-attempt client correlation ID before the POST. It records the
@@ -323,6 +325,19 @@ the sanitized wire receipt, available usage, and no response artifact
 reference. It stops without sending the next slot. If the terminal journal
 event cannot be made durable, no terminal state is exposed. Neither failure
 allows resume or reuse.
+
+The optional elapsed budget starts before preflight, uses a monotonic clock,
+and is pinned in the start journal event. It checks time again after durable
+reservation and before HTTP sends, and shrinks the timeout on each raw
+socket read, so progress just inside an idle timeout cannot prolong a run
+indefinitely. Expiry stops admission and cannot authorize a resend. If a
+reserved exchange expires before a full reply, its durable reservation
+remains unknown; a reply already obtained may still finish its local
+receipt after the budget, but no subsequent request may start. This is not
+a hard process return deadline: blocking DNS, TLS/connect setup, filesystem
+flushes or scheduler delays can return late. Late connect cannot start a
+POST. Use a separately qualified outer supervisor if a hard return bound
+is required.
 
 The manual offline suite drives the real HTTP serializer/parser over a
 socketpair and does not open a network connection or perform TLS. This
