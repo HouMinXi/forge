@@ -263,3 +263,34 @@ Every sender invocation must itself be single-attempt; the orchestrator
 cannot observe retries hidden inside its caller's transport. The repo
 does not provide a live transport here. The live enablement, pinned route,
 usage attribution and spending decision remain separate.
+
+### Single-request HTTPS transport: offline qualification only
+
+`DirectSmokeTransport` is an explicit library transport for the smoke runner,
+not a CLI flag, production reviewer, or live-run approval. It posts the
+already frozen body bytes to one named HTTPS host on port 443 at
+`/v1/chat/completions`, using certificate and hostname verification. Each slot
+has a fresh HTTP connection and one POST; there is no SDK, application proxy,
+redirect handling, retry, context repair, continuation, or fallback. All
+bodies must pass preflight before reservation: one pinned model, plain text
+messages, no streaming or tools, and one explicit bounded output-token limit.
+The timeout is for blocking socket operations, not a whole-run deadline.
+
+The durable journal binds the connection policy to the slot digests and
+saves a per-attempt client correlation ID before the POST. It records the
+HTTP status, available response and server request-ID digests, matching
+reported model, and provider-reported input, cached input and output token
+counts. Sending a client ID does not prove a provider forwarded or recorded it.
+Absent or invalid counts stay unknown; a real zero remains zero. The journal
+does not contain keys, headers, prompts, reply text, or price estimates.
+A non-accepted result stops the run with later slots untouched. If the reply
+cannot be obtained in full because of a timeout or connection failure, the
+reserved attempt stays unknown and the run cannot be resumed.
+
+The manual offline suite drives the real HTTP serializer/parser over a
+socketpair and does not open a network connection or perform TLS. This
+qualifies the client boundary only. The model echo is not provider or billing
+attribution. Before an approved live smoke, separately pin and verify the
+upstream and billing account, cap enforcement, actual elapsed-time budget,
+and private retention of the frozen request bodies and the needed response
+artifacts. No real model was called by these tests.
