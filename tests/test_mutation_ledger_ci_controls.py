@@ -2516,6 +2516,29 @@ def test_no_adapter_skip_needs_a_captured_guard():
 
     assert _clean_mutation_skip_kind(no_adapter, [], evidence, source_unchanged=None) is None
     assert _clean_mutation_skip_kind(no_adapter, [], evidence, source_unchanged=True) == "not-applicable"
+    # A frozen subject lets the document policy decide; product paths still fail.
+    assert (
+        _clean_mutation_skip_kind(
+            no_adapter,
+            [],
+            evidence,
+            source_unchanged=None,
+            diff_paths=["docs/guide.md"],
+            has_subject_tree=True,
+        )
+        == "not-applicable"
+    )
+    assert (
+        _clean_mutation_skip_kind(
+            no_adapter,
+            [],
+            evidence,
+            source_unchanged=None,
+            diff_paths=["src/app.py"],
+            has_subject_tree=True,
+        )
+        is None
+    )
     proven = ["tests/test_sample.py"]
     assert (
         _clean_mutation_skip_kind(tests_only, [], evidence, source_unchanged=None, diff_paths=proven)
@@ -2560,6 +2583,102 @@ def test_missing_mutmut_factory_does_not_claim_the_docs_exemption(ci_project):
     assert machine._mutation_bound_failure is False
     assert machine._mutation_not_applicable is False
     assert not any("docs-only" in line for line in machine._state.infra_errors)
+
+
+def _guardless_doc_machine(p, kind, body, mode_bits):
+    doc = p.root / "README.md"
+    doc.write_text(body, encoding="utf-8")
+    doc.chmod(mode_bits)
+    _git(p.root, "add", "README.md")
+    base = _git(p.root, "rev-parse", "HEAD")
+    if kind == "commit":
+        _git(
+            p.root,
+            "-c",
+            "user.name=CI Control",
+            "-c",
+            "user.email=ci-control@example.invalid",
+            "commit",
+            "-qm",
+            "document subject",
+        )
+        head = _git(p.root, "rev-parse", "HEAD")
+    else:
+        head = "INDEX"
+    review = resolve_baseline(GitRefBaseline(base), GitRefBaseline(head), [Path("README.md")], p.root)
+    return review, machine_for(p, review)
+
+
+def machine_for(p, review):
+    return _machine(p, runner=mutation.run_mutation, review=review)
+
+
+@pytest.mark.parametrize("review_kind", ["index", "commit"])
+def test_guardless_docs_read_the_frozen_subject(ci_project, review_kind):
+    """An executable reviewed document is rejected even when its working copy
+    looks harmless: applicability is read from the pinned tree."""
+    p = ci_project
+    review, machine = _guardless_doc_machine(p, review_kind, "#!/bin/sh\nprintf EXECUTABLE\n", 0o755)
+    (p.root / "README.md").write_text("# harmless working copy\n", encoding="utf-8")
+    (p.root / "README.md").chmod(0o644)
+
+    machine._run_l2_phase()
+
+    assert review.subject_tree is not None
+    assert machine._mutation_not_applicable is False
+    assert machine._mutation_bound_failure is True
+
+
+@pytest.mark.parametrize("review_kind", ["index", "commit"])
+def test_guardless_docs_accept_a_plain_document(ci_project, review_kind):
+    p = ci_project
+    review, machine = _guardless_doc_machine(p, review_kind, "# Plain document\n", 0o644)
+
+    machine._run_l2_phase()
+
+    assert machine._mutation_not_applicable is True
+    assert machine._mutation_bound_failure is False
+    assert "L2: mutation not applicable (docs-only diff): README.md" in machine._state.infra_errors
+
+
+def test_guardless_docs_ignore_a_later_index_change(ci_project):
+    """The tree is captured with the diff; rewriting the index afterwards does
+    not change what the review decides about."""
+    p = ci_project
+    review, machine = _guardless_doc_machine(p, "index", "#!/bin/sh\nprintf EXECUTABLE\n", 0o755)
+    (p.root / "README.md").write_text("# harmless\n", encoding="utf-8")
+    _git(p.root, "add", "README.md")
+
+    machine._run_l2_phase()
+
+    assert machine._mutation_bound_failure is True
+    assert machine._mutation_not_applicable is False
+
+
+def test_guardless_docs_need_a_subject_tree(ci_project):
+    """An index that cannot be written as a tree (unmerged entries) is not an
+    exemption."""
+    p = ci_project
+    doc = p.root / "README.md"
+    doc.write_text("# plain\n", encoding="utf-8")
+    _git(p.root, "add", "README.md")
+    blob = _git(p.root, "rev-parse", ":README.md")
+    subprocess.run(
+        ["git", "update-index", "--index-info"],
+        cwd=p.root,
+        input=f"100644 {blob} 2\tREADME.md\n",
+        text=True,
+        check=True,
+    )
+    base = _git(p.root, "rev-parse", "HEAD")
+    review = resolve_baseline(GitRefBaseline(base), GitRefBaseline("INDEX"), [Path("README.md")], p.root)
+    machine = machine_for(p, review)
+
+    machine._run_l2_phase()
+
+    assert review.subject_tree is None
+    assert machine._mutation_bound_failure is True
+    assert machine._mutation_not_applicable is False
 
 
 def test_other_adapter_note_does_not_extend_the_applicability_pair():

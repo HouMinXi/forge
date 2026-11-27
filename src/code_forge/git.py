@@ -200,6 +200,38 @@ def resolve_git_ref(ref: str, cwd: Path) -> str:
     return result.stdout.strip()
 
 
+def write_tree(cwd: Path) -> str | None:
+    """Tree object for the current index, or None when it is not fully merged."""
+    result = subprocess.run(
+        ["git", "--no-replace-objects", "write-tree"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def tree_of(ref: str, cwd: Path) -> str | None:
+    """Tree object a commit expression points at, or None."""
+    result = subprocess.run(
+        ["git", "--no-replace-objects", "rev-parse", "--verify", ref + "^{tree}"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def _is_likely_binary(path: Path) -> bool:
     """H2 fix: heuristic binary detection via null-byte in first 8KB.
 

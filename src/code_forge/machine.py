@@ -390,6 +390,20 @@ def _guardless_tests_only(diff_paths) -> bool:
     return _default_tests_only(raw_paths)
 
 
+def _guardless_docs_scope(diff_paths) -> bool:
+    """Lexical half of the document exemption: every diff path is allowlisted."""
+    paths = [str(raw) for raw in (diff_paths or ())]
+    if not paths:
+        return False
+    if any("\\" in text for text in paths):
+        return False
+    for text in paths:
+        rel = _normalized_rel(text)
+        if rel is None or not _docs_path_allowed(rel):
+            return False
+    return True
+
+
 def _clean_mutation_skip_kind(
     findings: list,
     infra: list[str],
@@ -397,6 +411,7 @@ def _clean_mutation_skip_kind(
     *,
     source_unchanged: bool | None,
     diff_paths=None,
+    has_subject_tree: bool = False,
 ) -> str | None:
     """Classify a native carrier that measured nothing, or return None.
 
@@ -461,13 +476,12 @@ def _clean_mutation_skip_kind(
             # Guard unavailable, invalid, or changed: the skip claims no
             # measurement, but nothing proves it stayed that way.
             return None
-        if source_unchanged is None and (
-            "mutation-no-adapter" in kinds or not _guardless_tests_only(diff_paths)
+        if source_unchanged is None and not (
+            _guardless_tests_only(diff_paths) or (has_subject_tree and _guardless_docs_scope(diff_paths))
         ):
-            # A review that cannot carry the guard may only excuse the captured
-            # diff that proves it holds no product code. "No adapter covers
-            # this", an unproven path list and a widened scope all still need
-            # the captured guard.
+            # A review that cannot carry the guard may only excuse a captured
+            # diff that proves it holds no product code, or a document-scoped
+            # diff whose frozen subject the policy will verify.
             return None
         ok = list(infra) == [] and not mutant_phase and inventory == {}
         return "not-applicable" if ok else None
@@ -624,9 +638,71 @@ def _diff_paths(git_diff: str) -> set[str]:
     return paths
 
 
-def _docs_only_files(paths: list[str], root, diff_paths=()) -> bool:
+def _tree_entry(root, tree: str, rel: str) -> tuple[int, bytes] | None:
+    """Mode and bytes of ``rel`` in a frozen tree, or None unless exactly one
+    blob matches that literal path."""
+    import subprocess
+    from pathlib import Path
+
+    root_path = Path(root)
+    try:
+        out = subprocess.run(
+            ["git", "--no-replace-objects", "ls-tree", "-z", tree, "--", f":(literal){rel}"],
+            cwd=str(root_path),
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        rows = [row for row in out.stdout.split(b"\0") if row.strip()]
+        if out.returncode != 0 or len(rows) != 1:
+            return None
+        fields, _, path = rows[0].partition(b"\t")
+        parts = fields.split()
+        if len(parts) != 3 or parts[1] != b"blob" or path.decode("utf-8", "replace") != rel:
+            return None
+        mode = int(parts[0], 8)
+        blob = subprocess.run(
+            ["git", "--no-replace-objects", "cat-file", "blob", parts[2].decode("ascii")],
+            cwd=str(root_path),
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if blob.returncode != 0:
+        return None
+    return mode, blob.stdout
+
+
+def _tree_has_path(root, tree: str, rel: str) -> bool:
+    """True when the frozen tree holds an entry at exactly ``rel``."""
+    import subprocess
+    from pathlib import Path
+
+    try:
+        out = subprocess.run(
+            ["git", "--no-replace-objects", "ls-tree", "-z", tree, "--", f":(literal){rel}"],
+            cwd=str(Path(root)),
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return out.returncode == 0 and bool([r for r in out.stdout.split(b"\0") if r.strip()])
+
+
+def _docs_only_files(paths: list[str], root, diff_paths=(), post_image=None, has_path=None) -> bool:
     """True only if every changed path is on the docs allowlist and every
-    post-image is a regular, non-executable, readable, non-shebang file."""
+    post-image is a regular, non-executable, readable, non-shebang file.
+
+    ``post_image``/``has_path`` read a frozen review subject (INDEX or COMMIT
+    tree). Without them the working tree is the subject, which is only correct
+    for a WORKING review.
+    """
+    if post_image is not None:
+        return _frozen_docs_only(diff_paths, post_image, has_path)
     import os
     import stat
     from pathlib import Path
@@ -665,6 +741,36 @@ def _docs_only_files(paths: list[str], root, diff_paths=()) -> bool:
             return False
         if _classified_doc_rule(rel, info.st_mode, content) is None:
             return False
+    return True
+
+
+def _frozen_docs_only(diff_paths, post_image, has_path) -> bool:
+    """Document applicability read from a frozen tree, never the working copy."""
+    import stat
+    from pathlib import PurePosixPath
+
+    concretes: list[str] = []
+    for raw in sorted(diff_paths or ()):
+        rel = _normalized_rel(str(raw))
+        if rel is None or not _docs_path_allowed(rel):
+            return False
+        concretes.append(rel)
+    if not concretes:
+        return False
+    for rel in concretes:
+        image = post_image(rel)
+        if image is None:
+            return False
+        mode, content = image
+        if not stat.S_ISREG(mode):
+            return False
+        if _classified_doc_rule(rel, mode, content) is None:
+            return False
+        parts = PurePosixPath(rel).parts
+        for depth in range(1, len(parts)):
+            marker = "/".join(parts[:depth]) + "/__init__.py"
+            if has_path is not None and has_path(marker):
+                return False
     return True
 
 
@@ -3712,6 +3818,7 @@ class StateMachine:
                             self.resolved_review.target_kind, source_before, source_after
                         ),
                         diff_paths=self._review_diff_paths(),
+                        has_subject_tree=self.resolved_review.subject_tree is not None,
                     )
                     if kind is None:
                         self._mutation_bound_failure = True
@@ -3809,11 +3916,31 @@ class StateMachine:
         """#127/#132: decide whether a measured-nothing "does not apply" skip
         is clean. Always leaves a visible infra line naming the files."""
         shown = ", ".join(sorted(diff_files)[:10]) + (" ..." if len(diff_files) > 10 else "")
+        subject_tree = self.resolved_review.subject_tree
+        root = self._source_root()
+
+        def post_image(rel: str):
+            return _tree_entry(root, subject_tree, rel) if subject_tree else None
+
+        def has_path(rel: str) -> bool:
+            return _tree_has_path(root, subject_tree, rel) if subject_tree else True
+
         if self.resolved_review.target_kind != WORKING:
-            # A guardless review has no frozen subject proof beyond the diff
-            # itself, so only a diff that is tests-only may pass here.
-            clean = _guardless_tests_only(self._review_diff_paths())
-            why = "diff is tests-only" if clean else "no mutation adapter covers"
+            # A guardless review decides from its frozen subject: the captured
+            # diff for scope, the pinned tree for document content. A tree that
+            # cannot be produced is not an exemption.
+            scope_ok = _guardless_tests_only(self._review_diff_paths())
+            docs_ok = subject_tree is not None and _docs_only_files(
+                diff_files, root, self._review_diff_paths(), post_image=post_image, has_path=has_path
+            )
+            clean = scope_ok or docs_ok
+            why = (
+                "diff is tests-only"
+                if scope_ok
+                else "docs-only diff"
+                if docs_ok
+                else "no mutation adapter covers"
+            )
         elif linked := _symlinked_files(diff_files, self._source_root()):
             clean, why, shown = False, "symlinked files are not measured", ", ".join(linked)
         elif {f.fingerprint for f in findings} == {"mutation-tests-only"}:
