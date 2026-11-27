@@ -709,3 +709,59 @@ def test_slow_terminal_write_preserves_receipt_but_blocks_next_post(
     assert done["state"] == "completed"
     assert done["response_artifact"]["sha256"] == done["wire"]["response_sha256"]
     assert len(peer[1]) == len(peer[0]) == 1
+
+
+@pytest.mark.parametrize("framing", ["length", "chunked"])
+def test_elapsed_after_complete_read_preserves_usage_and_stops(
+    tmp_path, retention, peer, monkeypatch, framing
+):
+    now = 100.0
+    read = http.client.HTTPResponse.read
+    raw = json.dumps(OK).encode()
+    server_id = b"response-before-deadline"
+    peer[0].extend(
+        [response(raw, framing=framing, other=b"X-Request-Id: " + server_id + b"\r\n"), response()]
+    )
+
+    def read_then_tick(reply, *args, **kwargs):
+        nonlocal now
+        body = read(reply, *args, **kwargs)
+        assert body == raw
+        now += 2
+        return body
+
+    monkeypatch.setattr(smoke_deadline.time, "monotonic", lambda: now)
+    monkeypatch.setattr(http.client.HTTPResponse, "read", read_then_tick)
+    with pytest.raises(smoke_deadline.SmokeDeadlineExpired):
+        run_retained(tmp_path, retention, request(), max_elapsed_s=1)
+    start, reservation, terminal = journal(tmp_path)
+    assert terminal["attempt"] == reservation["attempt"] == 1
+    assert terminal["state"] == "completed"
+    wire = terminal["wire"]
+    assert (wire["input_tokens"], wire["cached_input_tokens"], wire["output_tokens"]) == (13, 0, 2)
+    assert wire["server_request_id_sha256"] == digest(server_id)
+    artifact = terminal["response_artifact"]
+    assert artifact["sha256"] == wire["response_sha256"] == digest(raw)
+    assert (retention / start["artifact_namespace"] / artifact["file"]).read_bytes() == raw
+    assert len(peer[1]) == len(peer[0]) == 1
+
+
+def test_elapsed_after_response_headers_preserves_known_status(tmp_path, retention, peer, monkeypatch):
+    now = 100.0
+    begin = http.client.HTTPResponse.begin
+    peer[0].extend([response(b"", status=429), response()])
+
+    def begin_then_tick(reply):
+        nonlocal now
+        begin(reply)
+        now += 2
+
+    monkeypatch.setattr(smoke_deadline.time, "monotonic", lambda: now)
+    monkeypatch.setattr(http.client.HTTPResponse, "begin", begin_then_tick)
+    rows = run_retained(tmp_path, retention, request(), max_elapsed_s=1)
+    assert [row.state for row in rows] == ["failed", *["not_started"] * 5]
+    terminal = journal(tmp_path)[-1]
+    assert terminal["wire"]["status"] == 429
+    assert terminal["wire"]["outcome"] == "http_status"
+    assert "response_artifact" not in terminal
+    assert len(peer[1]) == len(peer[0]) == 1

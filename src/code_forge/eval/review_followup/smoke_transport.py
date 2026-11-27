@@ -191,7 +191,7 @@ class DirectSmokeTransport:
                     },
                 )
                 with connection.getresponse() as response:
-                    receipt = self._read(response, cap, retain_reply, deadline)
+                    receipt = self._read(response, cap, retain_reply)
                     ids = response.headers.get_all("X-Request-Id", [])
                     if len(ids) == 1 and 0 < len(ids[0]) <= 512:
                         receipt = replace(
@@ -216,10 +216,9 @@ class DirectSmokeTransport:
         response: http.client.HTTPResponse,
         cap: int,
         retain_reply: Callable[[bytes], None] | None,
-        deadline: SmokeDeadline | None,
     ) -> WireReceipt:
-        if deadline is not None:
-            deadline.remaining()
+        # Raw socket reads already enforce the deadline. Once bytes have
+        # arrived in budget, finish parsing and accounting without rechecking.
         status = response.status
         if not 100 <= status <= 599:
             raise SmokeWireError("wire_protocol_unknown")
@@ -238,8 +237,6 @@ class DirectSmokeTransport:
         if response.length is not None and response.length > self.response_cap:
             return WireReceipt(status, "response_over_limit")
         raw = response.read(self.response_cap + 1)
-        if deadline is not None:
-            deadline.remaining()
         if len(raw) > self.response_cap:
             return WireReceipt(status, "response_over_limit")
         if not response.chunked and response.length != 0:
