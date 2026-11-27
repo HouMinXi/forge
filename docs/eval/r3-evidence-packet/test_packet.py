@@ -767,3 +767,17 @@ def test_an_out_of_range_number_is_refused_by_the_real_parser(tmp_path):
     packet.write_text("1" + "0" * 4300, encoding="utf-8")
     with pytest.raises(verifier["Refused"], match="^packet contains an unsupported JSON value$"):
         verifier["load"](packet)
+
+
+def test_a_packet_in_an_unsearchable_directory_is_refused(tmp_path):
+    verifier = runpy.run_path(str(VERIFY))
+    hidden = tmp_path / "hidden"
+    hidden.mkdir()
+    packet = hidden / "packet.json"
+    packet.write_text("{}", encoding="utf-8")
+    hidden.chmod(0)
+    try:
+        with pytest.raises(verifier["Refused"], match="^packet (cannot be read|is not a regular file)$"):
+            verifier["load"](packet)
+    finally:
+        hidden.chmod(0o755)
