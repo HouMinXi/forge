@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 import uuid
 from collections.abc import Callable
 from contextlib import ExitStack
@@ -12,6 +13,7 @@ from typing import BinaryIO
 from .attempt_plan import AttemptRow, PairedAttemptGate
 from .fixtures import InputError, digest, identifier, require
 from .smoke_artifacts import private_root, run_artifacts, store_payload
+from .smoke_deadline import SmokeDeadline
 from .smoke_transport import DirectSmokeTransport, WireReceipt
 
 
@@ -29,6 +31,7 @@ def run_smoke_once(
     request_bodies: tuple[bytes, ...],
     send_once: Callable[[bytes], bool | WireReceipt],
     artifact_dir: Path | None = None,
+    max_elapsed_s: float | None = None,
 ) -> tuple[AttemptRow, ...]:
     """Run a frozen pair in a trusted, pre-existing local POSIX directory.
 
@@ -44,6 +47,17 @@ def run_smoke_once(
     Opt-in artifact_dir retains request and accepted response bodies outside
     the journal. It is supported only by the direct transport.
     """
+    started_at = time.monotonic()
+    require(
+        max_elapsed_s is None
+        or (
+            type(send_once) is DirectSmokeTransport
+            and type(max_elapsed_s) in (int, float)
+            and 0 < max_elapsed_s <= 3600
+        ),
+        "smoke_run.max_elapsed_s",
+    )
+    deadline = SmokeDeadline(started_at + max_elapsed_s) if max_elapsed_s is not None else None
     require(identifier(run_id) and type(request_bodies) is tuple, "smoke_run")
     gate.check_bodies(request_bodies)
     policy = {}
@@ -59,6 +73,9 @@ def run_smoke_once(
             "response_cap": send_once.response_cap,
             "socket_timeout_s": send_once.timeout,
         }
+    if deadline is not None:
+        deadline.remaining()
+        policy["max_elapsed_s"] = max_elapsed_s
     slots = tuple(row.slot for row in gate.rows)
     marker = digest(run_id.encode("ascii")) + ".jsonl"
     with ExitStack() as resources:
@@ -89,6 +106,8 @@ def run_smoke_once(
                 resources.enter_context(run_artifacts(root, artifact_name)) if root is not None else None
             )
             for slot, body in zip(slots, request_bodies, strict=True):
+                if deadline is not None:
+                    deadline.remaining()
                 ticket = gate.reserve(slot.arm, slot.group, slot.pass_name, body)
                 reservation = {"event": "reserved", "attempt": ticket, "state": "unknown_outcome"}
                 response_artifact = None
@@ -106,10 +125,13 @@ def run_smoke_once(
                             artifacts, f"{ticket:02d}-request.json", body
                         )
                     _append(journal, reservation)
+                    if deadline is not None:
+                        deadline.remaining()
                     outcome = send_once.send(
                         body,
                         request_id=request_id,
                         retain_reply=retain_reply if artifacts is not None else None,
+                        deadline=deadline,
                     )
                 else:
                     _append(journal, reservation)

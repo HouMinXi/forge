@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from .fixtures import InputError, digest, parse, require
+from .smoke_deadline import DeadlineHTTPSConnection, SmokeDeadline, SmokeDeadlineExpired
 
 _HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", re.ASCII)
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", re.ASCII)
@@ -154,6 +155,7 @@ class DirectSmokeTransport:
         *,
         request_id: str | None = None,
         retain_reply: Callable[[bytes], None] | None = None,
+        deadline: SmokeDeadline | None = None,
     ) -> WireReceipt:
         require(
             request_id is None or (type(request_id) is str and bool(_REQUEST_ID.fullmatch(request_id))),
@@ -166,7 +168,14 @@ class DirectSmokeTransport:
             # opt this credential-bearing connection into TLS key logging.
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             context.load_default_certs()
-            connection = http.client.HTTPSConnection(self.host, timeout=self.timeout, context=context)
+            if deadline is None:
+                connection = http.client.HTTPSConnection(
+                    self.host, timeout=self.timeout, context=context
+                )
+            else:
+                connection = DeadlineHTTPSConnection(
+                    self.host, deadline=deadline, idle=self.timeout, context=context
+                )
             try:
                 connection.request(
                     "POST",
@@ -191,11 +200,15 @@ class DirectSmokeTransport:
                     return receipt
             finally:
                 connection.close()
+        except SmokeDeadlineExpired:
+            raise
         except TimeoutError:
             failure = "wire_timeout_unknown"
         except (OSError, http.client.HTTPException, ValueError):
             # Do not propagate server headers, low-level exceptions or secrets.
             pass
+        if failure == "wire_timeout_unknown" and deadline is not None:
+            deadline.remaining()
         raise SmokeWireError(failure)
 
     def _read(
@@ -204,6 +217,8 @@ class DirectSmokeTransport:
         cap: int,
         retain_reply: Callable[[bytes], None] | None,
     ) -> WireReceipt:
+        # Raw socket reads already enforce the deadline. Once bytes have
+        # arrived in budget, finish parsing and accounting without rechecking.
         status = response.status
         if not 100 <= status <= 599:
             raise SmokeWireError("wire_protocol_unknown")
