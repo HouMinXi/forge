@@ -193,10 +193,11 @@ class TruncationBreakerError(LLMInvokeError):
     def __init__(self, count, threshold):
         super().__init__(
             "backend hit %d truncations (>=%d) this run; review output "
-            "keeps hitting the provider cap, which the backend may "
-            "already clamp below the configured ceiling. Raise "
-            "output_ceiling only if the configured cap is the limit; "
-            "otherwise switch backends." % (count, threshold),
+            "keeps reaching its length limit -- either the provider cap, or "
+            "the budget a reasoning loop burns before writing an answer. "
+            "Raise output_ceiling only if the configured cap is the limit; "
+            "if replies come back empty after spending the budget on "
+            "reasoning, lower reasoning_effort or thinking_budget instead." % (count, threshold),
             kind="truncated",
             retryable=False,
         )
@@ -291,6 +292,120 @@ def _observed_usage(usage_data: dict, api_format: str) -> Usage:
         *(value if known else 0 for value, known in zip(counts, valid, strict=True)),
         known_fields=frozenset(name for name, known in zip(_USAGE_FIELDS, valid, strict=True) if known),
     )
+
+
+def _whole_token_count(value):
+    """A provider token count as a whole number, or None when it is not one.
+
+    Fractional and non-finite JSON numbers still satisfy isinstance(...,
+    (int, float)), but the accounting helpers accept only ints: passing
+    65536.0 through would record a known zero for tokens that were really
+    spent. The message keeps the wire value; the books need a whole number.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        return int(value)
+    return value
+
+
+_ZERO_WIDTH_CHARS = "\u200b\u200c\u200d\u2060\ufeff"
+
+
+def _has_answer_text(content) -> bool:
+    """True when the reply carries something a reader could see.
+
+    Whitespace alone is not an answer, and neither is a run of zero-width
+    characters: a reasoning loop can emit those and still hold the cap. A
+    non-string delta never counts as text either.
+    """
+    if not isinstance(content, str):
+        return False
+    return bool(content.strip().strip(_ZERO_WIDTH_CHARS).strip())
+
+
+def _reported_reasoning_tokens(usage_data: dict):
+    """The reasoning-token count a response actually reported, or None.
+
+    Only a detail object that names the count counts as evidence. An absent
+    field means the provider said nothing about reasoning, and a value that is
+    not a whole number is not a count.
+    """
+    if not isinstance(usage_data, dict):
+        return None
+    details = usage_data.get("completion_tokens_details")
+    if not isinstance(details, dict) or "reasoning_tokens" not in details:
+        return None
+    return _whole_token_count(details.get("reasoning_tokens"))
+
+
+def _whole_usage_counts(usage_data: dict) -> dict:
+    """Copy a usage dict with whole token counts the accounting helpers accept."""
+    if not isinstance(usage_data, dict):
+        return {}
+    normalized = dict(usage_data)
+    for key in ("prompt_tokens", "completion_tokens", "input_tokens", "output_tokens"):
+        whole = _whole_token_count(normalized.get(key))
+        if whole is not None:
+            normalized[key] = whole
+    return normalized
+
+
+class _CallLedger:
+    """Usage and runaway count for one invoke call, shared by every attempt.
+
+    Each observed reply is recorded once, by the code that saw it. An exit
+    reads the total back and never adds a reply of its own, so a reply cannot
+    be counted twice or dropped because one exit forgot to.
+    """
+
+    def __init__(self):
+        self.usage = None
+        self.runaways = 0
+
+    def add(self, usage):
+        if usage is None:
+            return
+        self.usage = usage if self.usage is None else _sum_usage(self.usage, usage)
+
+    def note_runaway(self):
+        self.runaways += 1
+        return self.runaways
+
+    def finish(self, error, *, final):
+        """Put the call's recorded total on ``error`` and return it."""
+        if self.usage is not None:
+            error.observed_usage = self.usage
+            error.usage = (
+                self.usage if {"input_tokens", "output_tokens"} <= self.usage.known_fields else None
+            )
+        if final:
+            error.retryable = False
+        return error
+
+
+def _with_recorded_usage(error, recorded):
+    """Carry usage recorded earlier in this call onto an error that leaves it.
+
+    A reply already folded into ``recorded`` is not added again: summing an
+    error into a total that contains it counts that reply twice. A count no
+    reply reported stays unknown, because summing into an empty Usage turns it
+    into a known zero. The error's class, message and retry flag are kept.
+    """
+    if recorded is None:
+        return error
+    current = error.observed_usage
+    if current is None or getattr(error, "reasoning_runaway", False):
+        # A runaway reply was recorded into ``recorded`` before this settle,
+        # and the error carries that same reply. Adding it again doubles it.
+        total = recorded
+    else:
+        total = _sum_usage(recorded, current)
+    error.observed_usage = total
+    error.usage = total if {"input_tokens", "output_tokens"} <= total.known_fields else None
+    return error
 
 
 def _response_error_usage(usage_data: dict, api_format: str) -> Usage | None:
@@ -1011,7 +1126,9 @@ def _assemble_sse(response, deadline=None, backend_name="", *, _on_done=None, po
             delta = choice.get("delta", {})
             if isinstance(delta.get("refusal"), str) and delta["refusal"]:
                 refusal_seen = True
-            if delta.get("content"):
+            # OpenAI's content delta is a string; a truthy non-string would
+            # crash the join that assembles the reply.
+            if isinstance(delta.get("content"), str) and delta["content"]:
                 if not first_emitted:
                     first_emitted = True
                     progress.emit("backend %s: first token" % backend_name)
@@ -3926,6 +4043,7 @@ def _continue_truncated(
     strict_response: bool = False,
     *,
     _audit_scope=None,
+    ledger=None,
 ):
     """Recover a truncated reply with a bounded continuation.
 
@@ -3942,11 +4060,14 @@ def _continue_truncated(
     """
     last_failure = ""
     observed = _observed_usage(truncated.usage_data, backend.format)
+    if ledger is not None:
+        ledger.add(observed)
 
     def exhausted():
         error = _exhaustion_error(budget, last_failure)
-        error.observed_usage = observed
-        error.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
+        total = ledger.usage if ledger is not None and ledger.usage is not None else observed
+        error.observed_usage = total
+        error.usage = total if {"input_tokens", "output_tokens"} <= total.known_fields else None
         return error
 
     try:
@@ -3972,7 +4093,8 @@ def _continue_truncated(
             "",
         ).replace("<partial>", "")[-2000:]
         prompt_c = CONTINUE_PROMPT % tail
-        for _attempt in range(budget):
+        _attempt = 0
+        while _attempt < budget:
             # A trip recorded by another worker between attempts stops
             # this call's remaining attempts before the next dispatch.
             if breaker is not None:
@@ -4013,30 +4135,62 @@ def _continue_truncated(
             except ProviderRefusalError as exc:
                 if _strict_send_audit_failed(_audit_scope):
                     raise
-                exc._add_prior_usage(observed)
+                # Leave the refusal's own usage on it. The caller holds the
+                # call ledger and adds what came before, so adding it here
+                # would count the continuation's replies twice.
+                if ledger is None:
+                    exc._add_prior_usage(observed)
                 raise
-            except _TruncatedResponse as exc:
-                if _strict_send_audit_failed(_audit_scope):
-                    raise
-                observed = _sum_usage(observed, _observed_usage(exc.usage_data, backend.format))
-                # A truncated continuation is a failed attempt, and the
-                # event still counts. A trip raised here leaves the
-                # inner try and reaches the outer clauses below.
-                last_failure = " ".join(str(exc).split())[:400]
-                if breaker is not None:
-                    breaker.record_truncation()
-                continue
             except (AuditPersistenceError, SendDeadlineError):
                 raise
             except LLMInvokeError as exc:
                 if _strict_send_audit_failed(_audit_scope):
                     raise
-                observed = _sum_usage(
-                    observed,
+                # A reasoning runaway is a _TruncatedResponse, so it has to be
+                # counted here, before the truncation branch treats it as one
+                # more cut reply and sends another continuation.
+                if getattr(exc, "reasoning_runaway", False):
+                    if ledger is not None and not getattr(exc, "ledger_recorded", False):
+                        ledger.add(exc.observed_usage)
+                        ledger.note_runaway()
+                        exc.ledger_recorded = True
+                    observed = _sum_usage(
+                        observed,
+                        exc.observed_usage
+                        if exc.observed_usage is not None
+                        else Usage(known_fields=frozenset()),
+                    )
+                    # The same call-wide cap as the outer retry: one runaway
+                    # may be followed, a second one stops.
+                    if ledger is not None and ledger.runaways >= 2:
+                        raise
+                    _attempt += 1
+                    # One runaway does not end the continuation, and it is not
+                    # a truncated reply to keep cutting. It does spend one of
+                    # this continuation's attempts, the same as any reply that
+                    # did not finish the answer.
+                    continue
+                if isinstance(exc, _TruncatedResponse):
+                    step = _observed_usage(exc.usage_data, backend.format)
+                    observed = _sum_usage(observed, step)
+                    if ledger is not None:
+                        ledger.add(step)
+                    # A truncated continuation is a failed attempt, and the
+                    # event still counts. A trip raised here leaves the
+                    # inner try and reaches the outer clauses below.
+                    last_failure = " ".join(str(exc).split())[:400]
+                    if breaker is not None:
+                        breaker.record_truncation()
+                    _attempt += 1
+                    continue
+                step = (
                     exc.observed_usage
                     if exc.observed_usage is not None
-                    else Usage(known_fields=frozenset()),
+                    else Usage(known_fields=frozenset())
                 )
+                observed = _sum_usage(observed, step)
+                if ledger is not None:
+                    ledger.add(step)
                 # A non-truncation invoke error (HTTP status, timeout)
                 # is a failed attempt against this budget; it must not
                 # escape to the caller's max_attempts retry loop, which
@@ -4049,8 +4203,12 @@ def _continue_truncated(
                     _retry_cause(exc, audited=True) if _audit_scope is not None else str(exc),
                 )
                 last_failure = " ".join(str(exc).split())[:400]
+                _attempt += 1
                 continue
-            observed = _sum_usage(observed, _observed_usage(usage_c, backend.format))
+            step = _observed_usage(usage_c, backend.format)
+            observed = _sum_usage(observed, step)
+            if ledger is not None:
+                ledger.add(step)
             if not isinstance(cont, str):
                 cont = ""
             parsed = _continued_reply(
@@ -4058,12 +4216,16 @@ def _continue_truncated(
             )
             if isinstance(parsed, str):
                 last_failure = parsed
+                _attempt += 1
                 continue
             return parsed, observed
+        _attempt += 1
     except TruncationBreakerError as exc:
         if _strict_send_audit_failed(_audit_scope):
             raise
         # Retain this invocation's observations, not the run-wide event count.
+        if ledger is not None and ledger.usage is not None:
+            observed = ledger.usage
         exc.observed_usage = observed
         exc.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
         raise
@@ -4071,6 +4233,10 @@ def _continue_truncated(
         raise
     except LLMInvokeError as exc:
         if _strict_send_audit_failed(_audit_scope):
+            raise
+        # A second reasoning runaway is a decision, not a failed attempt: the
+        # per-attempt handler already counted it and attached the usage.
+        if getattr(exc, "reasoning_runaway", False):
             raise
         # Defensive: per-attempt handling above covers every invoke
         # error a continuation request can raise. Anything that still
@@ -4148,6 +4314,7 @@ def _retry_with_more_headroom(
     *,
     on_failure_usage: Callable[[Usage], None] | None = None,
     _audit_scope=None,
+    ledger=None,
 ):
     """Re-ask for the whole answer with a wider output cap.
 
@@ -4212,13 +4379,26 @@ def _retry_with_more_headroom(
             raise
         if isinstance(exc, ProviderRefusalError):
             raise
+        if getattr(exc, "reasoning_runaway", False):
+            # Record once and stop when this call has now seen two. The
+            # caller's loop reads the same ledger, so it will not record it
+            # again or keep sending.
+            if ledger is not None and not getattr(exc, "ledger_recorded", False):
+                ledger.add(exc.observed_usage)
+                ledger.note_runaway()
+                exc.ledger_recorded = True
+            if ledger is not None and ledger.runaways >= 2:
+                raise ledger.finish(exc, final=True) from None
         if on_failure_usage is not None:
             observed = (
                 _observed_usage(exc.usage_data, backend.format)
                 if isinstance(exc, _TruncatedResponse)
                 else exc.observed_usage
             )
-            on_failure_usage(observed if observed is not None else Usage(known_fields=frozenset()))
+            reported = observed if observed is not None else Usage(known_fields=frozenset())
+            # Report only. The caller's callback records the reply into the
+            # shared ledger; recording it here too would count it twice.
+            on_failure_usage(reported)
         logging.getLogger("code_forge").warning(
             "wider retry failed: %s: %s",
             "LLMInvokeError" if _audit_scope is not None else type(exc).__name__,
@@ -4321,6 +4501,7 @@ def _invoke_api(
     # Inner try catches TimeoutError (socket.timeout alias on Python 3.12+).
     # Outer except catches LLMInvokeError from both the format dispatch and
     # the converted TimeoutError, applying retry logic.
+    ledger = _CallLedger()
     for attempt in range(max_attempts):
         # Fail fast before any network call once the run-level breaker
         # has tripped: further passes would only repeat the same
@@ -4373,10 +4554,12 @@ def _invoke_api(
                 # three extraction sites converge here, inside the retry
                 # loop, so one check covers them and a transient empty
                 # response gets retried instead of ending the run.  A capped
-                # response never reaches this point: each per-format helper
-                # detects its own truncation signal and raises before it
-                # returns, so finish_reason=length still surfaces with the
-                # advice to raise output_ceiling.  Cost of retrying: a
+                # response that carries text never reaches this point: each
+                # per-format helper raises on its own truncation signal.  A
+                # capped reply with no text at all does raise earlier too --
+                # as a runaway when the whole budget went to reasoning, or as
+                # the capacity errors when nothing was spent.  Cost of
+                # retrying: a
                 # backend that returns null on every call resubmits the
                 # whole prompt max_attempts times before failing.  That is
                 # the price of recovering the intermittent case, which is
@@ -4485,8 +4668,11 @@ def _invoke_api(
                 correction_usage = exc.observed_usage
                 if isinstance(exc, _TruncatedResponse):
                     correction_usage = _observed_usage(exc.usage_data, backend.format)
+                base = initial_syntax_usage
+                if ledger.usage is not None:
+                    base = _sum_usage(ledger.usage, base)
                 observed = _sum_usage(
-                    initial_syntax_usage,
+                    base,
                     correction_usage
                     if correction_usage is not None
                     else Usage(known_fields=frozenset()),
@@ -4525,12 +4711,17 @@ def _invoke_api(
                         reply_keys=reply_keys,
                         strict_response=strict_response,
                         **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
+                        ledger=ledger,
                     )
-                except TruncationBreakerError:
-                    raise
+                except TruncationBreakerError as tripped:
+                    raise ledger.finish(tripped, final=True) from None
                 except ProviderRefusalError as refused:
                     if _strict_send_audit_failed(_audit_scope):
                         raise
+                    # The refusal carries only its own reply. The ledger holds
+                    # every reply before it, each recorded once.
+                    if ledger.usage is not None:
+                        refused._add_prior_usage(ledger.usage)
                     refused.duration_s = time.monotonic() - start
                     raise
                 except (AuditPersistenceError, SendDeadlineError):
@@ -4538,10 +4729,20 @@ def _invoke_api(
                 except LLMInvokeError as spent:
                     if _strict_send_audit_failed(_audit_scope):
                         raise
+                    # A second runaway raised by the continuation already
+                    # carries the call's recorded total. Settling it again
+                    # below would replace that total with the first reply.
+                    if getattr(spent, "usage_complete", False):
+                        spent.retryable = False
+                        raise
                     recovered = None
                     spent_error = spent
                 if recovered is not None:
                     parsed, usage = recovered
+                    # The continuation recorded every reply into the ledger as
+                    # it saw it, so the total is already there. Adding the
+                    # returned slice again would count it twice.
+                    usage = ledger.usage if ledger.usage is not None else usage
                     return LLMResult(
                         content=parsed,
                         usage=usage,
@@ -4561,15 +4762,16 @@ def _invoke_api(
                 def retain_wider_failure_usage(
                     observed: Usage, error: LLMInvokeError | None = spent_error
                 ) -> None:
+                    # The wider reply failed, so it never returns a result to
+                    # record. The ledger is the call's one record of it.
+                    ledger.add(observed)
                     if error is not None:
-                        prior = error.observed_usage
-                        total = _sum_usage(
-                            prior if prior is not None else Usage(known_fields=frozenset()),
-                            observed,
-                        )
-                        error.observed_usage = total
+                        error.observed_usage = ledger.usage
                         error.usage = (
-                            total if {"input_tokens", "output_tokens"} <= total.known_fields else None
+                            ledger.usage
+                            if ledger.usage is not None
+                            and {"input_tokens", "output_tokens"} <= ledger.usage.known_fields
+                            else None
                         )
 
                 wider = None
@@ -4585,25 +4787,25 @@ def _invoke_api(
                             strict_response=strict_response,
                             on_failure_usage=retain_wider_failure_usage,
                             **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
+                            ledger=ledger,
                         )
                     except ProviderRefusalError as refused:
                         if _strict_send_audit_failed(_audit_scope):
                             raise
-                        prior = (
-                            spent_error.observed_usage
-                            if spent_error is not None
-                            else _observed_usage(exc.usage_data, backend.format)
-                        )
-                        refused._add_prior_usage(
-                            prior if prior is not None else Usage(known_fields=frozenset())
-                        )
+                        # The ledger already holds every reply before this
+                        # refusal. Adding the spent error's usage on top
+                        # counts that history a second time.
+                        if ledger.usage is not None:
+                            refused._add_prior_usage(ledger.usage)
                         refused.duration_s = time.monotonic() - start
                         raise
                 if wider is not None:
                     parsed, usage = wider
-                    if spent_error is not None and spent_error.observed_usage is not None:
-                        # The spent budget already includes the initial cut reply.
-                        usage = _sum_usage(spent_error.observed_usage, usage)
+                    # The wider reply is the one piece not yet recorded. The
+                    # cut reply and anything before it are already in the
+                    # ledger, so only this reply is added.
+                    ledger.add(usage)
+                    usage = ledger.usage
                     return LLMResult(
                         content=parsed,
                         usage=usage,
@@ -4614,11 +4816,40 @@ def _invoke_api(
                     # Report the spent budget, not the last cut-off
                     # reply: the exhaustion message names every attempt
                     # and the reason each failed.
-                    raise spent_error from None
+                    raise ledger.finish(spent_error, final=True) from None
             cause = _retry_cause(exc, audited=_audit_scope is not None)
+            # One fresh reply after a reasoning loop is worth its cost: the
+            # same prompt that looped once answered on the next call. A second
+            # one in the same call is not -- that backend is going to burn a
+            # full output budget every time. The run-level breaker is left
+            # alone: it counts provider-cap truncations, and a reasoning loop
+            # is a different failure whose class must not become capacity.
+            if isinstance(exc, LLMInvokeError) and getattr(exc, "reasoning_runaway", False):
+                # Record each runaway reply once. A continuation that already
+                # recorded it marks the error, so the total is not doubled.
+                if not getattr(exc, "ledger_recorded", False):
+                    ledger.add(exc.observed_usage)
+                    ledger.note_runaway()
+                    exc.ledger_recorded = True
+                if ledger.runaways >= 2:
+                    raise ledger.finish(exc, final=True) from None
             if not exc.retryable or attempt == max_attempts - 1:
                 if attempt > 0 or (exc.retryable and max_attempts == 1):
                     _emit_retry_failed(backend.name, max_attempts, cause)
+                # A later attempt can fail without reporting usage of its own,
+                # like a 401. The tokens the earlier replies spent are still
+                # known, so the error that leaves this call carries them. A
+                # runaway raised inside the continuation already folded that
+                # total in, and this loop has not recorded the reply, so it
+                # passes through unchanged.
+                # The reply this error carries has not been recorded yet.
+                # Record it once, then read the total back, so a runaway
+                # followed by a refusal reports both and neither twice.
+                if not getattr(exc, "ledger_recorded", False):
+                    ledger.add(exc.observed_usage)
+                    exc.ledger_recorded = True
+                if ledger.usage is not None:
+                    exc = ledger.finish(exc, final=False)
                 raise
             delay = _retry_delay_s(attempt, initial_delay_s, exc.retry_after)
             # Carry the cause. Without it this line names a backend and a
@@ -4643,6 +4874,10 @@ def _invoke_api(
 
     if initial_syntax_usage is not None:
         usage = _sum_usage(initial_syntax_usage, usage)
+    if ledger.usage is not None:
+        # The reply that landed came after a reasoning runaway. Both requests
+        # spent tokens, and the result has to say so.
+        usage = _sum_usage(ledger.usage, usage)
     return LLMResult(content=parsed_content, usage=usage, duration_s=duration, raw_response=raw_content)
 
 
@@ -4913,11 +5148,73 @@ def _invoke_openai_impl(
     # Truncation detection: openai format uses finish_reason == "length"
     # when the response hit max_tokens / max_completion_tokens.  Same
     # pattern as the anthropic path (stop_reason == "max_tokens") and
-    # the sampling path (stopReason == "maxTokens") -- all three raise
-    # kind="truncated" so callers route them uniformly.
+    # the sampling path (stopReason == "maxTokens") -- the capacity
+    # shapes raise kind="truncated" so callers route them uniformly.
+    # The one exception is the runaway below: a reply that spent its
+    # whole budget without writing anything is kind="empty", because
+    # the truncated class is what callers fold into a capacity problem.
     if finish == "length":
-        in_tok = usage_data.get("prompt_tokens", "?")
-        out_tok = usage_data.get("completion_tokens", "?")
+        # usage is provider-controlled: a non-number (or a JSON boolean, which
+        # is an int in Python) would put arbitrary text into a message. Floats
+        # stay: some providers report counts as JSON numbers with a fraction.
+        in_raw = usage_data.get("prompt_tokens")
+        in_tok = in_raw if isinstance(in_raw, (int, float)) and not isinstance(in_raw, bool) else "?"
+        out_raw = usage_data.get("completion_tokens")
+        out_tok = out_raw if isinstance(out_raw, (int, float)) and not isinstance(out_raw, bool) else "?"
+        whole_usage = _whole_usage_counts(usage_data)
+        spent_in = _whole_token_count(usage_data.get("prompt_tokens"))
+        spent_out = _whole_token_count(usage_data.get("completion_tokens"))
+        chars = len(content) if isinstance(content, str) else 0
+        if (
+            not _has_answer_text(content)
+            and isinstance(resolved_cap, int)
+            and not isinstance(resolved_cap, bool)
+            and resolved_cap > 0
+            and spent_out is not None
+            and spent_out > 0
+            and (_reported_reasoning_tokens(usage_data) or 0) > 0
+        ):
+            # The cap was spent and no answer text came back, and the usage
+            # detail says reasoning tokens were spent. A larger cap buys more
+            # thinking, not an answer, so the "raise output_ceiling" advice
+            # would be wrong here. This is a plain error, not a
+            # _TruncatedResponse: the continuation path needs a partial object
+            # and there is none, while retryable lets the attempt loop draw a
+            # fresh reply -- the same prompt that looped once answers on the
+            # next call. Zero output tokens stays out of this branch: nothing
+            # was spent, so there is no runaway. An empty reply whose detail
+            # reports zero reasoning tokens, or names none, is only a
+            # truncation: output tokens alone do not prove a reasoning loop.
+            #
+            # kind is "empty" (a response that carried no usable text): the
+            # "truncated" class is what the host folds into a provider-capacity
+            # diagnosis, and this failure is precisely the case where raising
+            # the cap does not help.
+            runaway = LLMInvokeError(
+                "%s backend response truncated with no answer text "
+                "(finish_reason=length, input=%s, output=%s, cap=%s, chars=%d, "
+                "reasoning_tokens=%s). The response reports reasoning tokens "
+                "but not that they caused the empty reply; lowering "
+                "reasoning_effort or thinking_budget is worth trying."
+                % (
+                    backend.name,
+                    spent_in if spent_in is not None else "?",
+                    spent_out,
+                    resolved_cap,
+                    chars,
+                    _reported_reasoning_tokens(usage_data),
+                ),
+                exit_code=0,
+                kind="empty",
+                retryable=True,
+                usage=_response_error_usage(whole_usage, backend.format),
+                observed_usage=_observed_usage(whole_usage, backend.format),
+            )
+            # Marks this event for the retry loop, which allows one fresh
+            # reply and then stops. kind="empty" is shared with the
+            # pre-existing transient-empty path, which must not be capped.
+            runaway.reasoning_runaway = True
+            raise runaway
         # Name the limit that actually truncated, not the one in the
         # config. When output landed below the configured ceiling the
         # backend clamped on its own (a hard model/plan cap), so

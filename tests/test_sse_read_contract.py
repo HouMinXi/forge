@@ -163,3 +163,16 @@ def test_mid_stream_error_advice_and_retry_follow_backend_and_code(
     err = caught.value
     assert f"(code {code}). {advice}" in str(err)
     assert err.retryable is retryable
+
+
+@pytest.mark.parametrize("payload", [123, ["x"]])
+def test_non_string_content_delta_is_ignored(payload):
+    """A provider that sends a non-string as content must not crash the assembler.
+
+    Only truthy non-strings are listed: a falsy [] / {} / null never reached
+    the join in the first place, so those rows would pass with the guard
+    reverted and prove nothing.
+    """
+    line = {"model": "", "choices": [{"delta": {"content": payload}}]}
+    result = _read_sse(_lines(line), backend_name="agnes")
+    assert result["choices"][0]["message"]["content"] == ""

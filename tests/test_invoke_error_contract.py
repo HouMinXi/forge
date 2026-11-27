@@ -61,10 +61,11 @@ def test_breaker_error_tells_the_operator_what_to_change():
 
     assert str(error) == (
         "backend hit 7 truncations (>=5) this run; review output "
-        "keeps hitting the provider cap, which the backend may "
-        "already clamp below the configured ceiling. Raise "
-        "output_ceiling only if the configured cap is the limit; "
-        "otherwise switch backends."
+        "keeps reaching its length limit -- either the provider cap, or "
+        "the budget a reasoning loop burns before writing an answer. "
+        "Raise output_ceiling only if the configured cap is the limit; "
+        "if replies come back empty after spending the budget on "
+        "reasoning, lower reasoning_effort or thinking_budget instead."
     )
     assert error.kind == "truncated"
     assert error.retryable is False

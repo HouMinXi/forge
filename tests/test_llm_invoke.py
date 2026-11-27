@@ -2407,10 +2407,9 @@ class TestTruncationBreaker:
         assert exc.retryable is False
         assert "truncations" in str(exc)
         assert "timeout" not in str(exc).lower()
-        # The advice must not unconditionally say "raise output_ceiling":
-        # the backend may already clamp below the configured cap, in
-        # which case raising the knob changes nothing.
-        assert "may already clamp below the configured" in str(exc)
+        # The wording itself is pinned by
+        # tests/test_invoke_error_contract.py; asserting phrases here too
+        # would be a second copy of the same expectation.
         assert breaker.count == 5
         assert breaker.tripped is True
         with pytest.raises(TruncationBreakerError):
@@ -7560,3 +7559,800 @@ class TestMidStreamErrorSSE:
         assert ei.value.retryable is True
         assert ei.value.exit_code == 0
         assert "partial response discarded" in str(ei.value)
+
+
+def _runaway_backend(max_tokens=65536):
+    return BackendConfig(
+        name="agnes",
+        type="api",
+        model="m",
+        format="openai",
+        base_url="http://x",
+        api_key_env="K",
+        max_tokens=max_tokens,
+    )
+
+
+def _length_body(content, usage, model=""):
+    return {
+        "choices": [{"message": {"content": content}, "finish_reason": "length"}],
+        "usage": usage,
+        "model": model,
+    }
+
+
+def _runaway_error(body, backend):
+    with patch("urllib.request.urlopen", return_value=_mock_body(body)):
+        with pytest.raises(LLMInvokeError) as exc_info:
+            _invoke_openai("p", backend, api_key="k", timeout_s=10)
+    return exc_info.value
+
+
+def test_openai_length_with_empty_content_is_a_retryable_reasoning_runaway():
+    """A reasoning loop burns the whole cap and emits no answer text.
+
+    Measured against agnes-cn-3: finish_reason=length, 65536 output tokens,
+    zero content characters. The capacity message is wrong for this shape --
+    a larger cap cannot produce text the model never started -- and a
+    non-retryable error drops the pass on one bad roll. A plain (not
+    _TruncatedResponse) error keeps it out of the continuation path, which
+    has no partial object to continue.
+    """
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    error = _runaway_error(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 10112,
+                "completion_tokens": 65536,
+                "completion_tokens_details": {"reasoning_tokens": 65536},
+            },
+        ),
+        _runaway_backend(),
+    )
+    assert not isinstance(error, _TruncatedResponse)
+    assert error.retryable is True
+    assert error.exit_code == 0
+    message = str(error)
+    assert "truncated with no answer text" in message and "reasoning_tokens=65536" in message
+    assert "lowering reasoning_effort or thinking_budget is worth trying" in message
+    assert "output_ceiling" not in message
+    # The burned tokens stay in the books the L1 fold reads.
+    assert error.observed_usage is not None
+    assert error.observed_usage.output_tokens == 65536
+    assert "output_tokens" in error.observed_usage.known_fields
+    assert error.usage is not None
+    assert error.usage.input_tokens == 10112
+
+
+def test_runaway_is_not_filed_as_a_provider_capacity_failure():
+    """kind decides the host's diagnostic class; capacity is the wrong one.
+
+    The whole point of this branch is that raising the cap does not help, so
+    it must not fold into PROVIDER_CAPACITY the way the truncation class does.
+    """
+    from code_forge.llm_invoke import _retry_cause
+
+    error = _runaway_error(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        ),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert error.kind == "empty"
+    assert _retry_cause(error, audited=True) == "provider response empty"
+
+
+def test_openai_length_with_whitespace_only_content_is_the_same_runaway():
+    """Whitespace is not an answer: it takes the same branch."""
+    error = _runaway_error(
+        _length_body(
+            "   \n\t ",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        ),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert "truncated with no answer text" in str(error)
+    assert "chars=6" in str(error)
+    assert error.retryable is True
+
+
+def test_empty_content_message_reports_spent_tokens_not_the_cap():
+    """A backend can clamp below the configured cap; the message names what
+    the attempt actually spent, not what it was allowed."""
+    error = _runaway_error(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        ),
+        _runaway_backend(max_tokens=65536),
+    )
+    message = str(error)
+    assert "output=4096" in message
+    assert "cap=65536" in message
+
+
+def test_empty_content_without_a_cap_keeps_the_missing_knob_message():
+    """max_tokens: 0 means no cap to raise, not a reasoning runaway."""
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": 10, "completion_tokens": 10}),
+        _runaway_backend(max_tokens=0),
+    )
+    message = str(error)
+    assert "no usable output cap is configured" in message
+    assert "truncated with no answer text" not in message
+
+
+def test_boolean_usage_counts_are_not_rendered_as_numbers():
+    """JSON true is an int in Python; it must not masquerade as a token count.
+
+    An empty reply with a valid cap is the shape that would otherwise take the
+    runaway branch, so this also pins that a boolean count keeps it out.
+    """
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": True, "completion_tokens": True}),
+        _runaway_backend(max_tokens=4096),
+    )
+    message = str(error)
+    assert "output=True" not in message
+    assert "output=?" in message
+    assert "input=True" not in message
+    assert "input=?" in message
+    assert "truncated with no answer text" not in message
+
+
+@pytest.mark.parametrize(
+    ("cap", "expected"),
+    [(True, "output capacity"), (-5, "no usable output cap")],
+)
+def test_unusable_caps_do_not_take_the_runaway_branch(cap, expected):
+    """A boolean or negative max_tokens is not a cap, so none of them can be
+    spent: the old truncation paths keep the call."""
+    error = _runaway_error(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        ),
+        _runaway_backend(max_tokens=cap),
+    )
+    message = str(error)
+    assert expected in message
+    assert "truncated with no answer text" not in message
+
+
+def test_fractional_usage_counts_are_accounted_as_whole_tokens():
+    """Some providers report counts as JSON numbers with a fraction.
+
+    Admitting floats into the branch while the accounting helpers accept only
+    ints would record zero tokens for a reply that really spent the cap.
+    """
+    error = _runaway_error(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 10112.0,
+                "completion_tokens": 65536.0,
+                "completion_tokens_details": {"reasoning_tokens": 65536.0},
+            },
+        ),
+        _runaway_backend(),
+    )
+    message = str(error)
+    assert "output=65536" in message and "reasoning_tokens=65536" in message
+    assert error.observed_usage is not None
+    assert error.observed_usage.output_tokens == 65536
+    assert error.observed_usage.input_tokens == 10112
+    assert {"input_tokens", "output_tokens"} <= error.observed_usage.known_fields
+    assert error.usage is not None
+    assert error.usage.input_tokens == 10112
+    assert error.usage.output_tokens == 65536
+
+
+def test_infinite_usage_counts_do_not_take_the_runaway_branch():
+    """JSON tolerates Infinity; a token count is a whole number.
+
+    The reply keeps the pre-existing capacity path, which renders the wire
+    value as it always has. What matters here is that no runaway is claimed
+    from a count that is not a count.
+    """
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": float("inf"), "completion_tokens": float("inf")}),
+        _runaway_backend(max_tokens=4096),
+    )
+    message = str(error)
+    assert "truncated with no answer text" not in message
+    assert "output capacity" in message
+
+
+def test_attempt_loop_retries_a_runaway_and_returns_the_next_reply(monkeypatch):
+    """The retry observation, not just the flag: one looped reply then an answer.
+
+    The first request spent 4,096 output tokens before the second spent 12.
+    Recording 12 would drop the budget the runaway burned.
+    """
+    monkeypatch.setenv("K", "key")
+    runaway = _mock_body(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        )
+    )
+    answered = _mock_body(
+        {
+            "choices": [{"message": {"content": '{"review": "ok"}'}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 900, "completion_tokens": 12},
+        }
+    )
+    with patch("urllib.request.urlopen", side_effect=[runaway, answered]) as opened:
+        result = llm_invoke(
+            "p",
+            backend=_runaway_backend(max_tokens=4096),
+            max_attempts=3,
+            initial_delay_s=0,
+        )
+    assert opened.call_count == 2
+    assert result.content == {"review": "ok"}
+    assert result.usage.output_tokens == 4096 + 12
+    assert result.usage.input_tokens == 900 + 900
+
+
+def test_generic_empty_reply_does_not_consume_the_run_breaker(monkeypatch):
+    """kind='empty' is shared with the pre-existing transient-empty path.
+
+    Only the reasoning runaway may count as a cap truncation; an ordinary
+    empty reply must still retry and leave the caller's breaker alone.
+    """
+    from code_forge.llm_invoke import TruncationBreaker
+
+    monkeypatch.setenv("K", "key")
+    empty = _mock_body(
+        {
+            "choices": [{"message": {"content": None}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 0},
+        }
+    )
+    answered = _mock_body(
+        {
+            "choices": [{"message": {"content": '{"ok": 1}'}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+    )
+    breaker = TruncationBreaker(threshold=1)
+    with patch("urllib.request.urlopen", side_effect=[empty, empty, answered]) as opened:
+        result = llm_invoke(
+            "p",
+            backend=_runaway_backend(max_tokens=4096),
+            max_attempts=4,
+            initial_delay_s=0,
+            continuation_breaker=breaker,
+        )
+    assert result.content == {"ok": 1}
+    assert opened.call_count == 3
+    assert breaker.count == 0
+
+
+def _capped_json(content, prompt_tokens, completion_tokens):
+    return _length_body(
+        content, {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}
+    )
+
+
+def _stop_json(content, prompt_tokens, completion_tokens):
+    return {
+        "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+    }
+
+
+def _refusal_body(prompt_tokens, completion_tokens):
+    return {
+        "choices": [
+            {
+                "message": {"content": None, "refusal": "provider refused the request"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+    }
+
+
+def _runaway_body(prompt_tokens, completion_tokens):
+    return _length_body(
+        "",
+        {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "completion_tokens_details": {"reasoning_tokens": completion_tokens},
+        },
+    )
+
+
+def test_ordinary_failure_exit_keeps_the_cause(monkeypatch):
+    """The exit that ends a call keeps the error that caused it.
+
+    A retryable failure followed by one that is not leaves the call through
+    the ordinary failure exit. Raising with ``from None`` there drops the
+    cause, so the operator cannot see what the last reply actually was.
+    """
+    import urllib.error
+
+    monkeypatch.setenv("K", "key")
+    first = urllib.error.HTTPError("https://example.com", 429, "Rate limited", {}, None)
+    first.read = Mock(return_value=b"rate limit exceeded")
+    last = urllib.error.HTTPError("https://example.com", 400, "Bad request", {}, None)
+    last.read = Mock(return_value=b"bad request")
+    with patch("urllib.request.urlopen", side_effect=[first, last]):
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=_runaway_backend(max_tokens=4096), max_attempts=3, initial_delay_s=0)
+    assert exc_info.value.__cause__ is not None
+
+
+def test_runaway_then_direct_refusal_keeps_both(monkeypatch):
+    """A refusal straight after a runaway reports both replies.
+
+    runaway 900/4096, refusal 11/17. The refusal exit used to copy the ledger
+    as it stood before the refusal, so the refusal's own reply was lost and
+    the total came out 900/4096.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_runaway_body(900, 4096)),
+        _mock_body(_refusal_body(11, 17)),
+    ]
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=_runaway_backend(max_tokens=4096), max_attempts=3, initial_delay_s=0)
+    assert opened.call_count == 2
+    error = exc_info.value
+    assert type(error).__name__ == "ProviderRefusalError"
+    assert error.observed_usage.input_tokens == 900 + 11
+    assert error.observed_usage.output_tokens == 4096 + 17
+
+
+def test_wider_refusal_counts_the_history_once(monkeypatch):
+    """A refusal while widening adds the earlier replies once.
+
+    truncation 800/4096, two continuations that stay cut (11/17 then 6/9),
+    then a refusal while widening 5/13. The wider retry used to add the spent
+    error's usage and the ledger both, and the two hold the same history, so
+    the total came out doubled.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_capped_json(_PARTIAL, 800, 4096)),
+        _mock_body(_capped_json(_PARTIAL, 11, 17)),
+        _mock_body(_capped_json(_PARTIAL, 6, 9)),
+        _mock_body(_refusal_body(5, 13)),
+    ]
+    import dataclasses
+
+    backend = dataclasses.replace(_runaway_backend(max_tokens=4096), output_token_limit=32768)
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=backend, max_attempts=4, initial_delay_s=0)
+    assert opened.call_count == 4
+    error = exc_info.value
+    assert type(error).__name__ == "ProviderRefusalError"
+    assert error.observed_usage.input_tokens == 800 + 11 + 6 + 5
+    assert error.observed_usage.output_tokens == 4096 + 17 + 9 + 13
+
+
+def test_runaway_then_truncation_then_refusal_keeps_the_runaway(monkeypatch):
+    """A refusal after a runaway still carries the runaway's tokens.
+
+    runaway 900/4096, truncation 805/4096, refusal 6/17. The refusal keeps its
+    own class, and the total is every reply, not the last two.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_runaway_body(900, 4096)),
+        _mock_body(_capped_json(_PARTIAL, 805, 4096)),
+        _mock_body(_refusal_body(6, 17)),
+    ]
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=_runaway_backend(max_tokens=4096), max_attempts=4, initial_delay_s=0)
+    assert opened.call_count == 3
+    error = exc_info.value
+    assert type(error).__name__ == "ProviderRefusalError"
+    assert error.observed_usage.input_tokens == 900 + 805 + 6
+    assert error.observed_usage.output_tokens == 4096 + 4096 + 17
+
+
+def test_runaway_inside_continuation_is_not_counted_twice_on_a_wider_success(monkeypatch):
+    """A runaway seen while continuing is recorded once.
+
+    truncation 800/4096, runaway inside the continuation 900/4096, then the
+    continuation's budget is spent and the wider retry lands 5/30. The
+    runaway belongs to the call once, so the wider success is 1705/8222 and
+    not that total plus the runaway again.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_capped_json(_PARTIAL, 800, 4096)),
+        _mock_body(_runaway_body(900, 4096)),
+        _mock_body(_stop_json(_PARTIAL + _TAIL, 5, 30)),
+    ]
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        result = llm_invoke(
+            "p", backend=_runaway_backend(max_tokens=4096), max_attempts=5, initial_delay_s=0
+        )
+    assert opened.call_count == 3
+    assert result.usage.input_tokens == 800 + 900 + 5
+    assert result.usage.output_tokens == 4096 + 4096 + 30
+
+
+def test_second_runaway_while_continuing_stops_before_widening(monkeypatch):
+    """The second runaway of a call, met while continuing, ends the call.
+
+    runaway 900/4096, truncation 805/4096, then a runaway while continuing
+    6/4096. The continuation shares the call's runaway count, so it stops
+    there: the wider retry never sends, and the total is all three replies.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_runaway_body(900, 4096)),
+        _mock_body(_capped_json(_PARTIAL, 805, 4096)),
+        _mock_body(_runaway_body(6, 4096)),
+        _mock_body(_runaway_body(0, 4096)),
+    ]
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=_runaway_backend(max_tokens=4096), max_attempts=6, initial_delay_s=0)
+    assert opened.call_count == 3
+    error = exc_info.value
+    assert getattr(error, "reasoning_runaway", False)
+    assert error.retryable is False
+    assert error.observed_usage.input_tokens == 900 + 805 + 6
+    assert error.observed_usage.output_tokens == 4096 * 3
+
+
+def test_runaway_inside_continuation_stops_the_wider_retry(monkeypatch):
+    """A runaway while continuing counts, so a runaway while widening stops.
+
+    truncation 800/4096, runaway inside the continuation 900/4096, then a
+    runaway while widening 8/4096. The continuation spent one of its two
+    attempts on the runaway and stopped, so the wider retry gets its turn,
+    sees the updated count and stops. Nothing further is sent, and the error
+    stays a runaway rather than a plain truncation.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_capped_json(_PARTIAL, 800, 4096)),
+        _mock_body(_runaway_body(900, 4096)),
+        _mock_body(_runaway_body(8, 4096)),
+        _mock_body(_runaway_body(0, 4096)),
+    ]
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=_runaway_backend(max_tokens=4096), max_attempts=6, initial_delay_s=0)
+    assert opened.call_count == 3
+    error = exc_info.value
+    assert getattr(error, "reasoning_runaway", False)
+    assert error.retryable is False
+    assert error.observed_usage.input_tokens == 800 + 900 + 8
+    assert error.observed_usage.output_tokens == 4096 * 3
+
+
+def test_runaway_then_truncation_then_continuation_keeps_every_reply(monkeypatch):
+    """A runaway before a recovered truncation still counts.
+
+    The continuation returns only its own replies. The runaway that sent the
+    call there spent tokens too, and the result has to include them.
+    """
+    monkeypatch.setenv("K", "key")
+    runaway = _mock_body(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        )
+    )
+    truncated = _mock_body(_capped_json(_PARTIAL, 800, 4096))
+    continued = _mock_body(_stop_json(_TAIL, 5, 20))
+    with patch("urllib.request.urlopen", side_effect=[runaway, truncated, continued]) as opened:
+        result = llm_invoke(
+            "p",
+            backend=_runaway_backend(max_tokens=4096),
+            max_attempts=4,
+            initial_delay_s=0,
+        )
+    assert opened.call_count == 3
+    assert result.usage.input_tokens == 900 + 800 + 5
+    assert result.usage.output_tokens == 4096 + 4096 + 20
+
+
+def test_runaway_during_continuation_stops_the_call(monkeypatch):
+    """A second runaway inside the continuation sends nothing further.
+
+    The cap is per call, not per loop: runaway, then a truncation, then a
+    runaway while continuing is two runaways, so the fourth request must not
+    go out.
+    """
+    monkeypatch.setenv("K", "key")
+    runaway = _mock_body(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        )
+    )
+    truncated = _mock_body(_capped_json(_PARTIAL, 800, 4096))
+    with patch("urllib.request.urlopen", side_effect=[runaway, truncated, runaway, runaway]) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke(
+                "p",
+                backend=_runaway_backend(max_tokens=4096),
+                max_attempts=5,
+                initial_delay_s=0,
+            )
+    assert opened.call_count == 3
+    error = exc_info.value
+    assert getattr(error, "reasoning_runaway", False)
+    assert error.observed_usage.output_tokens == 4096 + 4096 + 4096
+
+
+def test_single_attempt_runaway_counts_its_tokens_once(monkeypatch):
+    """One request must not be booked twice.
+
+    With max_attempts=1 the runaway reply is both the current error and the
+    only thing recorded so far. Adding it to itself reports double.
+    """
+    monkeypatch.setenv("K", "key")
+    body = _length_body(
+        "",
+        {
+            "prompt_tokens": 900,
+            "completion_tokens": 4096,
+            "completion_tokens_details": {"reasoning_tokens": 4096},
+        },
+    )
+    with patch("urllib.request.urlopen", return_value=_mock_body(body)) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke(
+                "p",
+                backend=_runaway_backend(max_tokens=4096),
+                max_attempts=1,
+                initial_delay_s=0,
+            )
+    error = exc_info.value
+    assert opened.call_count == 1
+    assert error.observed_usage is not None
+    assert error.observed_usage.input_tokens == 900
+    assert error.observed_usage.output_tokens == 4096
+
+
+def test_auth_failure_on_retry_keeps_the_tokens_already_spent(monkeypatch):
+    """A 401 on the retry reports nothing, but the first reply already spent.
+
+    The diagnosis stays the auth failure. The usage recorded is only what the
+    first reply reported: an unreported count is left unknown, not written as
+    zero.
+    """
+    import urllib.error
+
+    monkeypatch.setenv("K", "key")
+    runaway = _mock_body(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        )
+    )
+    denied = urllib.error.HTTPError("http://x", 401, "unauthorized", {}, None)
+    denied.read = Mock(return_value=b"bad credentials")
+    with patch("urllib.request.urlopen", side_effect=[runaway, denied]):
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke(
+                "p",
+                backend=_runaway_backend(max_tokens=4096),
+                max_attempts=3,
+                initial_delay_s=0,
+            )
+    error = exc_info.value
+    assert "401" in str(error) or "unauthorized" in str(error)
+    assert error.retryable is False
+    assert error.observed_usage is not None
+    assert error.observed_usage.input_tokens == 900
+    assert error.observed_usage.output_tokens == 4096
+    assert {"input_tokens", "output_tokens"} <= error.observed_usage.known_fields
+    assert "cached_input_tokens" not in error.observed_usage.known_fields
+
+
+def test_second_runaway_in_one_call_stops_with_the_diagnosis_intact(monkeypatch):
+    """One retry is worth it; a second loop means this backend always will.
+
+    The capacity breaker is deliberately not involved: it counts provider-cap
+    truncations, and letting a reasoning loop into it would file the run as a
+    capacity problem for every later consumer.
+    """
+    from code_forge.llm_invoke import TruncationBreaker
+
+    monkeypatch.setenv("K", "key")
+    body = _length_body(
+        "",
+        {
+            "prompt_tokens": 900,
+            "completion_tokens": 4096,
+            "completion_tokens_details": {"reasoning_tokens": 4096},
+        },
+    )
+    breaker = TruncationBreaker(threshold=1)
+    with patch("urllib.request.urlopen", return_value=_mock_body(body)) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke(
+                "p",
+                backend=_runaway_backend(max_tokens=4096),
+                max_attempts=5,
+                initial_delay_s=0,
+                continuation_breaker=breaker,
+            )
+    error = exc_info.value
+    assert error.kind == "empty"
+    assert error.retryable is False
+    assert "output_ceiling" not in str(error)
+    assert "worth trying" in str(error)
+    assert error.observed_usage is not None
+    assert error.observed_usage.output_tokens == 4096 + 4096
+    assert error.usage is not None
+    assert error.usage.output_tokens == 8192
+    assert opened.call_count == 2
+    assert breaker.count == 0
+
+
+def test_empty_reply_without_reasoning_tokens_stays_a_truncation():
+    """An empty capped reply is a truncation unless reasoning was reported.
+
+    Output tokens above zero only prove the cap was spent. A response whose
+    detail says reasoning_tokens is zero spent them on something else, and
+    telling the reader that raising the cap buys only more reasoning is false.
+    """
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    error = _runaway_error(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 0},
+            },
+        ),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert isinstance(error, _TruncatedResponse)
+    assert error.retryable is False
+    assert "raising the cap only buys more reasoning" not in str(error)
+    assert "Raise" in str(error)
+
+
+def test_empty_reply_with_no_reasoning_detail_stays_a_truncation():
+    """No reasoning detail means the provider said nothing about reasoning."""
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert isinstance(error, _TruncatedResponse)
+    assert "without emitting answer text" not in str(error)
+
+
+def test_reasoning_runaway_needs_reported_reasoning_tokens():
+    """The detail has to name a positive whole count, not merely exist."""
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    error = _runaway_error(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": True},
+            },
+        ),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert isinstance(error, _TruncatedResponse)
+    assert "without emitting answer text" not in str(error)
+
+
+def test_zero_width_only_content_is_not_an_answer():
+    """A reasoning loop can emit zero-width characters and still hold the cap."""
+    error = _runaway_error(
+        _length_body(
+            "\u200b\u200b",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        ),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert "truncated with no answer text" in str(error)
+
+
+def test_missing_input_count_still_names_the_spent_output_tokens():
+    """Only the output count decides the branch; the input count may be absent."""
+    error = _runaway_error(
+        _length_body(
+            "", {"completion_tokens": 4096, "completion_tokens_details": {"reasoning_tokens": 4096}}
+        ),
+        _runaway_backend(max_tokens=4096),
+    )
+    message = str(error)
+    assert "output=4096" in message
+    assert "input=?" in message
+
+
+def test_live_probe_classifies_a_reasoning_runaway_as_empty_output():
+    """The doctor's taxonomy must name this shape, not call it unclassified."""
+    from code_forge.backend import _classify_live_failure
+
+    error = LLMInvokeError(
+        "spent 4096 output tokens without emitting answer text",
+        kind="empty",
+        exit_code=0,
+    )
+    name, suggestion = _classify_live_failure(error)
+    assert name == "empty-output"
+    assert "reasoning_effort" in suggestion
+
+
+def test_zero_width_next_to_real_text_is_still_an_answer():
+    """Only a reply without visible characters is a runaway.
+
+    A zero-width joiner in front of real text must not be stripped into the
+    runaway branch: this reply has content, so it takes the truncation path.
+    """
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    with patch(
+        "urllib.request.urlopen",
+        return_value=_mock_body(
+            _length_body(
+                "\u200b partial",
+                {
+                    "prompt_tokens": 900,
+                    "completion_tokens": 4096,
+                    "completion_tokens_details": {"reasoning_tokens": 4096},
+                },
+            )
+        ),
+    ):
+        with pytest.raises(LLMInvokeError) as exc_info:
+            _invoke_openai("p", _runaway_backend(max_tokens=4096), api_key="k", timeout_s=10)
+    assert isinstance(exc_info.value, _TruncatedResponse)
+    assert "without emitting answer" not in str(exc_info.value)
