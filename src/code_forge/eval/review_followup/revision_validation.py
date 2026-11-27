@@ -22,6 +22,7 @@ class _Evidence:
     length: int
     session_id: str | None = None
     call_ids: tuple[str, ...] = ()
+    capture_location_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +30,9 @@ class EvidenceSnapshot:
     finding_id: str
     candidate_sha: str
     entries: tuple[_Evidence, ...]
+    unavailable_revisions: tuple[str, ...] = ()
+    unavailable_artifacts: tuple[str, ...] = ()
+    capture_base: str | None = None
 
 
 def evidence_snapshot(review: ReviewInput, finding_id: str, saved_observations=()) -> EvidenceSnapshot:
@@ -155,7 +159,11 @@ def validate_proposal(raw: bytes, snapshot: EvidenceSnapshot, *, validation_id: 
         )
         _selector_shape(ref["selector"], f"{field}/selector")
         entry = entries.get(ref["artifact_id"])
-        error = _reference_error(ref, entry, snapshot.candidate_sha)
+        error = (
+            "source-capture-unavailable"
+            if ref["artifact_id"] in snapshot.unavailable_artifacts
+            else _reference_error(ref, entry, snapshot.candidate_sha)
+        )
         binding = None
         if error is None:
             binding = {
@@ -165,12 +173,17 @@ def validate_proposal(raw: bytes, snapshot: EvidenceSnapshot, *, validation_id: 
                 "role": entry.role,
                 "selector": ref["selector"],
             }
+            if entry.capture_location_sha256 is not None:
+                binding["capture_location_sha256"] = entry.capture_location_sha256
             current_basis |= ref["purpose"] == "current_basis"
         checks.append({"index": index, "purpose": ref["purpose"], "error": error, "binding": binding})
 
     reason = None
-    if body["suggested_status"] in _CLOSURE and not current_basis:
-        reason = "closure-without-current-basis"
+    if body["suggested_status"] in _CLOSURE:
+        if snapshot.unavailable_revisions:
+            reason = "capture-revision-unavailable"
+        elif not current_basis:
+            reason = "closure-without-current-basis"
     output = {
         "schema": 1,
         "kind": "host_validation",
@@ -185,4 +198,6 @@ def validate_proposal(raw: bytes, snapshot: EvidenceSnapshot, *, validation_id: 
             "reference_checks": checks,
         },
     }
+    if snapshot.capture_base is not None:
+        output["body"]["capture_base"] = snapshot.capture_base
     return decode_record(json.dumps(output, ensure_ascii=True, separators=(",", ":")).encode("ascii"))
