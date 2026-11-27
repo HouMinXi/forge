@@ -473,14 +473,22 @@ differs. The full tables, the corpus construction, and the caveats are in
 - **No performance regression suite.** No benchmark harness equivalent to
   Rust's `perf.rust-lang.org`. One narrow check does exist outside the review
   pipeline: `scripts/perf_regression.py` times `parse_diff_files` on a fixed
-  diff, repeats the run, and reports when the median grows past half the stored
-  baseline. The baseline is a record that names its definition and workload; a
-  record that names another, or a median that is not a finite number, is
-  reported as incomparable rather than as acceptable. A slower test does not
+  diff, runs it seven times, and reports when the median is more than 50% above
+  the stored baseline. On the same controlled runner, record a baseline with
+  `python scripts/perf_regression.py --runner my-runner --record > baseline.json`
+  and compare with
+  `python scripts/perf_regression.py --runner my-runner --baseline baseline.json`.
+  Use the same runner label only when the host/build and measurement conditions
+  are comparable. The script also checks the recorded interpreter implementation,
+  interpreter version, OS family, and machine architecture. A different or
+  missing signature, old v1 baseline, different workload, or invalid median is
+  incomparable (exit 2). The signature cannot verify equivalent hardware, load,
+  or interpreter builds. A slower test does not
   count, and the script does not say why a change got slower. The median of
   seven runs is less moved by one slow sample than a single timing would be, but
   one sample can still move it, depending on where it lands among the others.
-  The check does not prove the timed function did all of its work. code-forge
+  Each timed call must return the fixture's exact paths and added line numbers.
+  That does not show how the function computed the answer. code-forge
   still cannot tell you a change made a hot path slower.
 - **R3 is artifact-presence, not coverage proof.** The cross-component
   check confirms an integration test file exists under the expected path;
