@@ -1,0 +1,30 @@
+{
+  "baseline": {
+    "call_limit": null,
+    "context_limit": null,
+    "failure_policy": "saved-only",
+    "forge_commit": "git:34dbb221d07bdec511edff65a948f2d93f5f853f",
+    "model": null,
+    "prompt": null
+  },
+  "candidate": "synthetic:ovs-v6-overlay",
+  "case": "wrong-reason",
+  "diagnostic": null,
+  "findings": [
+    {
+      "blocking": false,
+      "claim": "Removing ifindex min: 0 does not change the generated userspace C or header for either OVS family.",
+      "id": "conclusion"
+    },
+    {
+      "blocking": false,
+      "claim": "OVS genetlink-legacy is considered classic by the pinned generator, so TypeScalar skips _init_checks.",
+      "id": "reason"
+    }
+  ],
+  "input_sha256": "37e65eb91caeaa8afd676c3b812997773719333c66ecfb7ad279e254511df211",
+  "run": "handwritten",
+  "schema": 1,
+  "status": "completed",
+  "usage": null
+}
