@@ -597,9 +597,49 @@ def _diff_paths(git_diff: str) -> set[str]:
     return paths
 
 
-def _docs_only_files(paths: list[str], root, diff_paths=()) -> bool:
+def _git_post_image(root, rev: str, rel: str) -> tuple[int, bytes] | None:
+    """Mode and bytes of ``rel`` in a git post-image: the index for ``:``, else
+    a commit expression. ``None`` when it cannot be read exactly once."""
+    import subprocess
+    from pathlib import Path
+
+    root_path = Path(root)
+    listing = ["ls-files", "-s", "-z", "--", rel] if rev == ":" else ["ls-tree", "-z", rev, "--", rel]
+    try:
+        out = subprocess.run(
+            ["git", *listing], cwd=str(root_path), capture_output=True, timeout=10, check=False
+        )
+        rows = [row for row in out.stdout.split(b"\0") if row.strip()]
+        if out.returncode != 0 or len(rows) != 1:
+            return None
+        fields, _, _path = rows[0].partition(b"\t")
+        parts = fields.split()
+        if len(parts) < 3:
+            return None
+        mode = int(parts[0], 8)
+        oid = parts[1] if rev == ":" else parts[2]
+        blob = subprocess.run(
+            ["git", "cat-file", "blob", oid.decode("ascii")],
+            cwd=str(root_path),
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if blob.returncode != 0:
+        return None
+    return mode, blob.stdout
+
+
+def _docs_only_files(paths: list[str], root, diff_paths=(), post_image=None) -> bool:
     """True only if every changed path is on the docs allowlist and every
-    post-image is a regular, non-executable, readable, non-shebang file."""
+    post-image is a regular, non-executable, readable, non-shebang file.
+
+    ``post_image`` supplies ``(mode, bytes)`` for a path when the reviewed
+    subject is not the working tree (INDEX or COMMIT); the default reads the
+    working file. A path the reader cannot resolve is not a docs post-image.
+    """
     import os
     import stat
     from pathlib import Path
@@ -627,6 +667,16 @@ def _docs_only_files(paths: list[str], root, diff_paths=()) -> bool:
                 break
             if (ancestor / "__init__.py").exists():
                 return False
+        if post_image is not None:
+            image = post_image(rel)
+            if image is None:
+                return False
+            mode, content = image
+            if not stat.S_ISREG(mode):
+                return False
+            if _classified_doc_rule(rel, mode, content) is None:
+                return False
+            continue
         full = root_path / rel
         try:
             info = os.lstat(full)
@@ -3777,6 +3827,22 @@ class StateMachine:
         """Every path on either side of the reviewed diff (renames, deletions)."""
         return _diff_paths(self.resolved_review.git_diff or "")
 
+    def _doc_post_image(self):
+        """Read the reviewed document post-image for INDEX/COMMIT reviews.
+
+        The working copy is unrelated to the reviewed blob there, so document
+        applicability must come from the index or commit itself. WORKING
+        reviews (and anything else) keep the working-tree reader.
+        """
+        kind = self.resolved_review.target_kind
+        root = self._source_root()
+        if kind == INDEX:
+            return lambda rel: _git_post_image(root, ":", rel)
+        head = self.resolved_review.head_sha
+        if kind == "COMMIT" and head:
+            return lambda rel: _git_post_image(root, head, rel)
+        return None
+
     def _apply_not_applicable_policy(self, findings: list, diff_files: list[str]) -> None:
         """#127/#132: decide whether a measured-nothing "does not apply" skip
         is clean. Always leaves a visible infra line naming the files."""
@@ -3797,6 +3863,7 @@ class StateMachine:
                 diff_files,
                 self._source_root(),
                 self._review_diff_paths(),
+                post_image=self._doc_post_image(),
             )
             why = "docs-only diff" if clean else "no mutation adapter covers"
         if clean or self.mode != Mode.CI:

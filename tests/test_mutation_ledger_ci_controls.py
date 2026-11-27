@@ -2519,6 +2519,83 @@ def test_empty_baseline_review_still_rejects_the_skip(ci_project):
     )
 
 
+@pytest.mark.parametrize("review_kind", ["index", "commit"])
+def test_executable_doc_subject_is_not_a_docs_only_skip(ci_project, review_kind):
+    """Document applicability reads the reviewed blob, not the working copy.
+
+    An INDEX or COMMIT review whose subject is an executable script named like a
+    document must not be excused because the unrelated working file looks tame.
+    """
+    p = ci_project
+    doc = p.root / "README.md"
+    doc.write_text("#!/bin/sh\nprintf EXECUTABLE_REVIEW_SUBJECT\n", encoding="utf-8")
+    doc.chmod(0o755)
+    _git(p.root, "add", "README.md")
+    base = _git(p.root, "rev-parse", "HEAD")
+    if review_kind == "commit":
+        _git(
+            p.root,
+            "-c",
+            "user.name=CI Control",
+            "-c",
+            "user.email=ci-control@example.invalid",
+            "commit",
+            "-qm",
+            "executable document subject",
+        )
+        head = _git(p.root, "rev-parse", "HEAD")
+    else:
+        head = "INDEX"
+
+    review = resolve_baseline(GitRefBaseline(base), GitRefBaseline(head), [Path("README.md")], p.root)
+    assert review.target_kind == review_kind.upper()
+    assert "100755" in review.git_diff
+
+    doc.write_text("# Innocent working document\n", encoding="utf-8")
+    doc.chmod(0o644)
+
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    machine._run_l2_phase()
+
+    assert machine._mutation_not_applicable is False
+    assert machine._mutation_bound_failure is True
+
+
+@pytest.mark.parametrize("review_kind", ["index", "commit"])
+def test_benign_doc_subject_is_a_docs_only_skip(ci_project, review_kind):
+    """A reviewed blob that is a plain document on both sides stays excusable."""
+    p = ci_project
+    doc = p.root / "README.md"
+    doc.write_text("# Plain document\n", encoding="utf-8")
+    _git(p.root, "add", "README.md")
+    base = _git(p.root, "rev-parse", "HEAD")
+    if review_kind == "commit":
+        _git(
+            p.root,
+            "-c",
+            "user.name=CI Control",
+            "-c",
+            "user.email=ci-control@example.invalid",
+            "commit",
+            "-qm",
+            "plain document subject",
+        )
+        head = _git(p.root, "rev-parse", "HEAD")
+    else:
+        head = "INDEX"
+
+    review = resolve_baseline(GitRefBaseline(base), GitRefBaseline(head), [Path("README.md")], p.root)
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    machine._run_l2_phase()
+
+    assert machine._mutation_not_applicable is True
+    assert machine._mutation_bound_failure is False
+    assert (
+        machine._state.infra_errors.count("L2: mutation not applicable (docs-only diff): README.md")
+        == 1
+    )
+
+
 def test_other_adapter_note_does_not_extend_the_applicability_pair():
     from code_forge.machine import _clean_mutation_skip_kind
 
