@@ -109,3 +109,43 @@ checkouts and the recorded three-stage replay.
 
 The tracer itself is not duplicated here: the producer loads
 `docs/eval/r3-target-line/target_hits.py` and records its digest in the packet.
+
+### Read-only inspection of one pinned change
+
+`inspect_change.py` is a standalone offline command. It runs no tests or
+review itself. It compares an exact local ancestor and a clean candidate
+checkout, confirms the named test file exists there, and accepts only a
+target line added or replaced in that pair's Git diff. It cross-checks the
+file execution record and the node-level packet against a caller-owned run ID
+and digests. A verified zero-hit case reports `not_hit`; a positive claim
+against that same packet is refused. The verdict is local to the command.
+
+Supply the expected packet digest from the producer output and hash the
+separate execution record immediately after the trusted run. Generate the
+two artifacts in the same pytest process with the root pinned to the
+candidate Git root. These unsigned records are not attestations; do not
+treat expectations copied from an imported packet as independent evidence.
+A file record alone cannot identify the test node or prove a line hit.
+
+To replay the real #552 sample, use a clean detached checkout at
+`3fae8be7a6080ad645d09ec3e142081a678e9c8b` with its first parent locally
+available. From the tool checkout, with the Forge test dependencies and
+pytest 9.2.0 installed, run:
+
+```sh
+PYTHON=/path/to/python sh docs/eval/r3-evidence-packet/replay_552.sh /path/to/sample
+```
+
+The existing contract-change and rename-only tests use an offline backend
+fixture. Both reach call and pass. Only the contract-change case hits the
+selected line (one hit versus zero); claiming one for the rename-only case
+fails. The script leaves its logs and records outside the clean checkout.
+The separately archived Layer 2 presence behavior is not inferred from
+either record. This command does not alter `e2e-check`, P2, its exit status,
+or any review receipt.
+
+A single packet never establishes assertion strength; the command
+deliberately reports `assertion: unproven`. The offline verifier suite
+separately tests an unchanged toy assertion across a correct result, a
+controlled wrong result and restoration. This exercises the verification
+workflow, not production regression sensitivity of the #552 assertion.
