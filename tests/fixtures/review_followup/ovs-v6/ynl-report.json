@@ -1,0 +1,42 @@
+{
+  "kernel_base": "fa5196392691051963726787944db872420dfa75",
+  "applied_patch_sha256": "f811809fd9bc85c9d328f9e1d8a596a10a2b7540045a67be792729f7c6d355c9",
+  "candidate_blobs": {
+    "Documentation/netlink/specs/ovs_vport.yaml": "16b21c42cac8c65ec4a4cb491b0e154a830ed6bb",
+    "Documentation/netlink/specs/ovs_datapath.yaml": "4a64985633c4fbdc32b5fcb6c6ee1458da0b63eb"
+  },
+  "generated": {
+    "vport_v6": {
+      "h": "d0e559f329d2bdfaefc0adc392adcde6f5811bb45ea37d1e9d419a699ab43e36",
+      "c": "ed1f6385ecabc96e6157036ea54fc4d5a7dee5d38fa12414df583687c9de292e"
+    },
+    "vport_no_min": {
+      "h": "d0e559f329d2bdfaefc0adc392adcde6f5811bb45ea37d1e9d419a699ab43e36",
+      "c": "ed1f6385ecabc96e6157036ea54fc4d5a7dee5d38fa12414df583687c9de292e"
+    },
+    "vport_u32_no_min": {
+      "h": "8af703990c869127ec87d480bbcf34acad63a8594643cbb2967aae84317435cc",
+      "c": "cdc001535106e9681941935a34d58f7830d5a4bc45470b07819e4d3ce82bfc39"
+    },
+    "vport_set_list_trimmed": {
+      "h": "f1a2b7e8dd704ef1783a6ba88a90cfa7c69772a8c529e1f7832944b8fe994a0b",
+      "c": "b578d8b925d2f6aa224a0c80f841019f4fd901d6ed451420021b6369d3d36dd2"
+    },
+    "datapath_v6": {
+      "h": "d5bb1347d2ea73d26259589f3fcb2a60b6f7aef4791338bc868efaa0ac238078",
+      "c": "cd123202f3cf485f049d7787859dcdd14bb8355c8e723e93d594bd707eacb839"
+    },
+    "datapath_no_min": {
+      "h": "d5bb1347d2ea73d26259589f3fcb2a60b6f7aef4791338bc868efaa0ac238078",
+      "c": "cd123202f3cf485f049d7787859dcdd14bb8355c8e723e93d594bd707eacb839"
+    }
+  },
+  "verified": [
+    "removing min only leaves user C and header byte-identical for both families",
+    "u32/s32 changes client encoding and vport GET reply C type",
+    "removing two SET fields removes only the tested setters, retaining port_no",
+    "pinned kernel statically rejects the two fields in SET and retains signed minimum policies"
+  ],
+  "sent_model_requests": 0,
+  "used_kernel_runtime": false
+}

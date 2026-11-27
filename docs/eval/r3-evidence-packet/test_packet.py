@@ -254,7 +254,7 @@ def test_a_test_record_for_another_file_is_refused_even_when_the_digest_holds(pr
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert f"{node} does not name a node in test_other.py" in check.stderr
+    assert "node does not name a node in the traced test file" in check.stderr
     assert "verified" not in check.stdout
 
 
@@ -781,3 +781,31 @@ def test_a_packet_in_an_unsearchable_directory_is_refused(tmp_path):
             verifier["load"](packet)
     finally:
         hidden.chmod(0o755)
+def test_a_packet_past_the_size_limit_is_refused_before_it_is_read(tmp_path, monkeypatch):
+    verifier = runpy.run_path(str(VERIFY))
+    packet = tmp_path / "packet.json"
+    packet.write_text("{}", encoding="utf-8")
+    verifier["load"].__globals__["MAX_PACKET_BYTES"] = 0
+
+    def fail_if_read(self, *args, **kwargs):
+        raise AssertionError("the packet was read before the size check")
+
+    monkeypatch.setattr(verifier["Path"], "read_text", fail_if_read)
+    with pytest.raises(verifier["Refused"], match="^packet exceeds size limit$"):
+        verifier["load"](packet)
+
+
+def test_a_node_mismatch_refuses_without_echoing_the_name(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    leaked = "secret-node-name"
+    body["identity"]["node"] = leaked + "::nope"
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    announced = _announced(result)
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
+    assert check.returncode == 1
+    assert leaked not in check.stderr
+    assert check.stdout == ""

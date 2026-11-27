@@ -1,0 +1,30 @@
+{
+  "baseline": {
+    "call_limit": null,
+    "context_limit": null,
+    "failure_policy": "saved-only",
+    "forge_commit": "git:34dbb221d07bdec511edff65a948f2d93f5f853f",
+    "model": null,
+    "prompt": null
+  },
+  "candidate": "synthetic:ovs-v6-overlay",
+  "case": "uncertain-reason",
+  "diagnostic": null,
+  "findings": [
+    {
+      "blocking": false,
+      "claim": "Removing ifindex min: 0 does not change the generated userspace C or header for either OVS family.",
+      "id": "conclusion"
+    },
+    {
+      "blocking": false,
+      "claim": "The predicate selecting the scalar checks cannot be verified from the stated evidence.",
+      "id": "reason"
+    }
+  ],
+  "input_sha256": "78e01952c3ad1e45921e2b2c8be1497782b47a972605061bee15cbf0cb13f60f",
+  "run": "handwritten",
+  "schema": 1,
+  "status": "completed",
+  "usage": null
+}

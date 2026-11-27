@@ -108,7 +108,7 @@ def check_identity(body: dict, args: argparse.Namespace) -> None:
     if type(node) is not str or node != args.expect_node or node.split("::", 1)[0] != test_file:
         # The test digest and the verified node must name the same file. A
         # packet can otherwise carry one file's digest behind another's result.
-        raise Refused(f"{node} does not name a node in {test_file}")
+        raise Refused("node does not name a node in the traced test file")
 
 
 def check_execution(body: dict, args: argparse.Namespace) -> None:

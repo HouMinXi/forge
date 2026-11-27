@@ -1,0 +1,121 @@
+{
+  "encoder_sha256": "cadb523c3df31ee7549b97fb644848bccd7783a325d0f734a7a8a35918ba78d2",
+  "ip_tunnel_core_sha256": "3fb5f13009e5497979a4444934e7d6eb96e9d2ddb3e129d03cc6726aedd22573",
+  "measurement": {
+    "applied_archive_yaml_diffs": 2,
+    "encoding": "byte-identical pinned Python encoder on all three revisions; header-only probe",
+    "generated_files": {
+      "patch-4": {
+        "header": {
+          "bytes": 70246,
+          "sha256": "800e1fce79b6ae523d0e09c008af3ab776f5c4bfe3eb6e3561b71c4ca3f2d984"
+        },
+        "source": {
+          "bytes": 68418,
+          "sha256": "7c04cfa9a06fdfa9aaebe70a9c731780c3f67b0deff07ce53ed8b6112a67c667"
+        }
+      },
+      "patch-4-parent": {
+        "header": {
+          "bytes": 62291,
+          "sha256": "af5932b96eacf68001548c3c28c492eacc2cc449beea7bff682b3b3f97042af2"
+        },
+        "source": {
+          "bytes": 61984,
+          "sha256": "ca9637cffe8404e078e2507154587fa42f7533deb123107b04963b892c918a9d"
+        }
+      },
+      "series-base": {
+        "header": {
+          "bytes": 28206,
+          "sha256": "52e4b2c67a30fff5d0a4d6f1ef471b569cf8f923685efe33bb42a63e6bef5f2f"
+        },
+        "source": {
+          "bytes": 28502,
+          "sha256": "ffb9fedd432dfd826cdc77a2de9119ea4ad5a46f8dee861ccc2bc1b791832182"
+        }
+      }
+    },
+    "generated_puts": {
+      "patch-4": {
+        "LWTUNNEL_IP_OPTS_GENEVE": [
+          "[LWTUNNEL_IP_OPTS_GENEVE] = { .name = \"geneve\", .type = YNL_PT_BINARY,},",
+          "ynl_attr_put(nlh, LWTUNNEL_IP_OPTS_GENEVE, obj->geneve, obj->_len.geneve);",
+          "if (type == LWTUNNEL_IP_OPTS_GENEVE) {"
+        ],
+        "LWTUNNEL_IP_OPTS_VXLAN": [
+          "[LWTUNNEL_IP_OPTS_VXLAN] = { .name = \"vxlan\", .type = YNL_PT_NEST, .nest = &rt_route_lwtunnel_ip_opt_vxlan_nest, },",
+          "rt_route_lwtunnel_ip_opt_vxlan_put(nlh, LWTUNNEL_IP_OPTS_VXLAN, &obj->vxlan);",
+          "} else if (type == LWTUNNEL_IP_OPTS_VXLAN) {"
+        ]
+      },
+      "patch-4-parent": {
+        "LWTUNNEL_IP_OPTS_GENEVE": [],
+        "LWTUNNEL_IP_OPTS_VXLAN": []
+      },
+      "series-base": {
+        "LWTUNNEL_IP_OPTS_GENEVE": [],
+        "LWTUNNEL_IP_OPTS_VXLAN": []
+      }
+    },
+    "netlink_sockets_opened": 0,
+    "schemas": {
+      "patch-4": {
+        "options": {
+          "ip": {
+            "geneve_nested": false,
+            "opts_nested": true,
+            "vxlan_nested_control": true
+          },
+          "ip6": {
+            "geneve_nested": false,
+            "opts_nested": true,
+            "vxlan_nested_control": true
+          }
+        },
+        "route_encap_type": "sub-message"
+      },
+      "patch-4-parent": {
+        "options": {
+          "ip": {
+            "geneve_nested": true,
+            "opts_nested": false
+          },
+          "ip6": {
+            "geneve_nested": true,
+            "opts_nested": false
+          }
+        },
+        "route_encap_type": "sub-message"
+      },
+      "series-base": {
+        "options": {
+          "ip": {
+            "geneve_nested": true,
+            "opts_nested": true
+          },
+          "ip6": {
+            "geneve_nested": true,
+            "opts_nested": true
+          }
+        },
+        "route_encap_type": "binary"
+      }
+    }
+  },
+  "nlattr_sha256": "f0f72da82496244583173cd27d46bc0a69113d89a3853adc5247dd24a06aa762",
+  "revisions": {
+    "patch-4": {
+      "revision": "git:e32b5eb4f237a5ddcf936c53e9ca387bb4cdd31c",
+      "yaml_blob": "ea6711292c9b680daf518bd3c245565b2a52429f"
+    },
+    "patch-4-parent": {
+      "revision": "git:24d11a55860be75a6b478e4e4ba8adb419c19661",
+      "yaml_blob": "dc842a786794aae4faf68b0cd1defa334e01f31e"
+    },
+    "series-base": {
+      "revision": "git:8df0638138d3e0344fd1fb36cf2d1ca1cf5028f0",
+      "yaml_blob": "253037ea5176ac2fffaeab0ea015ccbea3dfcba0"
+    }
+  }
+}

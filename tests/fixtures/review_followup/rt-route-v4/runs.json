@@ -1,0 +1,17 @@
+{
+  "cases": {
+    "patch-scope": {
+      "observation": {
+        "path": "saved_runs/patch-scope/observation.json",
+        "sha256": "fae5991d2ce488c2b8a18773bef246b66b351287b67f0f251c41aa4afc5e7631"
+      }
+    },
+    "series-scope": {
+      "observation": {
+        "path": "saved_runs/series-scope/observation.json",
+        "sha256": "80b7ee4216aae2ec1cf7c49502f2140396875aa85975e0d49681fa44c64ae197"
+      }
+    }
+  },
+  "schema": 1
+}

@@ -1,0 +1,35 @@
+{
+  "artifacts": [
+    {
+      "case": "series-scope",
+      "id": "base",
+      "path": "inputs/series-scope/base.json",
+      "revision": "git:8df0638138d3e0344fd1fb36cf2d1ca1cf5028f0",
+      "role": "base",
+      "sha256": "de986d5bb9820f87b5c9fcb7c2c35a054f16aff6279cdc3566f8c286e0d9a9e7"
+    },
+    {
+      "case": "series-scope",
+      "id": "candidate",
+      "path": "inputs/series-scope/candidate.json",
+      "revision": "git:e32b5eb4f237a5ddcf936c53e9ca387bb4cdd31c",
+      "role": "candidate",
+      "sha256": "f290005fa68b7326f33d8f3a4a5567675ac5720e240da193af37fdb6c50d5d37"
+    }
+  ],
+  "base": "git:8df0638138d3e0344fd1fb36cf2d1ca1cf5028f0",
+  "candidate": "git:e32b5eb4f237a5ddcf936c53e9ca387bb4cdd31c",
+  "case": "series-scope",
+  "groups": [
+    {
+      "artifacts": [
+        "base",
+        "candidate"
+      ],
+      "id": "rt-route"
+    }
+  ],
+  "prior_findings": [],
+  "schema": 1,
+  "task": "first_review"
+}

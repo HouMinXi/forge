@@ -1,0 +1,97 @@
+{
+  "evidence": {
+    "path": "ynl-report.json",
+    "sha256": "4413824654b9a82b65029f2b6c50c02802d10eb13ca14a104fc04ebc893c1ecb"
+  },
+  "rulings": {
+    "supported-reason": {
+      "candidate": "synthetic:ovs-v6-overlay",
+      "case": "supported-reason",
+      "findings": [
+        {
+          "attribution": "unknown",
+          "blocking": "should_not_block",
+          "factual": "supported",
+          "finding": "conclusion",
+          "root": "min-no-user-effect"
+        },
+        {
+          "attribution": "unknown",
+          "blocking": "should_not_block",
+          "factual": "supported",
+          "finding": "reason",
+          "root": null
+        }
+      ],
+      "observation_sha256": "ac876bc8ff41c19e6b8cc959f88f1dcd87233e7c8f9b0419fb779a9936ba1c68",
+      "revisions": [],
+      "run": "handwritten",
+      "schema": 1
+    },
+    "wrong-reason": {
+      "candidate": "synthetic:ovs-v6-overlay",
+      "case": "wrong-reason",
+      "findings": [
+        {
+          "attribution": "unknown",
+          "blocking": "should_not_block",
+          "factual": "supported",
+          "finding": "conclusion",
+          "root": "min-no-user-effect"
+        },
+        {
+          "attribution": "unknown",
+          "blocking": "should_not_block",
+          "factual": "unsupported",
+          "finding": "reason",
+          "root": null
+        }
+      ],
+      "observation_sha256": "dd0adfec6c1ee5773c5f92174af28a06c854178d9b60210a157c8282acce73fc",
+      "revisions": [],
+      "run": "handwritten",
+      "schema": 1
+    },
+    "missing-reason": {
+      "candidate": "synthetic:ovs-v6-overlay",
+      "case": "missing-reason",
+      "findings": [
+        {
+          "attribution": "unknown",
+          "blocking": "should_not_block",
+          "factual": "supported",
+          "finding": "conclusion",
+          "root": "min-no-user-effect"
+        }
+      ],
+      "observation_sha256": "e08652306ac7472e8066000c56d3cd042b818cb798c98fe802913e3388106ff2",
+      "revisions": [],
+      "run": "handwritten",
+      "schema": 1
+    },
+    "uncertain-reason": {
+      "candidate": "synthetic:ovs-v6-overlay",
+      "case": "uncertain-reason",
+      "findings": [
+        {
+          "attribution": "unknown",
+          "blocking": "should_not_block",
+          "factual": "supported",
+          "finding": "conclusion",
+          "root": "min-no-user-effect"
+        },
+        {
+          "attribution": "unknown",
+          "blocking": "should_not_block",
+          "factual": "uncertain",
+          "finding": "reason",
+          "root": null
+        }
+      ],
+      "observation_sha256": "2c20b29468fce8d56bc453fac78f4fbfcf36d942dc2d6eb40096d8934a2d9454",
+      "revisions": [],
+      "run": "handwritten",
+      "schema": 1
+    }
+  }
+}
