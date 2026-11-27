@@ -7889,6 +7889,76 @@ def _runaway_body(prompt_tokens, completion_tokens):
     )
 
 
+def test_ordinary_failure_exit_keeps_the_cause(monkeypatch):
+    """The exit that ends a call keeps the error that caused it.
+
+    A retryable failure followed by one that is not leaves the call through
+    the ordinary failure exit. Raising with ``from None`` there drops the
+    cause, so the operator cannot see what the last reply actually was.
+    """
+    import urllib.error
+
+    monkeypatch.setenv("K", "key")
+    first = urllib.error.HTTPError("https://example.com", 429, "Rate limited", {}, None)
+    first.read = Mock(return_value=b"rate limit exceeded")
+    last = urllib.error.HTTPError("https://example.com", 400, "Bad request", {}, None)
+    last.read = Mock(return_value=b"bad request")
+    with patch("urllib.request.urlopen", side_effect=[first, last]):
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=_runaway_backend(max_tokens=4096), max_attempts=3, initial_delay_s=0)
+    assert exc_info.value.__cause__ is not None
+
+
+def test_runaway_then_direct_refusal_keeps_both(monkeypatch):
+    """A refusal straight after a runaway reports both replies.
+
+    runaway 900/4096, refusal 11/17. The refusal exit used to copy the ledger
+    as it stood before the refusal, so the refusal's own reply was lost and
+    the total came out 900/4096.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_runaway_body(900, 4096)),
+        _mock_body(_refusal_body(11, 17)),
+    ]
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=_runaway_backend(max_tokens=4096), max_attempts=3, initial_delay_s=0)
+    assert opened.call_count == 2
+    error = exc_info.value
+    assert type(error).__name__ == "ProviderRefusalError"
+    assert error.observed_usage.input_tokens == 900 + 11
+    assert error.observed_usage.output_tokens == 4096 + 17
+
+
+def test_wider_refusal_counts_the_history_once(monkeypatch):
+    """A refusal while widening adds the earlier replies once.
+
+    truncation 800/4096, two continuations that stay cut (11/17 then 6/9),
+    then a refusal while widening 5/13. The wider retry used to add the spent
+    error's usage and the ledger both, and the two hold the same history, so
+    the total came out doubled.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_capped_json(_PARTIAL, 800, 4096)),
+        _mock_body(_capped_json(_PARTIAL, 11, 17)),
+        _mock_body(_capped_json(_PARTIAL, 6, 9)),
+        _mock_body(_refusal_body(5, 13)),
+    ]
+    import dataclasses
+
+    backend = dataclasses.replace(_runaway_backend(max_tokens=4096), output_token_limit=32768)
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=backend, max_attempts=4, initial_delay_s=0)
+    assert opened.call_count == 4
+    error = exc_info.value
+    assert type(error).__name__ == "ProviderRefusalError"
+    assert error.observed_usage.input_tokens == 800 + 11 + 6 + 5
+    assert error.observed_usage.output_tokens == 4096 + 17 + 9 + 13
+
+
 def test_runaway_then_truncation_then_refusal_keeps_the_runaway(monkeypatch):
     """A refusal after a runaway still carries the runaway's tokens.
 

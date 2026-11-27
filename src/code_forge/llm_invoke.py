@@ -4792,19 +4792,11 @@ def _invoke_api(
                     except ProviderRefusalError as refused:
                         if _strict_send_audit_failed(_audit_scope):
                             raise
-                        prior = (
-                            spent_error.observed_usage
-                            if spent_error is not None
-                            else _observed_usage(exc.usage_data, backend.format)
-                        )
+                        # The ledger already holds every reply before this
+                        # refusal. Adding the spent error's usage on top
+                        # counts that history a second time.
                         if ledger.usage is not None:
-                            prior = _sum_usage(
-                                ledger.usage,
-                                prior if prior is not None else Usage(known_fields=frozenset()),
-                            )
-                        refused._add_prior_usage(
-                            prior if prior is not None else Usage(known_fields=frozenset())
-                        )
+                            refused._add_prior_usage(ledger.usage)
                         refused.duration_s = time.monotonic() - start
                         raise
                 if wider is not None:
@@ -4850,9 +4842,15 @@ def _invoke_api(
                 # runaway raised inside the continuation already folded that
                 # total in, and this loop has not recorded the reply, so it
                 # passes through unchanged.
+                # The reply this error carries has not been recorded yet.
+                # Record it once, then read the total back, so a runaway
+                # followed by a refusal reports both and neither twice.
+                if not getattr(exc, "ledger_recorded", False):
+                    ledger.add(exc.observed_usage)
+                    exc.ledger_recorded = True
                 if ledger.usage is not None:
                     exc = ledger.finish(exc, final=False)
-                raise exc from None
+                raise
             delay = _retry_delay_s(attempt, initial_delay_s, exc.retry_after)
             # Carry the cause. Without it this line names a backend and a
             # delay and nothing else, so a run that retries forever gives the
