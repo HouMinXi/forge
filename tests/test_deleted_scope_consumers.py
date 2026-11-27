@@ -2334,7 +2334,10 @@ def test_machine_git_diff_ignores_scope_erasing_drivers(tmp_path, monkeypatch, p
         assert not kwargs.get("shell")
         kwargs.setdefault("timeout", 10)
         result = original_run(argv, **kwargs)
-        if list(argv[:2]) == ["git", "diff"]:
+        head = list(argv[1:])
+        if head and head[0] == "--no-replace-objects":
+            head = head[1:]
+        if list(argv[:1]) == ["git"] and head[:1] == ["diff"]:
             packets.append((list(argv), result.returncode, result.stdout))
         return result
 
@@ -2362,6 +2365,7 @@ def test_machine_git_diff_ignores_scope_erasing_drivers(tmp_path, monkeypatch, p
     assert _r1_identity(tmp_path / source) == before
     relevant = packets[-1][0]
     assert "--no-ext-diff" in relevant and "--no-textconv" in relevant
+    assert "--no-replace-objects" in relevant
     if producer == "untracked":
         assert "--no-index" in relevant and "/dev/null" in relevant
         assert "+value = 2" in packet and packets[-1][1] == 1

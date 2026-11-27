@@ -5659,7 +5659,7 @@ def _run_mutation_check(args, cwd: Path) -> int:
         review_head = captured_head()
         try:
             result = subprocess.run(
-                ["git", "diff", *_MACHINE_DIFF_OPTIONS, "HEAD"],
+                ["git", "--no-replace-objects", "diff", *_MACHINE_DIFF_OPTIONS, "HEAD"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

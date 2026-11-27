@@ -127,7 +127,7 @@ def run_git_diff(
     if shutil.which("git") is None:
         raise RuntimeError("git not found")
 
-    cmd = ["git", "diff", "-U0", diff_spec] + (extra_args or [])
+    cmd = ["git", "--no-replace-objects", "diff", "-U0", diff_spec] + (extra_args or [])
 
     result = subprocess.run(
         cmd,
@@ -185,7 +185,7 @@ def resolve_git_ref(ref: str, cwd: Path) -> str:
     from .errors import BaselineResolutionError
 
     result = subprocess.run(
-        ["git", "rev-parse", "--verify", ref + "^{commit}"],
+        ["git", "--no-replace-objects", "rev-parse", "--verify", ref + "^{commit}"],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -234,8 +234,22 @@ def write_tree(cwd: Path) -> str | None:
         except OSError:
             return None
         env = {**os.environ, "GIT_INDEX_FILE": str(copy)}
+        # A split index keeps its shared base in the real object directory, and
+        # write-tree may replace and expire that base: the user's index would
+        # then point at a deleted file. Make the private copy a plain index and
+        # keep split support off for the duration of the capture.
+        subprocess.run(
+            ["git", "-c", "core.splitIndex=false", "update-index", "--no-split-index"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=env,
+        )
         result = subprocess.run(
-            ["git", "--no-replace-objects", "write-tree"],
+            ["git", "--no-replace-objects", "-c", "core.splitIndex=false", "write-tree"],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -458,7 +472,16 @@ def working_tree_diff(
         #   0 = files identical (impossible vs /dev/null with content)
         #   1 = files differ (THE expected case)
         #   2+ = real error
-        cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, "--no-index", "--", "/dev/null", rel_path]
+        cmd = [
+            "git",
+            "--no-replace-objects",
+            "diff",
+            *_MACHINE_DIFF_OPTIONS,
+            "--no-index",
+            "--",
+            "/dev/null",
+            rel_path,
+        ]
         result = subprocess.run(
             cmd,
             cwd=repo_root,

@@ -2778,6 +2778,80 @@ def test_replace_refs_cannot_swap_the_reviewed_subject(ci_project):
     assert review.git_diff.strip() == from_tree.strip()
 
 
+def test_write_tree_keeps_a_split_index_readable(ci_project):
+    """Freezing the subject must not expire the shared base a split index uses."""
+    p = ci_project
+    _git(p.root, "config", "splitIndex.maxPercentChange", "100")
+    _git(p.root, "update-index", "--split-index")
+    (p.root / "calc.py").write_text("def add(a, b):\n    return a + b + 1\n", encoding="utf-8")
+    _git(p.root, "add", "calc.py")
+    _git(p.root, "config", "splitIndex.maxPercentChange", "0")
+    _git(p.root, "config", "splitIndex.sharedIndexExpire", "now")
+    index = p.root / ".git" / "index"
+    before = index.read_bytes()
+
+    from code_forge.git import write_tree
+
+    tree = write_tree(p.root)
+
+    assert tree
+    listed = subprocess.run(
+        ["git", "ls-files", "-s"], cwd=p.root, capture_output=True, text=True, check=False
+    )
+    assert listed.returncode == 0, listed.stderr
+    assert index.read_bytes() == before
+
+
+def test_resolve_git_ref_ignores_replacement_history(ci_project):
+    """HEAD^ must not traverse a local replacement commit's parents."""
+    p = ci_project
+    (p.root / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    _git(p.root, "add", "calc.py")
+    _git(p.root, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "base")
+
+    (p.root / "calc.py").write_text("def add(a, b):\n    return a + b + 1\n", encoding="utf-8")
+    _git(p.root, "add", "calc.py")
+    _git(p.root, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "head")
+    head = _git(p.root, "rev-parse", "HEAD")
+    raw_parent = _git(p.root, "rev-parse", "HEAD^")
+    head_tree = _git(p.root, "rev-parse", "HEAD^{tree}")
+
+    # A commit that already holds the change, then a replacement for the head
+    # whose parent is that commit rather than the real parent.
+    contained = _git(
+        p.root,
+        "-c",
+        "user.name=CI",
+        "-c",
+        "user.email=ci@example.invalid",
+        "commit-tree",
+        head_tree,
+        "-p",
+        raw_parent,
+        "-m",
+        "already contains the change",
+    )
+    replacement = _git(
+        p.root,
+        "-c",
+        "user.name=CI",
+        "-c",
+        "user.email=ci@example.invalid",
+        "commit-tree",
+        head_tree,
+        "-p",
+        contained,
+        "-m",
+        "replacement",
+    )
+    _git(p.root, "replace", head, replacement)
+    assert _git(p.root, "rev-parse", "HEAD^") == contained
+
+    from code_forge.git import resolve_git_ref
+
+    assert resolve_git_ref("HEAD^", p.root) == raw_parent
+
+
 def test_other_adapter_note_does_not_extend_the_applicability_pair():
     from code_forge.machine import _clean_mutation_skip_kind
 
