@@ -363,7 +363,7 @@ def _discover_mutmut(project):
     marker.chmod(0o700)
 
 
-def _machine(project, *, runner=None, l0=None, review=None, active_l1=False):
+def _machine(project, *, runner=None, l0=None, review=None, active_l1=False, mode=Mode.CI):
     review = _review(project) if review is None else review
     provider = build_l1_provider("auto" if active_l1 else "stub", review, max_attempts=1)
 
@@ -373,7 +373,7 @@ def _machine(project, *, runner=None, l0=None, review=None, active_l1=False):
         return ([], [])
 
     values = dict(
-        mode=Mode.CI,
+        mode=mode,
         falsifier=StubFalsifier(),
         autofixer=StubAutoFixer(),
         revert_fn=lambda _finding: None,
@@ -2125,10 +2125,7 @@ def test_baseline_timeout_reason_text(description, expected):
 
 
 def _local_machine(project, *, runner):
-    machine = _machine(project, runner=runner)
-    machine.mode = Mode.LOCAL
-    machine._state.mode = Mode.LOCAL
-    return machine
+    return _machine(project, runner=runner, mode=Mode.LOCAL)
 
 
 def _injected_timeout_runner(calls):
@@ -2260,6 +2257,267 @@ def test_no_adapter_diff_is_a_clean_skip_in_both_modes(ci_project, monkeypatch, 
     assert machine._mutation_bound_failure is False
 
 
+def _staged_review(project, rel: str):
+    return resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("INDEX"),
+        [Path(rel)],
+        project.root,
+    )
+
+
+def _committed_review(project, rel: str):
+    parent = _git(project.root, "rev-parse", "HEAD")
+    _git(project.root, "add", rel)
+    _git(
+        project.root,
+        "-c",
+        "user.name=CI Control",
+        "-c",
+        "user.email=ci-control@example.invalid",
+        "commit",
+        "-qm",
+        "add the staged test file",
+    )
+    head = _git(project.root, "rev-parse", "HEAD")
+    return resolve_baseline(
+        GitRefBaseline(parent),
+        GitRefBaseline(head),
+        [Path(rel)],
+        project.root,
+    )
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+@pytest.mark.parametrize("review_kind", ["index", "commit"])
+def test_tests_only_diff_is_not_applicable(ci_project, mode, review_kind):
+    """A tests-only diff records no measurement, so a review that cannot capture
+    the WORKING-only source guard -- INDEX or COMMIT -- must still classify the
+    skip as not applicable instead of 'invalid bound mutation measurement'."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    if review_kind == "index":
+        _git(p.root, "add", rel)
+        review = _staged_review(p, rel)
+    else:
+        review = _committed_review(p, rel)
+
+    machine = _machine(p, runner=mutation.run_mutation, review=review, mode=mode)
+    findings = machine._run_l2_phase()
+
+    assert [f.fingerprint for f in findings] == ["mutation-tests-only"]
+    assert all(f.disposition is Disposition.DISMISSED for f in findings)
+    assert machine._mutation_bound_failure is False
+    assert not any(
+        e.startswith("L2: invalid bound mutation measurement") for e in machine._state.infra_errors
+    )
+    assert (
+        machine._state.infra_errors.count(
+            "L2: mutation not applicable (diff is tests-only): tests/test_sample.py"
+        )
+        == 1
+    )
+    assert "baseline" not in p.stages
+
+
+def test_skip_evidence_phase_needs_its_own_evidence():
+    from code_forge.machine import _clean_mutation_skip_kind
+
+    no_mutants = [_skip(fingerprint="mutation-no-mutants", description="no mutants")]
+    results_timeout = [_skip(fingerprint="mutation-results-timeout", description="results timed out")]
+    results_evidence = {"inventory": {}, "results_sha256": "x"}
+
+    # Each phase accepts only its own evidence.
+    assert (
+        _clean_mutation_skip_kind(no_mutants, [], dict(results_evidence), source_unchanged=True)
+        == "no-mutants"
+    )
+    assert _clean_mutation_skip_kind(no_mutants, [], {"inventory": {}}, source_unchanged=True) is None
+    assert (
+        _clean_mutation_skip_kind(results_timeout, [], {"inventory": {}}, source_unchanged=True)
+        == "results-timeout"
+    )
+    assert (
+        _clean_mutation_skip_kind(results_timeout, [], dict(results_evidence), source_unchanged=True)
+        is None
+    )
+
+    # A captured guard that saw the source move blocks both phases, whatever
+    # evidence the carrier holds.
+    for rows, evidence in (
+        (no_mutants, results_evidence),
+        (no_mutants, {"inventory": {}}),
+        (results_timeout, {"inventory": {}}),
+        (results_timeout, results_evidence),
+    ):
+        assert _clean_mutation_skip_kind(rows, [], dict(evidence), source_unchanged=False) is None
+
+    # An uncaptured guard (INDEX/COMMIT) is no licence for a measured phase
+    # either; both kinds must still refuse.
+    assert (
+        _clean_mutation_skip_kind(no_mutants, [], dict(results_evidence), source_unchanged=None) is None
+    )
+    assert (
+        _clean_mutation_skip_kind(results_timeout, [], {"inventory": {}}, source_unchanged=None) is None
+    )
+
+
+def test_working_review_with_a_source_change_rejects_the_skip(ci_project, monkeypatch):
+    """A WORKING review always carries the guard: when it was captured and the
+    source moved, the tests-only skip must not be accepted as applicability."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+
+    from code_forge import machine as machine_mod
+
+    calls = {"n": 0}
+    real = machine_mod.mutation_source_guard_matches
+
+    seen = []
+
+    def first_matches_then_drifts(guard, *, source_root, **kwargs):
+        calls["n"] += 1
+        matched = real(guard, source_root=source_root)
+        seen.append((guard, source_root, matched))
+        assert not kwargs
+        return calls["n"] == 1 and matched
+
+    monkeypatch.setattr(machine_mod, "mutation_source_guard_matches", first_matches_then_drifts)
+
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("WORKING"),
+        [Path(rel)],
+        p.root,
+    )
+    runner = _machine(p, runner=mutation.run_mutation, review=review)
+    runner._run_l2_phase()
+
+    assert calls["n"] >= 2
+    # The first evaluation must really have matched; otherwise the test would
+    # pass without exercising the match-then-drift sequence at all.
+    assert seen[0][2] is True
+    assert seen[0][0] is not None and seen[0][1] == p.root
+    assert runner._state.findings == []
+    assert runner._mutation_bound_failure is True
+    assert any(
+        e.startswith("L2: invalid bound mutation measurement") for e in runner._state.infra_errors
+    )
+
+
+def test_working_review_with_a_matching_guard_accepts_the_skip(ci_project):
+    """The same call site must hand True to the classifier for a WORKING review;
+    the guard matched, so the applicability skip stays clean."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("WORKING"),
+        [Path(rel)],
+        p.root,
+    )
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    findings = machine._run_l2_phase()
+
+    assert [f.fingerprint for f in findings] == ["mutation-tests-only"]
+    assert all(f.disposition is Disposition.DISMISSED for f in findings)
+    assert machine._mutation_bound_failure is False
+    assert (
+        machine._state.infra_errors.count(
+            "L2: mutation not applicable (diff is tests-only): tests/test_sample.py"
+        )
+        == 1
+    )
+
+
+def test_baseline_timeout_skip_requires_a_captured_guard():
+    """The timeout wrapper keeps the tri-state contract: an applicability-style
+    exemption never applies, and an uncaptured guard cannot make it pass."""
+    from code_forge.machine import _is_clean_baseline_timeout_skip
+
+    description = "run 1: baseline tests timed out after 900s"
+    rows = [_skip(fingerprint="mutation-baseline-timeout", description=description)]
+    infra = [description]
+    evidence = {"inventory": {}}
+
+    assert _is_clean_baseline_timeout_skip(rows, infra, evidence, source_unchanged=True) is True
+    assert _is_clean_baseline_timeout_skip(rows, infra, evidence, source_unchanged=False) is False
+    assert _is_clean_baseline_timeout_skip(rows, infra, evidence, source_unchanged=None) is False
+
+
+def test_working_review_with_an_uncapturable_guard_fails_closed(ci_project, monkeypatch):
+    """A WORKING review always supplies a bool: if the guard cannot be captured,
+    that is False, not None, so applicability skips still fail closed."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+
+    from code_forge import machine as machine_mod
+
+    monkeypatch.setattr(machine_mod, "capture_mutation_source_guard", lambda **_kwargs: None)
+
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("WORKING"),
+        [Path(rel)],
+        p.root,
+    )
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    machine._run_l2_phase()
+
+    assert machine._mutation_bound_failure is True
+    assert any(
+        e.startswith("L2: invalid bound mutation measurement") for e in machine._state.infra_errors
+    )
+
+
+def test_other_adapter_note_does_not_extend_the_applicability_pair():
+    from code_forge.machine import _clean_mutation_skip_kind
+
+    for fingerprint, description in (
+        ("mutation-tests-only", "diff is tests-only"),
+        ("mutation-no-adapter", "no registered adapter"),
+    ):
+        mixed = [
+            _skip(fingerprint=fingerprint, description=description),
+            _skip(fingerprint="mutation-other-adapter", description="other adapter"),
+        ]
+        for guard in (True, False, None):
+            assert (
+                _clean_mutation_skip_kind(mixed, [], {"inventory": {}}, source_unchanged=guard) is None
+            )
+
+    # A measured kind still accepts the note when its own evidence is present.
+    noted = [
+        _skip(fingerprint="mutation-no-mutants", description="no mutants"),
+        _skip(fingerprint="mutation-other-adapter", description="other adapter"),
+    ]
+    assert (
+        _clean_mutation_skip_kind(
+            noted, [], {"inventory": {}, "results_sha256": "x"}, source_unchanged=True
+        )
+        == "no-mutants"
+    )
+    for guard in (False, None):
+        assert (
+            _clean_mutation_skip_kind(
+                noted, [], {"inventory": {}, "results_sha256": "x"}, source_unchanged=guard
+            )
+            is None
+        )
+
+
 @pytest.mark.parametrize(
     "findings,infra,expected",
     [
@@ -2296,8 +2554,25 @@ def test_clean_mutation_skip_kind(findings, infra, expected):
     objs = [_skip(fingerprint=fp, description=d) for fp, d in findings]
     evidence = {"inventory": {}}
     assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=True) == expected
+    # A review that cannot carry the guard neither invalidates an
+    # applicability skip nor rescues a measured kind.
+    assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=None) == (
+        "not-applicable" if expected == "not-applicable" else None
+    )
     if expected is not None:
+        # A captured guard that saw the source move always fails closed.
         assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=False) is None
+        # An uncaptured guard does not excuse invalid evidence either.
+        assert (
+            _clean_mutation_skip_kind(
+                objs, infra, {**evidence, "cleanup_error": "x"}, source_unchanged=None
+            )
+            is None
+        )
+        assert (
+            _clean_mutation_skip_kind(objs, infra, {"inventory": {"m": "killed"}}, source_unchanged=None)
+            is None
+        )
         assert (
             _clean_mutation_skip_kind(
                 objs, infra, {**evidence, "cleanup_error": "x"}, source_unchanged=True
@@ -2306,6 +2581,12 @@ def test_clean_mutation_skip_kind(findings, infra, expected):
         )
         assert (
             _clean_mutation_skip_kind(objs, infra, {"inventory": {"m": "killed"}}, source_unchanged=True)
+            is None
+        )
+        assert (
+            _clean_mutation_skip_kind(
+                objs, infra, {**evidence, "results_sha256": "x"}, source_unchanged=False
+            )
             is None
         )
 

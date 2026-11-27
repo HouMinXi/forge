@@ -48,6 +48,7 @@ from .disposition import (
 from .errors import CorruptedStateError
 from .falsify import Falsifier
 from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
+from .git import WORKING
 from .hold import check_escalated_frozen
 from .ledger import (
     LedgerRow,
@@ -379,7 +380,7 @@ def _clean_mutation_skip_kind(
     infra: list[str],
     evidence: dict,
     *,
-    source_unchanged: bool,
+    source_unchanged: bool | None,
 ) -> str | None:
     """Classify a native carrier that measured nothing, or return None.
 
@@ -393,7 +394,14 @@ def _clean_mutation_skip_kind(
     - ``"host-busy"`` (#282): ``mutation-host-busy`` skips (the host never
       went idle, so no baseline ran), same infra rule.
     - ``"not-applicable"`` (#127): only ``mutation-no-adapter`` /
-      ``mutation-tests-only`` skips and no infra lines at all.
+      ``mutation-tests-only`` skips and no infra lines at all. These skip
+      because the diff has nothing to mutate, not because a measurement was
+      taken. ``source_unchanged`` is tri-state here: ``None`` means the review
+      kind cannot carry the WORKING-only source guard (INDEX and COMMIT
+      reviews), so for this pair the guard cannot invalidate the skip. A
+      WORKING review always supplies ``True`` or ``False``, and ``False``
+      still fails closed. Measured kinds below require a captured guard in
+      every case.
 
     - ``"other-adapter-only"`` (#133): only a ``mutation-other-adapter`` note
       with exactly its own infra line. Ambiguous (real code in another
@@ -404,12 +412,14 @@ def _clean_mutation_skip_kind(
       results-timeout may carry generated-mutant evidence.
 
     The mixed-language ``mutation-other-adapter`` note (no infra line of its
-    own) may accompany any single skip kind. Anything else -- a changed source,
-    a measurement that claims completion, mutant-phase evidence, survivors,
-    mixed kinds, extra or reordered infra errors, or any cleanup / cancellation
-    / process-failure marker -- returns None and still fails closed.
+    own) may accompany any single skip kind that has its own entry below; it
+    does not extend the applicability pair. Anything else -- a changed source
+    on a measured kind, a measurement that claims completion, mutant-phase
+    evidence, survivors, mixed kinds, extra or reordered infra errors, or any
+    cleanup / cancellation / process-failure marker -- returns None and still
+    fails closed.
     """
-    if not source_unchanged or evidence.get("completed_measurement") is True or not findings:
+    if evidence.get("completed_measurement") is True or not findings:
         return None
     if any(f.id != "MUTATION_SKIPPED" or f.disposition is not Disposition.DISMISSED for f in findings):
         return None
@@ -427,8 +437,14 @@ def _clean_mutation_skip_kind(
     mutant_phase = any(key in evidence for key in _MUTANT_PHASE_KEYS)
     inventory = evidence.get("inventory", {})
     if kinds <= {"mutation-no-adapter", "mutation-tests-only"}:
+        if source_unchanged is False:
+            # The guard was captured and the source moved: the skip cannot be
+            # trusted even though it claims no measurement.
+            return None
         ok = list(infra) == [] and not mutant_phase and inventory == {}
         return "not-applicable" if ok else None
+    if not source_unchanged:
+        return None
     if kinds == {"mutation-other-adapter"}:
         # #133: other-language code with a registered but uninvoked adapter.
         ok = list(infra) == [_OTHER_ADAPTER_INFRA] and not mutant_phase and inventory == {}
@@ -664,7 +680,7 @@ def _is_clean_baseline_timeout_skip(
     infra: list[str],
     evidence: dict,
     *,
-    source_unchanged: bool,
+    source_unchanged: bool | None,
 ) -> bool:
     """#120: the runner stopped at a cleanly classified baseline timeout."""
     kind = _clean_mutation_skip_kind(findings, infra, evidence, source_unchanged=source_unchanged)
@@ -3646,7 +3662,11 @@ class StateMachine:
                         l2_findings,
                         l2_infra,
                         evidence,
-                        source_unchanged=bool(source_before and source_after),
+                        source_unchanged=(
+                            bool(source_before and source_after)
+                            if self.resolved_review.target_kind == WORKING
+                            else None
+                        ),
                     )
                     if kind is None:
                         self._mutation_bound_failure = True
