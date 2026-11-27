@@ -23,6 +23,7 @@ umask 077
 repo=$(git rev-parse --show-toplevel)
 subject=0e87b3c61c0cd1e1a5408b76c030044dc20b7259
 run=$(mktemp -d)
+printf 'Results: %s\n' "$run"
 mkdir "$run/fixed"
 git --no-replace-objects -C "$repo" archive "$subject" | tar -x -C "$run/fixed"
 python3.12 -m venv "$run/venv"
@@ -32,7 +33,6 @@ python3.12 -m venv "$run/venv"
   cd "$run"
   "$run/venv/bin/python" "$repo/docs/eval/perf-threshold-replay/replay.py"
 )
-printf 'Results: %s\n' "$run"
 ```
 
 Dependency installation is setup, outside the measurements. If using a
@@ -40,7 +40,12 @@ prepared offline environment, record its dependency versions instead. If
 the pinned commit isn't available locally, obtain it through the normal
 repository checkout before running. Don't substitute current `main`.
 If the run exits early, keep the error and any partial records; don't call
-that a measured pass or quietly replace it with another run.
+that a measured pass or quietly replace it with another run. Each complete
+four-arm block is published as `block-<window>-<block>.json` before the next
+block starts. An interrupted block is not published; a window only gets a
+verdict after nine completed blocks. Keep the checkpoint files even if no
+window or summary was written. Hidden temporary files left by a forced stop
+are not checkpoints.
 
 ## What counts
 
@@ -61,8 +66,8 @@ that a measured pass or quietly replace it with another run.
   slower. A clean exit means the script finished, not that this criterion
   passed; read `summary.json`.
 - Send `design.json`, `runner-preflight.json`, `summary.json`, all six
-  `window-*.json`, and the dependency versions. Include any errors and the
-  runner's isolation conditions. Do not cherry-pick groups or claim the
+  `window-*.json`, all available `block-*.json`, and the dependency versions.
+  Include any errors and the runner's isolation conditions. Do not cherry-pick groups or claim the
   processes establish statistical independence.
 
 The earlier shared-runner run recorded clean **6/6 within**, lower **2 within /
