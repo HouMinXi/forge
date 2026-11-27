@@ -7866,6 +7866,126 @@ def _stop_json(content, prompt_tokens, completion_tokens):
     }
 
 
+def _refusal_body(prompt_tokens, completion_tokens):
+    return {
+        "choices": [
+            {
+                "message": {"content": None, "refusal": "provider refused the request"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+    }
+
+
+def _runaway_body(prompt_tokens, completion_tokens):
+    return _length_body(
+        "",
+        {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "completion_tokens_details": {"reasoning_tokens": completion_tokens},
+        },
+    )
+
+
+def test_runaway_then_truncation_then_refusal_keeps_the_runaway(monkeypatch):
+    """A refusal after a runaway still carries the runaway's tokens.
+
+    runaway 900/4096, truncation 805/4096, refusal 6/17. The refusal keeps its
+    own class, and the total is every reply, not the last two.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_runaway_body(900, 4096)),
+        _mock_body(_capped_json(_PARTIAL, 805, 4096)),
+        _mock_body(_refusal_body(6, 17)),
+    ]
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=_runaway_backend(max_tokens=4096), max_attempts=4, initial_delay_s=0)
+    assert opened.call_count == 3
+    error = exc_info.value
+    assert type(error).__name__ == "ProviderRefusalError"
+    assert error.observed_usage.input_tokens == 900 + 805 + 6
+    assert error.observed_usage.output_tokens == 4096 + 4096 + 17
+
+
+def test_runaway_inside_continuation_is_not_counted_twice_on_a_wider_success(monkeypatch):
+    """A runaway seen while continuing is recorded once.
+
+    truncation 800/4096, runaway inside the continuation 900/4096, then the
+    continuation's budget is spent and the wider retry lands 5/30. The
+    runaway belongs to the call once, so the wider success is 1705/8222 and
+    not that total plus the runaway again.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_capped_json(_PARTIAL, 800, 4096)),
+        _mock_body(_runaway_body(900, 4096)),
+        _mock_body(_stop_json(_PARTIAL + _TAIL, 5, 30)),
+    ]
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        result = llm_invoke(
+            "p", backend=_runaway_backend(max_tokens=4096), max_attempts=5, initial_delay_s=0
+        )
+    assert opened.call_count == 3
+    assert result.usage.input_tokens == 800 + 900 + 5
+    assert result.usage.output_tokens == 4096 + 4096 + 30
+
+
+def test_second_runaway_while_continuing_stops_before_widening(monkeypatch):
+    """The second runaway of a call, met while continuing, ends the call.
+
+    runaway 900/4096, truncation 805/4096, then a runaway while continuing
+    6/4096. The continuation shares the call's runaway count, so it stops
+    there: the wider retry never sends, and the total is all three replies.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_runaway_body(900, 4096)),
+        _mock_body(_capped_json(_PARTIAL, 805, 4096)),
+        _mock_body(_runaway_body(6, 4096)),
+        _mock_body(_runaway_body(0, 4096)),
+    ]
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=_runaway_backend(max_tokens=4096), max_attempts=6, initial_delay_s=0)
+    assert opened.call_count == 3
+    error = exc_info.value
+    assert getattr(error, "reasoning_runaway", False)
+    assert error.retryable is False
+    assert error.observed_usage.input_tokens == 900 + 805 + 6
+    assert error.observed_usage.output_tokens == 4096 * 3
+
+
+def test_runaway_inside_continuation_stops_the_wider_retry(monkeypatch):
+    """A runaway while continuing counts, so a runaway while widening stops.
+
+    truncation 800/4096, runaway inside the continuation 900/4096, then a
+    runaway while widening 8/4096. The continuation spent one of its two
+    attempts on the runaway and stopped, so the wider retry gets its turn,
+    sees the updated count and stops. Nothing further is sent, and the error
+    stays a runaway rather than a plain truncation.
+    """
+    monkeypatch.setenv("K", "key")
+    replies = [
+        _mock_body(_capped_json(_PARTIAL, 800, 4096)),
+        _mock_body(_runaway_body(900, 4096)),
+        _mock_body(_runaway_body(8, 4096)),
+        _mock_body(_runaway_body(0, 4096)),
+    ]
+    with patch("urllib.request.urlopen", side_effect=replies) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke("p", backend=_runaway_backend(max_tokens=4096), max_attempts=6, initial_delay_s=0)
+    assert opened.call_count == 3
+    error = exc_info.value
+    assert getattr(error, "reasoning_runaway", False)
+    assert error.retryable is False
+    assert error.observed_usage.input_tokens == 800 + 900 + 8
+    assert error.observed_usage.output_tokens == 4096 * 3
+
+
 def test_runaway_then_truncation_then_continuation_keeps_every_reply(monkeypatch):
     """A runaway before a recovered truncation still counts.
 

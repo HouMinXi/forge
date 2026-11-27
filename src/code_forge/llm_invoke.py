@@ -353,6 +353,39 @@ def _whole_usage_counts(usage_data: dict) -> dict:
     return normalized
 
 
+class _CallLedger:
+    """Usage and runaway count for one invoke call, shared by every attempt.
+
+    Each observed reply is recorded once, by the code that saw it. An exit
+    reads the total back and never adds a reply of its own, so a reply cannot
+    be counted twice or dropped because one exit forgot to.
+    """
+
+    def __init__(self):
+        self.usage = None
+        self.runaways = 0
+
+    def add(self, usage):
+        if usage is None:
+            return
+        self.usage = usage if self.usage is None else _sum_usage(self.usage, usage)
+
+    def note_runaway(self):
+        self.runaways += 1
+        return self.runaways
+
+    def finish(self, error, *, final):
+        """Put the call's recorded total on ``error`` and return it."""
+        if self.usage is not None:
+            error.observed_usage = self.usage
+            error.usage = (
+                self.usage if {"input_tokens", "output_tokens"} <= self.usage.known_fields else None
+            )
+        if final:
+            error.retryable = False
+        return error
+
+
 def _with_recorded_usage(error, recorded):
     """Carry usage recorded earlier in this call onto an error that leaves it.
 
@@ -4010,8 +4043,7 @@ def _continue_truncated(
     strict_response: bool = False,
     *,
     _audit_scope=None,
-    runaway_seen: int = 0,
-    recorded_usage=None,
+    ledger=None,
 ):
     """Recover a truncated reply with a bounded continuation.
 
@@ -4028,11 +4060,14 @@ def _continue_truncated(
     """
     last_failure = ""
     observed = _observed_usage(truncated.usage_data, backend.format)
+    if ledger is not None:
+        ledger.add(observed)
 
     def exhausted():
         error = _exhaustion_error(budget, last_failure)
-        error.observed_usage = observed
-        error.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
+        total = ledger.usage if ledger is not None and ledger.usage is not None else observed
+        error.observed_usage = total
+        error.usage = total if {"input_tokens", "output_tokens"} <= total.known_fields else None
         return error
 
     try:
@@ -4058,7 +4093,8 @@ def _continue_truncated(
             "",
         ).replace("<partial>", "")[-2000:]
         prompt_c = CONTINUE_PROMPT % tail
-        for _attempt in range(budget):
+        _attempt = 0
+        while _attempt < budget:
             # A trip recorded by another worker between attempts stops
             # this call's remaining attempts before the next dispatch.
             if breaker is not None:
@@ -4099,7 +4135,11 @@ def _continue_truncated(
             except ProviderRefusalError as exc:
                 if _strict_send_audit_failed(_audit_scope):
                     raise
-                exc._add_prior_usage(observed)
+                # Leave the refusal's own usage on it. The caller holds the
+                # call ledger and adds what came before, so adding it here
+                # would count the continuation's replies twice.
+                if ledger is None:
+                    exc._add_prior_usage(observed)
                 raise
             except (AuditPersistenceError, SendDeadlineError):
                 raise
@@ -4110,6 +4150,10 @@ def _continue_truncated(
                 # counted here, before the truncation branch treats it as one
                 # more cut reply and sends another continuation.
                 if getattr(exc, "reasoning_runaway", False):
+                    if ledger is not None and not getattr(exc, "ledger_recorded", False):
+                        ledger.add(exc.observed_usage)
+                        ledger.note_runaway()
+                        exc.ledger_recorded = True
                     observed = _sum_usage(
                         observed,
                         exc.observed_usage
@@ -4118,37 +4162,35 @@ def _continue_truncated(
                     )
                     # The same call-wide cap as the outer retry: one runaway
                     # may be followed, a second one stops.
-                    runaway_seen += 1
-                    if runaway_seen >= 2:
-                        # Fold the caller's recorded total in here and raise
-                        # unchanged, so the outer handler lets it through
-                        # instead of wrapping it as an exhausted continuation.
-                        carry = observed
-                        if recorded_usage is not None:
-                            carry = _sum_usage(recorded_usage, observed)
-                        exc.observed_usage = carry
-                        exc.usage = (
-                            carry if {"input_tokens", "output_tokens"} <= carry.known_fields else None
-                        )
-                        # Tells the caller's retry loop the total is already
-                        # folded in, so it must not record this reply again.
-                        exc.usage_complete = True
+                    if ledger is not None and ledger.runaways >= 2:
                         raise
+                    _attempt += 1
+                    # One runaway does not end the continuation, and it is not
+                    # a truncated reply to keep cutting. It does spend one of
+                    # this continuation's attempts, the same as any reply that
+                    # did not finish the answer.
+                    continue
                 if isinstance(exc, _TruncatedResponse):
-                    observed = _sum_usage(observed, _observed_usage(exc.usage_data, backend.format))
+                    step = _observed_usage(exc.usage_data, backend.format)
+                    observed = _sum_usage(observed, step)
+                    if ledger is not None:
+                        ledger.add(step)
                     # A truncated continuation is a failed attempt, and the
                     # event still counts. A trip raised here leaves the
                     # inner try and reaches the outer clauses below.
                     last_failure = " ".join(str(exc).split())[:400]
                     if breaker is not None:
                         breaker.record_truncation()
+                    _attempt += 1
                     continue
-                observed = _sum_usage(
-                    observed,
+                step = (
                     exc.observed_usage
                     if exc.observed_usage is not None
-                    else Usage(known_fields=frozenset()),
+                    else Usage(known_fields=frozenset())
                 )
+                observed = _sum_usage(observed, step)
+                if ledger is not None:
+                    ledger.add(step)
                 # A non-truncation invoke error (HTTP status, timeout)
                 # is a failed attempt against this budget; it must not
                 # escape to the caller's max_attempts retry loop, which
@@ -4161,8 +4203,12 @@ def _continue_truncated(
                     _retry_cause(exc, audited=True) if _audit_scope is not None else str(exc),
                 )
                 last_failure = " ".join(str(exc).split())[:400]
+                _attempt += 1
                 continue
-            observed = _sum_usage(observed, _observed_usage(usage_c, backend.format))
+            step = _observed_usage(usage_c, backend.format)
+            observed = _sum_usage(observed, step)
+            if ledger is not None:
+                ledger.add(step)
             if not isinstance(cont, str):
                 cont = ""
             parsed = _continued_reply(
@@ -4170,12 +4216,16 @@ def _continue_truncated(
             )
             if isinstance(parsed, str):
                 last_failure = parsed
+                _attempt += 1
                 continue
             return parsed, observed
+        _attempt += 1
     except TruncationBreakerError as exc:
         if _strict_send_audit_failed(_audit_scope):
             raise
         # Retain this invocation's observations, not the run-wide event count.
+        if ledger is not None and ledger.usage is not None:
+            observed = ledger.usage
         exc.observed_usage = observed
         exc.usage = observed if {"input_tokens", "output_tokens"} <= observed.known_fields else None
         raise
@@ -4264,7 +4314,7 @@ def _retry_with_more_headroom(
     *,
     on_failure_usage: Callable[[Usage], None] | None = None,
     _audit_scope=None,
-    runaway_seen: int = 0,
+    ledger=None,
 ):
     """Re-ask for the whole answer with a wider output cap.
 
@@ -4329,19 +4379,26 @@ def _retry_with_more_headroom(
             raise
         if isinstance(exc, ProviderRefusalError):
             raise
-        if getattr(exc, "reasoning_runaway", False) and runaway_seen + 1 >= 2:
-            # A second runaway in this call. Report the tokens and stop
-            # instead of letting the caller treat it as one more failed try.
-            if on_failure_usage is not None and exc.observed_usage is not None:
-                on_failure_usage(exc.observed_usage)
-            raise exc
+        if getattr(exc, "reasoning_runaway", False):
+            # Record once and stop when this call has now seen two. The
+            # caller's loop reads the same ledger, so it will not record it
+            # again or keep sending.
+            if ledger is not None and not getattr(exc, "ledger_recorded", False):
+                ledger.add(exc.observed_usage)
+                ledger.note_runaway()
+                exc.ledger_recorded = True
+            if ledger is not None and ledger.runaways >= 2:
+                raise ledger.finish(exc, final=True) from None
         if on_failure_usage is not None:
             observed = (
                 _observed_usage(exc.usage_data, backend.format)
                 if isinstance(exc, _TruncatedResponse)
                 else exc.observed_usage
             )
-            on_failure_usage(observed if observed is not None else Usage(known_fields=frozenset()))
+            reported = observed if observed is not None else Usage(known_fields=frozenset())
+            # Report only. The caller's callback records the reply into the
+            # shared ledger; recording it here too would count it twice.
+            on_failure_usage(reported)
         logging.getLogger("code_forge").warning(
             "wider retry failed: %s: %s",
             "LLMInvokeError" if _audit_scope is not None else type(exc).__name__,
@@ -4444,12 +4501,7 @@ def _invoke_api(
     # Inner try catches TimeoutError (socket.timeout alias on Python 3.12+).
     # Outer except catches LLMInvokeError from both the format dispatch and
     # the converted TimeoutError, applying retry logic.
-    runaway_attempts = 0
-    # Output tokens a reasoning runaway already burned in this call. Each
-    # attempt reports only itself, so without this a retry that succeeds
-    # records the second reply alone and a second runaway records one of the
-    # two budgets.
-    runaway_spent = None
+    ledger = _CallLedger()
     for attempt in range(max_attempts):
         # Fail fast before any network call once the run-level breaker
         # has tripped: further passes would only repeat the same
@@ -4617,8 +4669,8 @@ def _invoke_api(
                 if isinstance(exc, _TruncatedResponse):
                     correction_usage = _observed_usage(exc.usage_data, backend.format)
                 base = initial_syntax_usage
-                if runaway_spent is not None:
-                    base = _sum_usage(runaway_spent, base)
+                if ledger.usage is not None:
+                    base = _sum_usage(ledger.usage, base)
                 observed = _sum_usage(
                     base,
                     correction_usage
@@ -4659,14 +4711,17 @@ def _invoke_api(
                         reply_keys=reply_keys,
                         strict_response=strict_response,
                         **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
-                        runaway_seen=runaway_attempts,
-                        recorded_usage=runaway_spent,
+                        ledger=ledger,
                     )
                 except TruncationBreakerError as tripped:
-                    raise _with_recorded_usage(tripped, runaway_spent) from None
+                    raise ledger.finish(tripped, final=True) from None
                 except ProviderRefusalError as refused:
                     if _strict_send_audit_failed(_audit_scope):
                         raise
+                    # The refusal carries only its own reply. The ledger holds
+                    # every reply before it, each recorded once.
+                    if ledger.usage is not None:
+                        refused._add_prior_usage(ledger.usage)
                     refused.duration_s = time.monotonic() - start
                     raise
                 except (AuditPersistenceError, SendDeadlineError):
@@ -4684,8 +4739,10 @@ def _invoke_api(
                     spent_error = spent
                 if recovered is not None:
                     parsed, usage = recovered
-                    if runaway_spent is not None:
-                        usage = _sum_usage(runaway_spent, usage)
+                    # The continuation recorded every reply into the ledger as
+                    # it saw it, so the total is already there. Adding the
+                    # returned slice again would count it twice.
+                    usage = ledger.usage if ledger.usage is not None else usage
                     return LLMResult(
                         content=parsed,
                         usage=usage,
@@ -4705,15 +4762,16 @@ def _invoke_api(
                 def retain_wider_failure_usage(
                     observed: Usage, error: LLMInvokeError | None = spent_error
                 ) -> None:
+                    # The wider reply failed, so it never returns a result to
+                    # record. The ledger is the call's one record of it.
+                    ledger.add(observed)
                     if error is not None:
-                        prior = error.observed_usage
-                        total = _sum_usage(
-                            prior if prior is not None else Usage(known_fields=frozenset()),
-                            observed,
-                        )
-                        error.observed_usage = total
+                        error.observed_usage = ledger.usage
                         error.usage = (
-                            total if {"input_tokens", "output_tokens"} <= total.known_fields else None
+                            ledger.usage
+                            if ledger.usage is not None
+                            and {"input_tokens", "output_tokens"} <= ledger.usage.known_fields
+                            else None
                         )
 
                 wider = None
@@ -4729,7 +4787,7 @@ def _invoke_api(
                             strict_response=strict_response,
                             on_failure_usage=retain_wider_failure_usage,
                             **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
-                            runaway_seen=runaway_attempts,
+                            ledger=ledger,
                         )
                     except ProviderRefusalError as refused:
                         if _strict_send_audit_failed(_audit_scope):
@@ -4739,9 +4797,9 @@ def _invoke_api(
                             if spent_error is not None
                             else _observed_usage(exc.usage_data, backend.format)
                         )
-                        if runaway_spent is not None:
+                        if ledger.usage is not None:
                             prior = _sum_usage(
-                                runaway_spent,
+                                ledger.usage,
                                 prior if prior is not None else Usage(known_fields=frozenset()),
                             )
                         refused._add_prior_usage(
@@ -4751,11 +4809,11 @@ def _invoke_api(
                         raise
                 if wider is not None:
                     parsed, usage = wider
-                    if spent_error is not None and spent_error.observed_usage is not None:
-                        # The spent budget already includes the initial cut reply.
-                        usage = _sum_usage(spent_error.observed_usage, usage)
-                    if runaway_spent is not None:
-                        usage = _sum_usage(runaway_spent, usage)
+                    # The wider reply is the one piece not yet recorded. The
+                    # cut reply and anything before it are already in the
+                    # ledger, so only this reply is added.
+                    ledger.add(usage)
+                    usage = ledger.usage
                     return LLMResult(
                         content=parsed,
                         usage=usage,
@@ -4766,7 +4824,7 @@ def _invoke_api(
                     # Report the spent budget, not the last cut-off
                     # reply: the exhaustion message names every attempt
                     # and the reason each failed.
-                    raise _with_recorded_usage(spent_error, runaway_spent) from None
+                    raise ledger.finish(spent_error, final=True) from None
             cause = _retry_cause(exc, audited=_audit_scope is not None)
             # One fresh reply after a reasoning loop is worth its cost: the
             # same prompt that looped once answered on the next call. A second
@@ -4775,27 +4833,14 @@ def _invoke_api(
             # alone: it counts provider-cap truncations, and a reasoning loop
             # is a different failure whose class must not become capacity.
             if isinstance(exc, LLMInvokeError) and getattr(exc, "reasoning_runaway", False):
-                # The continuation folds this call's recorded total into the
-                # error before raising it, so the total is already complete.
-                # Recording it again would add the whole of it a second time.
-                if getattr(exc, "usage_complete", False):
-                    exc.retryable = False
-                    raise exc from None
-                runaway_attempts += 1
-                # Record before any exit below. The settle adds an error's own
-                # usage only when it is not already in this total, so a reply
-                # recorded here is not counted a second time.
-                if exc.observed_usage is not None:
-                    runaway_spent = (
-                        exc.observed_usage
-                        if runaway_spent is None
-                        else _sum_usage(runaway_spent, exc.observed_usage)
-                    )
-                if runaway_attempts >= 2:
-                    # Two runaways end the call. The reply stays retryable on
-                    # its own; the call that observed two of them is not.
-                    exc.retryable = False
-                    raise _with_recorded_usage(exc, runaway_spent) from None
+                # Record each runaway reply once. A continuation that already
+                # recorded it marks the error, so the total is not doubled.
+                if not getattr(exc, "ledger_recorded", False):
+                    ledger.add(exc.observed_usage)
+                    ledger.note_runaway()
+                    exc.ledger_recorded = True
+                if ledger.runaways >= 2:
+                    raise ledger.finish(exc, final=True) from None
             if not exc.retryable or attempt == max_attempts - 1:
                 if attempt > 0 or (exc.retryable and max_attempts == 1):
                     _emit_retry_failed(backend.name, max_attempts, cause)
@@ -4805,8 +4850,8 @@ def _invoke_api(
                 # runaway raised inside the continuation already folded that
                 # total in, and this loop has not recorded the reply, so it
                 # passes through unchanged.
-                if runaway_spent is not None:
-                    exc = _with_recorded_usage(exc, runaway_spent)
+                if ledger.usage is not None:
+                    exc = ledger.finish(exc, final=False)
                 raise exc from None
             delay = _retry_delay_s(attempt, initial_delay_s, exc.retry_after)
             # Carry the cause. Without it this line names a backend and a
@@ -4831,10 +4876,10 @@ def _invoke_api(
 
     if initial_syntax_usage is not None:
         usage = _sum_usage(initial_syntax_usage, usage)
-    if runaway_spent is not None:
+    if ledger.usage is not None:
         # The reply that landed came after a reasoning runaway. Both requests
         # spent tokens, and the result has to say so.
-        usage = _sum_usage(runaway_spent, usage)
+        usage = _sum_usage(ledger.usage, usage)
     return LLMResult(content=parsed_content, usage=usage, duration_s=duration, raw_response=raw_content)
 
 
