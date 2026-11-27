@@ -4,6 +4,7 @@ import http.client
 import math
 import re
 import ssl
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
@@ -35,6 +36,8 @@ class WireReceipt:
         "output_over_limit",
         "unfinished_response",
         "no_usable_reply",
+        "private_reply_rejected",
+        "private_reply_unstored",
     ]
     response_sha256: str | None = None
     reported_model: str | None = None
@@ -47,6 +50,24 @@ class WireReceipt:
 
 def _count(value: object) -> int | None:
     return value if type(value) is int and 0 <= value <= 2**53 - 1 else None
+
+
+def _has_key(doc: object, key: str) -> bool:
+    # Examine decoded strings too: an echo can be JSON-escaped on the wire.
+    pending = [iter((doc,))]
+    while pending:
+        for value in pending[-1]:
+            if type(value) is str and key in value:
+                return True
+            if type(value) is list:
+                pending.append(iter(value))
+                break
+            if type(value) is dict:
+                pending.extend((iter(value), iter(value.values())))
+                break
+        else:
+            pending.pop()
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +110,7 @@ class DirectSmokeTransport:
             "smoke_wire.timeout",
         )
 
-    def check_body(self, body: bytes) -> int:
+    def check_body(self, body: bytes, *, retaining: bool = False) -> int:
         """Validate an already serialized request; never transform its bytes."""
         require(type(body) is bytes and 0 < len(body) <= 4 * 1024 * 1024, "smoke_wire.body")
         try:
@@ -117,17 +138,28 @@ class DirectSmokeTransport:
         caps = doc.keys() & _CAP_FIELDS
         cap = doc[next(iter(caps))] if len(caps) == 1 else None
         require(type(cap) is int and 1 <= cap <= self.output_cap, "smoke_wire.output_cap")
+        if retaining:
+            require(
+                self.api_key.encode("ascii") not in body and not _has_key(doc, self.api_key),
+                "smoke_artifacts.credential_in_body",
+            )
         return cap
 
     def __call__(self, body: bytes) -> WireReceipt:
         return self.send(body)
 
-    def send(self, body: bytes, *, request_id: str | None = None) -> WireReceipt:
+    def send(
+        self,
+        body: bytes,
+        *,
+        request_id: str | None = None,
+        retain_reply: Callable[[bytes], None] | None = None,
+    ) -> WireReceipt:
         require(
             request_id is None or (type(request_id) is str and bool(_REQUEST_ID.fullmatch(request_id))),
             "smoke_wire.request_id",
         )
-        cap = self.check_body(body)
+        cap = self.check_body(body, retaining=retain_reply is not None)
         failure = "wire_io_unknown"
         try:
             # The default context factory can honor SSLKEYLOGFILE. Do not
@@ -150,7 +182,7 @@ class DirectSmokeTransport:
                     },
                 )
                 with connection.getresponse() as response:
-                    receipt = self._read(response, cap)
+                    receipt = self._read(response, cap, retain_reply)
                     ids = response.headers.get_all("X-Request-Id", [])
                     if len(ids) == 1 and 0 < len(ids[0]) <= 512:
                         receipt = replace(
@@ -166,7 +198,12 @@ class DirectSmokeTransport:
             pass
         raise SmokeWireError(failure)
 
-    def _read(self, response: http.client.HTTPResponse, cap: int) -> WireReceipt:
+    def _read(
+        self,
+        response: http.client.HTTPResponse,
+        cap: int,
+        retain_reply: Callable[[bytes], None] | None,
+    ) -> WireReceipt:
         status = response.status
         if not 100 <= status <= 599:
             raise SmokeWireError("wire_protocol_unknown")
@@ -234,6 +271,16 @@ class DirectSmokeTransport:
             outcome = "output_over_limit"
         else:
             outcome = "accepted"
+        if outcome == "accepted" and retain_reply is not None:
+            if self.api_key.encode("ascii") in raw or _has_key(doc, self.api_key):
+                outcome = "private_reply_rejected"
+            else:
+                try:
+                    retain_reply(raw)
+                except OSError:
+                    # The wire reply is known even though its body could not
+                    # be retained. Keep accounting without exposing I/O details.
+                    outcome = "private_reply_unstored"
         return WireReceipt(
             status,
             outcome,

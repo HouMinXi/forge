@@ -294,10 +294,39 @@ A non-accepted result stops the run with later slots untouched. If the reply
 cannot be obtained in full because of a timeout or connection failure, the
 reserved attempt stays unknown and the run cannot be resumed.
 
+Private body retention is off by default. For a separately authorized smoke,
+pass an existing owner-only (`0700`) POSIX `artifact_dir` to `run_smoke_once`
+with the direct transport. Choose a local directory with trusted ancestors
+outside checkouts, CI uploads, or synced folders. The final root component
+must not be a symlink. A new per-run namespace holds owner-only files; no
+existing run or payload is overwritten. Files are plaintext: restrict access
+and set a deletion window before use. Keep the separate one-use journal marker
+after deleting payloads.
+
+The runner retains only exact frozen request bodies for reserved sends and
+complete accepted response entities (after HTTP framing, without headers).
+It rejects a known credential in request bodies before any send or in an
+otherwise accepted reply before writing that reply, including JSON-escaped
+echoes. This is not a general-purpose secret scrubber. Non-accepted responses
+retain only their sanitized receipt, not their body. Existing per-body limits
+and the fixed attempt ceiling bound retained payload bytes (at most 96 MiB
+with the maximum 12 slots and 4 MiB per direction).
+
+Journal references contain the run namespace, per-attempt filename, byte
+length and SHA-256, not the private root path or raw content. The request
+must be durable before the reservation and POST; a retained reply must be
+durable before its terminal journal event. An I/O interruption can leave
+unreferenced or incomplete files; only journal-referenced bytes matching
+their digests are evidence. If reply storage fails but the journal is still
+writable, the run records a failed attempt (`private_reply_unstored`) with
+the sanitized wire receipt, available usage, and no response artifact
+reference. It stops without sending the next slot. If the terminal journal
+event cannot be made durable, no terminal state is exposed. Neither failure
+allows resume or reuse.
+
 The manual offline suite drives the real HTTP serializer/parser over a
 socketpair and does not open a network connection or perform TLS. This
 qualifies the client boundary only. The model echo is not provider or billing
 attribution. Before an approved live smoke, separately pin and verify the
 upstream and billing account, cap enforcement, actual elapsed-time budget,
-and private retention of the frozen request bodies and the needed response
-artifacts. No real model was called by these tests.
+and a private destination and deletion window for the retained bodies. No real model was called by these tests.

@@ -4,12 +4,14 @@ import json
 import os
 import uuid
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import asdict
 from pathlib import Path
 from typing import BinaryIO
 
 from .attempt_plan import AttemptRow, PairedAttemptGate
 from .fixtures import InputError, digest, identifier, require
+from .smoke_artifacts import private_root, run_artifacts, store_payload
 from .smoke_transport import DirectSmokeTransport, WireReceipt
 
 
@@ -26,6 +28,7 @@ def run_smoke_once(
     gate: PairedAttemptGate,
     request_bodies: tuple[bytes, ...],
     send_once: Callable[[bytes], bool | WireReceipt],
+    artifact_dir: Path | None = None,
 ) -> tuple[AttemptRow, ...]:
     """Run a frozen pair in a trusted, pre-existing local POSIX directory.
 
@@ -38,13 +41,17 @@ def run_smoke_once(
     exceptions leave the reservation unknown and abort the run. This module
     provides no CLI or credential discovery. A DirectSmokeTransport supplies
     sanitized wire receipts and stops the run on the first non-accepted reply.
+    Opt-in artifact_dir retains request and accepted response bodies outside
+    the journal. It is supported only by the direct transport.
     """
     require(identifier(run_id) and type(request_bodies) is tuple, "smoke_run")
     gate.check_bodies(request_bodies)
     policy = {}
+    retaining = artifact_dir is not None
+    require(not retaining or type(send_once) is DirectSmokeTransport, "smoke_artifacts.transport")
     if type(send_once) is DirectSmokeTransport:
         for body in request_bodies:
-            send_once.check_body(body)
+            send_once.check_body(body, retaining=retaining)
         policy["wire_policy"] = {
             "host": send_once.host,
             "model": send_once.model,
@@ -54,13 +61,18 @@ def run_smoke_once(
         }
     slots = tuple(row.slot for row in gate.rows)
     marker = digest(run_id.encode("ascii")) + ".jsonl"
-    directory = os.open(journal_dir, os.O_RDONLY | os.O_DIRECTORY)
-    try:
+    with ExitStack() as resources:
+        root = resources.enter_context(private_root(artifact_dir)) if artifact_dir is not None else None
+        directory = os.open(journal_dir, os.O_RDONLY | os.O_DIRECTORY)
+        resources.callback(os.close, directory)
         try:
             fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
         except FileExistsError as exc:
             raise InputError("smoke-run-already-started", run_id) from exc
         with os.fdopen(fd, "wb") as journal:
+            artifact_name = marker.removesuffix(".jsonl")
+            if root is not None:
+                policy["artifact_namespace"] = artifact_name
             _append(
                 journal,
                 {
@@ -73,14 +85,32 @@ def run_smoke_once(
             )
             # fsync(file) alone does not make a newly created name durable.
             os.fsync(directory)
+            artifacts = (
+                resources.enter_context(run_artifacts(root, artifact_name)) if root is not None else None
+            )
             for slot, body in zip(slots, request_bodies, strict=True):
                 ticket = gate.reserve(slot.arm, slot.group, slot.pass_name, body)
                 reservation = {"event": "reserved", "attempt": ticket, "state": "unknown_outcome"}
+                response_artifact = None
+
+                def retain_reply(raw: bytes, number: int = ticket) -> None:
+                    nonlocal response_artifact
+                    assert artifacts is not None
+                    response_artifact = store_payload(artifacts, f"{number:02d}-response.json", raw)
+
                 if type(send_once) is DirectSmokeTransport:
                     request_id = uuid.uuid4().hex
                     reservation["client_request_id"] = request_id
+                    if artifacts is not None:
+                        reservation["request_artifact"] = store_payload(
+                            artifacts, f"{ticket:02d}-request.json", body
+                        )
                     _append(journal, reservation)
-                    outcome = send_once.send(body, request_id=request_id)
+                    outcome = send_once.send(
+                        body,
+                        request_id=request_id,
+                        retain_reply=retain_reply if artifacts is not None else None,
+                    )
                 else:
                     _append(journal, reservation)
                     outcome = send_once(body)
@@ -94,11 +124,11 @@ def run_smoke_once(
                 }
                 if receipt is not None:
                     event["wire"] = asdict(receipt)
+                if response_artifact is not None:
+                    event["response_artifact"] = response_artifact
                 _append(journal, event)
                 # Do not expose a terminal state before it is durable.
                 gate.complete(ticket, success=success)
                 if receipt is not None and not success:
                     break
         return gate.rows
-    finally:
-        os.close(directory)
