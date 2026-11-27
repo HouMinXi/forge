@@ -2365,7 +2365,6 @@ def test_machine_git_diff_ignores_scope_erasing_drivers(tmp_path, monkeypatch, p
     assert _r1_identity(tmp_path / source) == before
     relevant = packets[-1][0]
     assert "--no-ext-diff" in relevant and "--no-textconv" in relevant
-    assert "--no-replace-objects" in relevant
     if producer == "untracked":
         assert "--no-index" in relevant and "/dev/null" in relevant
         assert "+value = 2" in packet and packets[-1][1] == 1

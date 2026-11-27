@@ -647,7 +647,7 @@ def _tree_entry(root, tree: str, rel: str) -> tuple[int, bytes] | None:
     root_path = Path(root)
     try:
         out = subprocess.run(
-            ["git", "--no-replace-objects", "ls-tree", "-z", tree, "--", f":(literal){rel}"],
+            ["git", "ls-tree", "-z", tree, "--", f":(literal){rel}"],
             cwd=str(root_path),
             capture_output=True,
             timeout=10,
@@ -662,7 +662,7 @@ def _tree_entry(root, tree: str, rel: str) -> tuple[int, bytes] | None:
             return None
         mode = int(parts[0], 8)
         blob = subprocess.run(
-            ["git", "--no-replace-objects", "cat-file", "blob", parts[2].decode("ascii")],
+            ["git", "cat-file", "blob", parts[2].decode("ascii")],
             cwd=str(root_path),
             capture_output=True,
             timeout=10,
@@ -682,7 +682,7 @@ def _tree_has_path(root, tree: str, rel: str) -> bool:
 
     try:
         out = subprocess.run(
-            ["git", "--no-replace-objects", "ls-tree", "-z", tree, "--", f":(literal){rel}"],
+            ["git", "ls-tree", "-z", tree, "--", f":(literal){rel}"],
             cwd=str(Path(root)),
             capture_output=True,
             timeout=10,

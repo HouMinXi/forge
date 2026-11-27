@@ -51,7 +51,7 @@ def machine_diff_command(target: str = "HEAD", *, binary: bool = True) -> list[s
     inflates the prompt several times over.
     """
     options = [opt for opt in _MACHINE_DIFF_OPTIONS if binary or opt != "--binary"]
-    return ["git", "--no-replace-objects", "diff", *options, target]
+    return ["git", "diff", *options, target]
 
 
 # Allowlist regex for diff-spec values.
@@ -127,7 +127,7 @@ def run_git_diff(
     if shutil.which("git") is None:
         raise RuntimeError("git not found")
 
-    cmd = ["git", "--no-replace-objects", "diff", "-U0", diff_spec] + (extra_args or [])
+    cmd = ["git", "diff", "-U0", diff_spec] + (extra_args or [])
 
     result = subprocess.run(
         cmd,
@@ -185,7 +185,7 @@ def resolve_git_ref(ref: str, cwd: Path) -> str:
     from .errors import BaselineResolutionError
 
     result = subprocess.run(
-        ["git", "--no-replace-objects", "rev-parse", "--verify", ref + "^{commit}"],
+        ["git", "rev-parse", "--verify", ref + "^{commit}"],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -249,7 +249,7 @@ def write_tree(cwd: Path) -> str | None:
             env=env,
         )
         result = subprocess.run(
-            ["git", "--no-replace-objects", "-c", "core.splitIndex=false", "write-tree"],
+            ["git", "-c", "core.splitIndex=false", "write-tree"],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -266,7 +266,7 @@ def write_tree(cwd: Path) -> str | None:
 def tree_of(ref: str, cwd: Path) -> str | None:
     """Tree object a commit expression points at, or None."""
     result = subprocess.run(
-        ["git", "--no-replace-objects", "rev-parse", "--verify", ref + "^{tree}"],
+        ["git", "rev-parse", "--verify", ref + "^{tree}"],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -311,7 +311,6 @@ def git_diff(
 
     cmd = [
         "git",
-        "--no-replace-objects",
         "diff",
         *_MACHINE_DIFF_OPTIONS,
         baseline_ref,
@@ -380,7 +379,6 @@ def cached_diff(
 
     cmd = [
         "git",
-        "--no-replace-objects",
         "diff",
         *_MACHINE_DIFF_OPTIONS,
         "--cached",
@@ -424,7 +422,6 @@ def working_tree_diff(
     # Tracked diff (R3-1: must NOT use check=True)
     tracked_cmd = [
         "git",
-        "--no-replace-objects",
         "diff",
         *_MACHINE_DIFF_OPTIONS,
         baseline_ref,
@@ -474,7 +471,6 @@ def working_tree_diff(
         #   2+ = real error
         cmd = [
             "git",
-            "--no-replace-objects",
             "diff",
             *_MACHINE_DIFF_OPTIONS,
             "--no-index",

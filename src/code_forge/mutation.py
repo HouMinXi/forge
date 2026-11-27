@@ -701,7 +701,7 @@ def _guard_diff(root: Path, base_sha: str, paths: tuple[str, ...], selection: st
     if selection != "TRACKED_WORKING" or paths:
         raise ValueError("unsupported mutation review diff selection")
     result = subprocess.run(
-        ["git", "--no-replace-objects", "diff", *_MACHINE_DIFF_OPTIONS, base_sha],
+        ["git", "diff", *_MACHINE_DIFF_OPTIONS, base_sha],
         cwd=root,
         capture_output=True,
         text=True,

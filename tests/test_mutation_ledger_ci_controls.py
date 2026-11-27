@@ -2719,9 +2719,33 @@ def test_index_review_diff_is_the_subject_tree_diff(ci_project):
     assert review.git_diff.strip() == from_tree.strip()
 
 
-def test_replace_refs_cannot_swap_the_reviewed_subject(ci_project):
-    """The diff and the tree use one replacement-ref policy, so a local replace
-    ref cannot present one subject to the diff and another to the document check."""
+def test_write_tree_keeps_a_split_index_readable(ci_project):
+    """Freezing the subject must not expire the shared base a split index uses."""
+    p = ci_project
+    _git(p.root, "config", "splitIndex.maxPercentChange", "100")
+    _git(p.root, "update-index", "--split-index")
+    (p.root / "calc.py").write_text("def add(a, b):\n    return a + b + 1\n", encoding="utf-8")
+    _git(p.root, "add", "calc.py")
+    _git(p.root, "config", "splitIndex.maxPercentChange", "0")
+    _git(p.root, "config", "splitIndex.sharedIndexExpire", "now")
+    index = p.root / ".git" / "index"
+    before = index.read_bytes()
+
+    from code_forge.git import write_tree
+
+    tree = write_tree(p.root)
+
+    assert tree
+    listed = subprocess.run(
+        ["git", "ls-files", "-s"], cwd=p.root, capture_output=True, text=True, check=False
+    )
+    assert listed.returncode == 0, listed.stderr
+    assert index.read_bytes() == before
+
+
+def test_replace_refs_are_read_the_same_way_by_diff_and_tree(ci_project):
+    """The repository honours replacement mappings on purpose: the diff, the
+    frozen tree and the document check must all describe the replaced object."""
     p = ci_project
     doc = p.root / "README.md"
     doc.write_text("# plain\n", encoding="utf-8")
@@ -2739,10 +2763,8 @@ def test_replace_refs_cannot_swap_the_reviewed_subject(ci_project):
     base = _git(p.root, "rev-parse", "HEAD~1")
     head = _git(p.root, "rev-parse", "HEAD")
 
-    # a replacement commit whose README is an executable script
-    tree_doc = p.root / "README.md"
-    tree_doc.write_text("#!/bin/sh\nprintf REPLACED\n", encoding="utf-8")
-    tree_doc.chmod(0o755)
+    doc.write_text("#!/bin/sh\nprintf REPLACED\n", encoding="utf-8")
+    doc.chmod(0o755)
     _git(p.root, "add", "README.md")
     _git(
         p.root,
@@ -2769,41 +2791,19 @@ def test_replace_refs_cannot_swap_the_reviewed_subject(ci_project):
     _git(p.root, "replace", head, replacement)
 
     review = resolve_baseline(GitRefBaseline(base), GitRefBaseline(head), [Path("README.md")], p.root)
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    machine._run_l2_phase()
 
-    assert "100755" not in review.git_diff
-    assert review.subject_tree is not None
-    from_tree = _git(
-        p.root, "--no-replace-objects", "diff", base, review.subject_tree, "--", "README.md"
-    )
+    assert "100755" in review.git_diff
+    from_tree = _git(p.root, "diff", base, review.subject_tree, "--", "README.md")
     assert review.git_diff.strip() == from_tree.strip()
+    # Both views see the executable replacement, so no document exemption.
+    assert machine._mutation_not_applicable is False
+    assert machine._mutation_bound_failure is True
 
 
-def test_write_tree_keeps_a_split_index_readable(ci_project):
-    """Freezing the subject must not expire the shared base a split index uses."""
-    p = ci_project
-    _git(p.root, "config", "splitIndex.maxPercentChange", "100")
-    _git(p.root, "update-index", "--split-index")
-    (p.root / "calc.py").write_text("def add(a, b):\n    return a + b + 1\n", encoding="utf-8")
-    _git(p.root, "add", "calc.py")
-    _git(p.root, "config", "splitIndex.maxPercentChange", "0")
-    _git(p.root, "config", "splitIndex.sharedIndexExpire", "now")
-    index = p.root / ".git" / "index"
-    before = index.read_bytes()
-
-    from code_forge.git import write_tree
-
-    tree = write_tree(p.root)
-
-    assert tree
-    listed = subprocess.run(
-        ["git", "ls-files", "-s"], cwd=p.root, capture_output=True, text=True, check=False
-    )
-    assert listed.returncode == 0, listed.stderr
-    assert index.read_bytes() == before
-
-
-def test_resolve_git_ref_ignores_replacement_history(ci_project):
-    """HEAD^ must not traverse a local replacement commit's parents."""
+def test_resolve_git_ref_follows_replacement_history(ci_project):
+    """One replacement policy: HEAD^ names what git names, matching the diff."""
     p = ci_project
     (p.root / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
     _git(p.root, "add", "calc.py")
@@ -2816,8 +2816,6 @@ def test_resolve_git_ref_ignores_replacement_history(ci_project):
     raw_parent = _git(p.root, "rev-parse", "HEAD^")
     head_tree = _git(p.root, "rev-parse", "HEAD^{tree}")
 
-    # A commit that already holds the change, then a replacement for the head
-    # whose parent is that commit rather than the real parent.
     contained = _git(
         p.root,
         "-c",
@@ -2845,11 +2843,11 @@ def test_resolve_git_ref_ignores_replacement_history(ci_project):
         "replacement",
     )
     _git(p.root, "replace", head, replacement)
-    assert _git(p.root, "rev-parse", "HEAD^") == contained
 
     from code_forge.git import resolve_git_ref
 
-    assert resolve_git_ref("HEAD^", p.root) == raw_parent
+    assert resolve_git_ref("HEAD^", p.root) == contained
+    assert resolve_git_ref("HEAD^", p.root) != raw_parent
 
 
 def test_other_adapter_note_does_not_extend_the_applicability_pair():

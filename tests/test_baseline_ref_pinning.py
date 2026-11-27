@@ -676,8 +676,13 @@ def test_pseudo_diff_failure_propagates_without_ref_retry(
 ):
     # Deliberate propagation injection, separate from real-Git movement proof.
     real_resolve = baseline.resolve_git_ref
-    selected_name = "working_tree_diff" if target_kind == "WORKING" else "cached_diff"
-    sibling_name = "cached_diff" if target_kind == "WORKING" else "working_tree_diff"
+    if target_kind == "WORKING":
+        selected_name, sibling_name = "working_tree_diff", "cached_diff"
+    else:
+        # An INDEX review freezes the index into a tree first and diffs that
+        # tree, so the diff that must propagate lives behind git_diff.
+        selected_name, sibling_name = "git_diff", "cached_diff"
+        monkeypatch.setattr(baseline, "write_tree", lambda cwd: "0" * 40)
     real_sibling = getattr(baseline, sibling_name)
     resolutions = []
     diff_calls = []
@@ -688,7 +693,11 @@ def test_pseudo_diff_failure_propagates_without_ref_retry(
         resolutions.append(ref)
         return real_resolve(ref, cwd)
 
-    def fail_diff(base, paths, cwd):
+    def fail_diff(*args, **kwargs):
+        if target_kind == "WORKING":
+            base, paths, cwd = args
+        else:
+            base, _head, paths, cwd = args
         diff_calls.append((base, tuple(paths), cwd))
         raise failure
 
