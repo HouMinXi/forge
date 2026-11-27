@@ -115,7 +115,9 @@ The tracer itself is not duplicated here: the producer loads
 `inspect_change.py` is a standalone offline command. It runs no tests or
 review itself. It compares an exact local ancestor and a clean candidate
 checkout, confirms the named test file exists there, and accepts only a
-target line added or replaced in that pair's Git diff. It cross-checks the
+target line added or replaced in that pair's Git diff. Context lines never
+count, even if Git emits them. Git must support run-time `--no-lazy-fetch`;
+a missing local object is refused rather than fetched. It cross-checks the
 file execution record and the node-level packet against a caller-owned run ID
 and digests. A verified zero-hit case reports `not_hit`; a positive claim
 against that same packet is refused. The verdict is local to the command.
@@ -139,7 +141,8 @@ PYTHON=/path/to/python sh docs/eval/r3-evidence-packet/replay_552.sh /path/to/sa
 The existing contract-change and rename-only tests use an offline backend
 fixture. Both reach call and pass. Only the contract-change case hits the
 selected line (one hit versus zero); claiming one for the rename-only case
-fails. The script leaves its logs and records outside the clean checkout.
+fails. The replay also refuses unchanged line 1884 with inherited context
+settings. The script leaves its logs and records outside the clean checkout.
 The separately archived Layer 2 presence behavior is not inferred from
 either record. This command does not alter `e2e-check`, P2, its exit status,
 or any review receipt.

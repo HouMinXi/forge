@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 import pytest
+from inspect_change import _has_added_line
 from test_packet import OBSERVER, PACKET, _announced, _digest
 from test_packet import project as project
 
@@ -131,10 +132,10 @@ def run_case(pair, name, *, exit_code=0, assertion_failure=False):
         str(exit_code),
     ]
 
-    def check(*overrides):
+    def check(*overrides, extra_env=None):
         result = subprocess.run(
             [sys.executable, str(CHECK), *args, *overrides],
-            env=env,
+            env=env | (extra_env or {}),
             capture_output=True,
             text=True,
             timeout=30,
@@ -213,3 +214,28 @@ def test_a_skip_or_setup_error_does_not_prove_execution(pair, setup, exit_code):
     assert code == 1
     assert report["file"] == "present" and report["execution"] == "unproven"
     assert report["changed_line"] == "unproven"
+
+
+def test_only_plus_lines_count_even_in_context_hunks():
+    diff = (
+        b"--- a/mod.py\n+++ b/mod.py\n@@ -3,4 +3,4 @@\n"
+        b" \n def hit():\n-    return VALUE\n+    return VALUE + 0\n "
+        b"\n\\ No newline at end of file\n"
+    )
+    assert [_has_added_line(diff, n) for n in (3, 4, 5, 6)] == [False, False, True, False]
+
+
+def test_missing_promisor_blob_fails_without_fetch(pair):
+    root, base, _ = pair
+    check = run_case(pair, "test_hits_the_line")
+    missing = git(root, "rev-parse", f"{base}:mod.py")
+    git(root, "config", "remote.fixture.url", str(root.parent / "offline-remote"))
+    git(root, "config", "remote.fixture.promisor", "true")
+    git(root, "config", "remote.fixture.partialclonefilter", "blob:none")
+    (root / ".git" / "objects" / missing[:2] / missing[2:]).unlink()
+    trace = root.parent / "git-events.jsonl"
+    code, report = check(extra_env={"GIT_TRACE2_EVENT": str(trace), "GIT_ALLOW_PROTOCOL": ""})
+    assert code == 1 and report["reason"] == "could not read pinned Git objects or evidence"
+    events = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert any(e.get("event") == "start" and "diff" in e.get("argv", []) for e in events)
+    assert not any("fetch" in e.get("argv", []) for e in events)

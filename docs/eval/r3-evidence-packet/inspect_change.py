@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -14,7 +15,7 @@ from code_forge.e2e_evidence import verify as verify_record
 
 from verify import Refused, check_digest, check_execution, check_identity, load
 
-_HUNK = re.compile(rb"^@@ -[0-9]+(?:,[0-9]+)? \+([0-9]+)(?:,([0-9]+))? @@")
+_HUNK = re.compile(rb"^@@ -[0-9]+(?:,[0-9]+)? \+([0-9]+)(?:,[0-9]+)? @@")
 _MAX_FILE_BYTES = 16 * 1024 * 1024
 
 
@@ -38,9 +39,13 @@ def _number(value: str) -> int:
 
 
 def _git(root: Path, *args: str) -> bytes:
+    env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
+    env.pop("GIT_DIFF_OPTS", None)
+    env.pop("GIT_EXTERNAL_DIFF", None)
     return subprocess.run(
-        ["git", "--no-replace-objects", *args],
+        ["git", "--no-replace-objects", "--no-lazy-fetch", *args],
         cwd=root,
+        env=env,
         check=True,
         capture_output=True,
         timeout=15,
@@ -81,11 +86,18 @@ def _target_changed(args: argparse.Namespace) -> bool:
     changed = _git(
         args.root,
         "--literal-pathspecs",
+        "-c",
+        "diff.suppressBlankEmpty=false",
         "diff",
         "--no-ext-diff",
         "--no-textconv",
         "--no-renames",
         "--no-color",
+        "--word-diff=none",
+        "--line-prefix=",
+        "--output-indicator-new=+",
+        "--output-indicator-old=-",
+        "--output-indicator-context= ",
         "--unified=0",
         "--inter-hunk-context=0",
         args.base,
@@ -93,12 +105,24 @@ def _target_changed(args: argparse.Namespace) -> bool:
         "--",
         args.expect_target_file,
     )
-    for line in changed.split(b"\n"):
+    return _has_added_line(changed, args.expect_line)
+
+
+def _has_added_line(diff: bytes, target: int) -> bool:
+    # Context consumes a candidate line but is not evidence of a change.
+    current = None
+    for line in diff.split(b"\n"):
         if match := _HUNK.match(line):
-            start = int(match[1])
-            count = int(match[2]) if match[2] is not None else 1
-            if start <= args.expect_line < start + count:
-                return True
+            current = int(match[1])
+        elif current is not None:
+            if line.startswith(b"+"):
+                if current == target:
+                    return True
+                current += 1
+            elif line.startswith(b" "):
+                current += 1
+            elif not line.startswith((b"-", rb"\ ")):
+                current = None
     return False
 
 
@@ -194,6 +218,8 @@ def main() -> int:
     parser.add_argument("--expect-exit", type=int, choices=(0, 1), required=True)
     args = parser.parse_args()
     args.root = args.root.resolve()
+    # The shared execution-record reader launches Git too.
+    os.environ["GIT_NO_LAZY_FETCH"] = "1"
     report = inspect(args)
     print(json.dumps(report, indent=2, sort_keys=True))
     return int("reason" in report)

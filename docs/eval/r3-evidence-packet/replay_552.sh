@@ -1,6 +1,7 @@
 #!/bin/sh
 # Offline replay with a local, clean checkout of the pinned #552 merge.
 set -eu
+export GIT_NO_LAZY_FETCH=1
 test "$#" -eq 1 || { echo "usage: sh replay_552.sh SAMPLE_CHECKOUT" >&2; exit 2; }
 sample=$(cd "$1" && pwd -P)
 here=$(CDPATH='' cd "$(dirname "$0")" && pwd -P)
@@ -50,6 +51,13 @@ for case in changed same; do
         inspect --expect-hits 1 > "$work/same.false-claim.json" || status=$?
         test "$status" -eq 1
         cat "$work/same.false-claim.json"
+    else
+        status=0
+        GIT_DIFF_OPTS=-u3 inspect --expect-hits 1 --expect-line 1884 \
+            > "$work/changed.context-refusal.json" || status=$?
+        test "$status" -eq 1
+        grep -q 'target is not an added or replaced line' "$work/changed.context-refusal.json"
+        cat "$work/changed.context-refusal.json"
     fi
 done
 test -z "$(git status --porcelain --untracked-files=all)"
