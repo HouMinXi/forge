@@ -356,3 +356,183 @@ def test_stop_with_text_and_explicit_null_refusal_is_accepted(peer):
     message = {"role": "assistant", "content": "  a usable answer\n", "refusal": None}
     peer[0].append(response(OK | {"choices": [{"finish_reason": "stop", "message": message}]}))
     assert transport()(request()).outcome == "accepted"
+
+
+@pytest.fixture
+def retention(tmp_path):
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    return private
+
+
+def run_retained(root, private, body, *, last=None):
+    admission, bodies = plan(body, last)
+    return smoke_runner.run_smoke_once(
+        journal_dir=root,
+        run_id="wire-pair",
+        gate=admission,
+        request_bodies=bodies,
+        send_once=transport(),
+        artifact_dir=private,
+    )
+
+
+@pytest.mark.parametrize("framing", ["length", "chunked"])
+def test_retained_payloads_match_exact_bytes_and_receipts(tmp_path, retention, peer, framing):
+    raw = json.dumps(OK, indent=2).encode() + b"\n"
+    peer[0].extend([response(raw, framing=framing, other=b"X-Request-Id: header-only-id\r\n")] * 6)
+    body = request()
+    rows = run_retained(tmp_path, retention, body)
+    assert all(row.state == "completed" for row in rows)
+    start, *events = journal(tmp_path)
+    namespace = retention / start["artifact_namespace"]
+    assert namespace.stat().st_mode & 0o777 == 0o700
+    assert len(list(namespace.iterdir())) == 12
+    for i, server in enumerate(peer[1]):
+        reserved, finished = events[2 * i : 2 * i + 2]
+        assert observed(server, reserved["client_request_id"]) == body
+        for event, kind, payload in [(reserved, "request", body), (finished, "response", raw)]:
+            ref = event[f"{kind}_artifact"]
+            path = namespace / ref["file"]
+            assert path.stat().st_mode & 0o777 == 0o600
+            assert path.read_bytes() == payload and ref["sha256"] == digest(payload)
+            assert ref["bytes"] == len(payload)
+            assert KEY.encode() not in payload and b"header-only-id" not in payload
+        assert reserved["request_artifact"]["sha256"] == start["slots"][i]["request_sha256"]
+        assert finished["response_artifact"]["sha256"] == finished["wire"]["response_sha256"]
+    assert "synthetic answer" not in repr(events) and "header-only-id" not in repr(events)
+
+
+@pytest.mark.parametrize("case", ["public", "symlink"])
+def test_invalid_private_root_rejects_before_marker_or_send(tmp_path, retention, peer, case):
+    if case == "public":
+        retention.chmod(0o755)
+        target = retention
+    else:
+        target = tmp_path / "alias"
+        target.symlink_to(retention, target_is_directory=True)
+    with pytest.raises((OSError, InputError)):
+        run_retained(tmp_path, target, request())
+    assert not list(tmp_path.glob("*.jsonl")) and not list(retention.iterdir()) and not peer[1]
+
+
+def test_rejected_and_refused_replies_are_not_retained(tmp_path, retention, peer):
+    refused = {
+        "model": MODEL,
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": "not an answer",
+                    "refusal": "not retained",
+                },
+            }
+        ],
+    }
+    peer[0].append(response(refused))
+    rows = run_retained(tmp_path, retention, request())
+    assert [row.state for row in rows] == ["failed", *["not_started"] * 5]
+    start, reservation, finished = journal(tmp_path)
+    assert finished["wire"]["outcome"] == "no_usable_reply"
+    assert "response_artifact" not in finished
+    assert [p.name for p in (retention / start["artifact_namespace"]).iterdir()] == [
+        reservation["request_artifact"]["file"]
+    ]
+    assert len(peer[1]) == 1
+
+
+def test_escaped_key_in_later_request_is_refused_during_preflight(tmp_path, retention, peer):
+    contaminated = request(messages=[{"role": "user", "content": KEY}]).replace(
+        KEY.encode(), b"\\u0074" + KEY.encode()[1:]
+    )
+    with pytest.raises(InputError, match="credential_in_body"):
+        run_retained(tmp_path, retention, request(), last=contaminated)
+    assert not list(tmp_path.glob("*.jsonl")) and not list(retention.iterdir()) and not peer[1]
+
+
+def test_escaped_key_in_reply_is_not_retained_or_retried(tmp_path, retention, peer):
+    raw = (
+        json.dumps(OK | {"extra": {KEY: "value"}})
+        .encode()
+        .replace(KEY.encode(), b"\\u0074" + KEY.encode()[1:])
+    )
+    peer[0].append(response(raw))
+    rows = run_retained(tmp_path, retention, request())
+    assert [row.state for row in rows] == ["failed", *["not_started"] * 5]
+    start, _, finished = journal(tmp_path)
+    assert finished["wire"]["outcome"] == "private_reply_rejected"
+    assert finished["wire"]["response_sha256"] == digest(raw)
+    assert "response_artifact" not in finished
+    assert sorted(p.name for p in (retention / start["artifact_namespace"]).iterdir()) == [
+        "01-request.json"
+    ]
+    with pytest.raises(InputError, match="already-started"):
+        run_retained(tmp_path, retention, request())
+    assert len(peer[1]) == 1
+
+
+@pytest.mark.parametrize("kind", ["request", "response"])
+def test_disk_error_never_publishes_unstored_evidence_or_resends(
+    tmp_path, retention, peer, monkeypatch, kind
+):
+    from code_forge.eval.review_followup import smoke_artifacts
+
+    fsync, open_fd = smoke_artifacts.os.fsync, smoke_artifacts.os.open
+    opened = {}
+
+    def record_open(name, *args, **kwargs):
+        fd = open_fd(name, *args, **kwargs)
+        opened[fd] = name
+        return fd
+
+    def sync(fd):
+        if str(opened[fd]).endswith(f"-{kind}.json"):
+            raise OSError("fake sync failure")
+        fsync(fd)
+
+    monkeypatch.setattr(smoke_artifacts.os, "open", record_open)
+    monkeypatch.setattr(smoke_artifacts.os, "fsync", sync)
+    peer[0].append(response())
+    with pytest.raises(OSError if kind == "request" else smoke_runner.ArtifactWriteError):
+        run_retained(tmp_path, retention, request())
+    assert [entry["event"] for entry in journal(tmp_path)] == (
+        ["started"] if kind == "request" else ["started", "reserved"]
+    )
+    with pytest.raises(InputError, match="already-started"):
+        run_retained(tmp_path, retention, request())
+    assert len(peer[1]) == (kind == "response")
+
+
+def test_existing_namespace_is_not_reused(tmp_path, retention, peer):
+    namespace = retention / digest(b"wire-pair")
+    namespace.mkdir(mode=0o700)
+    existing = namespace / "01-request.json"
+    existing.write_bytes(b"unaltered")
+    with pytest.raises(FileExistsError):
+        run_retained(tmp_path, retention, request())
+    assert existing.read_bytes() == b"unaltered"
+    assert [entry["event"] for entry in journal(tmp_path)] == ["started"]
+    assert not peer[1]
+
+
+def test_default_does_not_retain_payloads(tmp_path, peer):
+    peer[0].extend([response()] * 6)
+    assert all(row.state == "completed" for row in run(tmp_path, request(), transport()))
+    assert {path.suffix for path in tmp_path.iterdir()} == {".jsonl"}
+    assert all("artifact" not in field for row in journal(tmp_path) for field in row)
+
+
+def test_retention_requires_direct_transport(tmp_path, retention):
+    admission, bodies = plan(request())
+    calls = []
+    with pytest.raises(InputError, match="smoke_artifacts.transport"):
+        smoke_runner.run_smoke_once(
+            journal_dir=tmp_path,
+            run_id="wire-pair",
+            gate=admission,
+            request_bodies=bodies,
+            send_once=calls.append,
+            artifact_dir=retention,
+        )
+    assert not list(tmp_path.glob("*.jsonl")) and not list(retention.iterdir()) and not calls
