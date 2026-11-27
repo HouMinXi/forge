@@ -37,14 +37,16 @@ def digest_of(body: dict) -> str:
 
 
 def load(path: Path) -> dict:
-    if not path.is_file():
-        raise Refused("packet is not a regular file")
-    if path.stat().st_size > MAX_PACKET_BYTES:
-        raise Refused("packet exceeds size limit")
     try:
+        if not path.is_file():
+            raise Refused("packet is not a regular file")
+        if path.stat().st_size > MAX_PACKET_BYTES:
+            raise Refused("packet exceeds size limit")
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise Refused("packet is not valid UTF-8") from exc
+    except OSError as exc:
+        raise Refused("packet cannot be read") from exc
     try:
         body = json.loads(text)
     except json.JSONDecodeError as exc:

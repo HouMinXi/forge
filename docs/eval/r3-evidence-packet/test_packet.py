@@ -747,6 +747,42 @@ def test_a_json_conversion_error_is_refused(tmp_path, monkeypatch):
         verifier["load"](packet)
 
 
+def test_an_unreadable_packet_file_is_refused(project, tmp_path):
+    node = "test_mod.py::test_hits_the_line"
+    packet = tmp_path / "packet.json"
+    packet.write_text("{}", encoding="utf-8")
+    packet.chmod(0)
+    try:
+        check = _verify(packet, _expectations(project, node, "a" * 32, "b" * 64))
+    finally:
+        packet.chmod(0o644)
+    assert check.returncode == 1
+    assert check.stdout == ""
+    assert check.stderr == "packet refused: packet cannot be read\n"
+
+
+def test_an_out_of_range_number_is_refused_by_the_real_parser(tmp_path):
+    verifier = runpy.run_path(str(VERIFY))
+    packet = tmp_path / "packet.json"
+    packet.write_text("1" + "0" * 4300, encoding="utf-8")
+    with pytest.raises(verifier["Refused"], match="^packet contains an unsupported JSON value$"):
+        verifier["load"](packet)
+
+
+def test_a_packet_in_an_unsearchable_directory_is_refused(tmp_path):
+    verifier = runpy.run_path(str(VERIFY))
+    hidden = tmp_path / "hidden"
+    hidden.mkdir()
+    packet = hidden / "packet.json"
+    packet.write_text("{}", encoding="utf-8")
+    hidden.chmod(0)
+    try:
+        with pytest.raises(verifier["Refused"], match="^packet (cannot be read|is not a regular file)$"):
+            verifier["load"](packet)
+    finally:
+        hidden.chmod(0o755)
+
+
 def test_a_packet_past_the_size_limit_is_refused_before_it_is_read(tmp_path, monkeypatch):
     verifier = runpy.run_path(str(VERIFY))
     packet = tmp_path / "packet.json"
