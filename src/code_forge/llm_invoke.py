@@ -197,8 +197,7 @@ class TruncationBreakerError(LLMInvokeError):
             "the budget a reasoning loop burns before writing an answer. "
             "Raise output_ceiling only if the configured cap is the limit; "
             "if replies come back empty after spending the budget on "
-            "reasoning, lower reasoning_effort or thinking_budget instead."
-            % (count, threshold),
+            "reasoning, lower reasoning_effort or thinking_budget instead." % (count, threshold),
             kind="truncated",
             retryable=False,
         )
@@ -325,6 +324,21 @@ def _has_answer_text(content) -> bool:
     if not isinstance(content, str):
         return False
     return bool(content.strip().strip(_ZERO_WIDTH_CHARS).strip())
+
+
+def _reported_reasoning_tokens(usage_data: dict):
+    """The reasoning-token count a response actually reported, or None.
+
+    Only a detail object that names the count counts as evidence. An absent
+    field means the provider said nothing about reasoning, and a value that is
+    not a whole number is not a count.
+    """
+    if not isinstance(usage_data, dict):
+        return None
+    details = usage_data.get("completion_tokens_details")
+    if not isinstance(details, dict) or "reasoning_tokens" not in details:
+        return None
+    return _whole_token_count(details.get("reasoning_tokens"))
 
 
 def _whole_usage_counts(usage_data: dict) -> dict:
@@ -4370,6 +4384,11 @@ def _invoke_api(
     # Outer except catches LLMInvokeError from both the format dispatch and
     # the converted TimeoutError, applying retry logic.
     runaway_attempts = 0
+    # Output tokens a reasoning runaway already burned in this call. Each
+    # attempt reports only itself, so without this a retry that succeeds
+    # records the second reply alone and a second runaway records one of the
+    # two budgets.
+    runaway_spent = None
     for attempt in range(max_attempts):
         # Fail fast before any network call once the run-level breaker
         # has tripped: further passes would only repeat the same
@@ -4675,6 +4694,15 @@ def _invoke_api(
             # is a different failure whose class must not become capacity.
             if isinstance(exc, LLMInvokeError) and getattr(exc, "reasoning_runaway", False):
                 runaway_attempts += 1
+                # Start from the first reply that reported usage. Summing into
+                # an empty Usage drops every known field, since the sum keeps
+                # only fields both sides reported.
+                if exc.observed_usage is not None:
+                    runaway_spent = (
+                        exc.observed_usage
+                        if runaway_spent is None
+                        else _sum_usage(runaway_spent, exc.observed_usage)
+                    )
                 if runaway_attempts >= 2:
                     raise LLMInvokeError(
                         "%s No further attempt: %d replies in this call spent "
@@ -4684,8 +4712,10 @@ def _invoke_api(
                         duration_s=exc.duration_s,
                         kind=exc.kind,
                         retryable=False,
-                        usage=exc.usage,
-                        observed_usage=exc.observed_usage,
+                        usage=runaway_spent
+                        if {"input_tokens", "output_tokens"} <= runaway_spent.known_fields
+                        else None,
+                        observed_usage=runaway_spent,
                     ) from None
             if not exc.retryable or attempt == max_attempts - 1:
                 if attempt > 0 or (exc.retryable and max_attempts == 1):
@@ -4714,6 +4744,10 @@ def _invoke_api(
 
     if initial_syntax_usage is not None:
         usage = _sum_usage(initial_syntax_usage, usage)
+    if runaway_spent is not None:
+        # The reply that landed came after a reasoning runaway. Both requests
+        # spent tokens, and the result has to say so.
+        usage = _sum_usage(runaway_spent, usage)
     return LLMResult(content=parsed_content, usage=usage, duration_s=duration, raw_response=raw_content)
 
 
@@ -5008,15 +5042,19 @@ def _invoke_openai_impl(
             and resolved_cap > 0
             and spent_out is not None
             and spent_out > 0
+            and (_reported_reasoning_tokens(usage_data) or 0) > 0
         ):
-            # Every token of the cap went to reasoning and no answer text came
-            # back. A larger cap buys more thinking, not an answer, so the
-            # "raise output_ceiling" advice would be wrong here. This is a
-            # plain error, not a _TruncatedResponse: the continuation path
-            # needs a partial object and there is none, while retryable lets
-            # the attempt loop draw a fresh reply -- the same prompt that
-            # looped once answers on the next call. Zero output tokens stays
-            # out of this branch: nothing was spent, so there is no runaway.
+            # The cap was spent and no answer text came back, and the usage
+            # detail says reasoning tokens were spent. A larger cap buys more
+            # thinking, not an answer, so the "raise output_ceiling" advice
+            # would be wrong here. This is a plain error, not a
+            # _TruncatedResponse: the continuation path needs a partial object
+            # and there is none, while retryable lets the attempt loop draw a
+            # fresh reply -- the same prompt that looped once answers on the
+            # next call. Zero output tokens stays out of this branch: nothing
+            # was spent, so there is no runaway. An empty reply whose detail
+            # reports zero reasoning tokens, or names none, is only a
+            # truncation: output tokens alone do not prove a reasoning loop.
             #
             # kind is "empty" (a response that carried no usable text): the
             # "truncated" class is what the host folds into a provider-capacity

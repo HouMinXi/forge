@@ -7601,7 +7601,14 @@ def test_openai_length_with_empty_content_is_a_retryable_reasoning_runaway():
     from code_forge.llm_invoke import _TruncatedResponse
 
     error = _runaway_error(
-        _length_body("", {"prompt_tokens": 10112, "completion_tokens": 65536}),
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 10112,
+                "completion_tokens": 65536,
+                "completion_tokens_details": {"reasoning_tokens": 65536},
+            },
+        ),
         _runaway_backend(),
     )
     assert not isinstance(error, _TruncatedResponse)
@@ -7628,7 +7635,14 @@ def test_runaway_is_not_filed_as_a_provider_capacity_failure():
     from code_forge.llm_invoke import _retry_cause
 
     error = _runaway_error(
-        _length_body("", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        ),
         _runaway_backend(max_tokens=4096),
     )
     assert error.kind == "empty"
@@ -7638,7 +7652,14 @@ def test_runaway_is_not_filed_as_a_provider_capacity_failure():
 def test_openai_length_with_whitespace_only_content_is_the_same_runaway():
     """Whitespace is not an answer: it takes the same branch."""
     error = _runaway_error(
-        _length_body("   \n\t ", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _length_body(
+            "   \n\t ",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        ),
         _runaway_backend(max_tokens=4096),
     )
     assert "without emitting answer text" in str(error)
@@ -7650,7 +7671,14 @@ def test_empty_content_message_reports_spent_tokens_not_the_cap():
     """A backend can clamp below the configured cap; the message names what
     the attempt actually spent, not what it was allowed."""
     error = _runaway_error(
-        _length_body("", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        ),
         _runaway_backend(max_tokens=65536),
     )
     message = str(error)
@@ -7695,7 +7723,14 @@ def test_unusable_caps_do_not_take_the_runaway_branch(cap, expected):
     """A boolean or negative max_tokens is not a cap, so none of them can be
     spent: the old truncation paths keep the call."""
     error = _runaway_error(
-        _length_body("", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        ),
         _runaway_backend(max_tokens=cap),
     )
     message = str(error)
@@ -7710,7 +7745,14 @@ def test_fractional_usage_counts_are_accounted_as_whole_tokens():
     ints would record zero tokens for a reply that really spent the cap.
     """
     error = _runaway_error(
-        _length_body("", {"prompt_tokens": 10112.0, "completion_tokens": 65536.0}),
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 10112.0,
+                "completion_tokens": 65536.0,
+                "completion_tokens_details": {"reasoning_tokens": 65536.0},
+            },
+        ),
         _runaway_backend(),
     )
     message = str(error)
@@ -7741,9 +7783,22 @@ def test_infinite_usage_counts_do_not_take_the_runaway_branch():
 
 
 def test_attempt_loop_retries_a_runaway_and_returns_the_next_reply(monkeypatch):
-    """The retry observation, not just the flag: one looped reply then an answer."""
+    """The retry observation, not just the flag: one looped reply then an answer.
+
+    The first request spent 4,096 output tokens before the second spent 12.
+    Recording 12 would drop the budget the runaway burned.
+    """
     monkeypatch.setenv("K", "key")
-    runaway = _mock_body(_length_body("", {"prompt_tokens": 900, "completion_tokens": 4096}))
+    runaway = _mock_body(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        )
+    )
     answered = _mock_body(
         {
             "choices": [{"message": {"content": '{"review": "ok"}'}, "finish_reason": "stop"}],
@@ -7759,6 +7814,8 @@ def test_attempt_loop_retries_a_runaway_and_returns_the_next_reply(monkeypatch):
         )
     assert opened.call_count == 2
     assert result.content == {"review": "ok"}
+    assert result.usage.output_tokens == 4096 + 12
+    assert result.usage.input_tokens == 900 + 900
 
 
 def test_generic_empty_reply_does_not_consume_the_run_breaker(monkeypatch):
@@ -7806,7 +7863,14 @@ def test_second_runaway_in_one_call_stops_with_the_diagnosis_intact(monkeypatch)
     from code_forge.llm_invoke import TruncationBreaker
 
     monkeypatch.setenv("K", "key")
-    body = _length_body("", {"prompt_tokens": 900, "completion_tokens": 4096})
+    body = _length_body(
+        "",
+        {
+            "prompt_tokens": 900,
+            "completion_tokens": 4096,
+            "completion_tokens_details": {"reasoning_tokens": 4096},
+        },
+    )
     breaker = TruncationBreaker(threshold=1)
     with patch("urllib.request.urlopen", return_value=_mock_body(body)) as opened:
         with pytest.raises(LLMInvokeError) as exc_info:
@@ -7823,15 +7887,81 @@ def test_second_runaway_in_one_call_stops_with_the_diagnosis_intact(monkeypatch)
     assert "output_ceiling" not in str(error)
     assert "Lower reasoning_effort" in str(error)
     assert error.observed_usage is not None
-    assert error.observed_usage.output_tokens == 4096
+    assert error.observed_usage.output_tokens == 4096 + 4096
+    assert error.usage is not None
+    assert error.usage.output_tokens == 8192
     assert opened.call_count == 2
     assert breaker.count == 0
+
+
+def test_empty_reply_without_reasoning_tokens_stays_a_truncation():
+    """An empty capped reply is a truncation unless reasoning was reported.
+
+    Output tokens above zero only prove the cap was spent. A response whose
+    detail says reasoning_tokens is zero spent them on something else, and
+    telling the reader that raising the cap buys only more reasoning is false.
+    """
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    error = _runaway_error(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 0},
+            },
+        ),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert isinstance(error, _TruncatedResponse)
+    assert error.retryable is False
+    assert "raising the cap only buys more reasoning" not in str(error)
+    assert "Raise" in str(error)
+
+
+def test_empty_reply_with_no_reasoning_detail_stays_a_truncation():
+    """No reasoning detail means the provider said nothing about reasoning."""
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    error = _runaway_error(
+        _length_body("", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert isinstance(error, _TruncatedResponse)
+    assert "without emitting answer text" not in str(error)
+
+
+def test_reasoning_runaway_needs_reported_reasoning_tokens():
+    """The detail has to name a positive whole count, not merely exist."""
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    error = _runaway_error(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": True},
+            },
+        ),
+        _runaway_backend(max_tokens=4096),
+    )
+    assert isinstance(error, _TruncatedResponse)
+    assert "without emitting answer text" not in str(error)
 
 
 def test_zero_width_only_content_is_not_an_answer():
     """A reasoning loop can emit zero-width characters and still hold the cap."""
     error = _runaway_error(
-        _length_body("\u200b\u200b", {"prompt_tokens": 900, "completion_tokens": 4096}),
+        _length_body(
+            "\u200b\u200b",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        ),
         _runaway_backend(max_tokens=4096),
     )
     assert "without emitting answer text" in str(error)
@@ -7840,7 +7970,9 @@ def test_zero_width_only_content_is_not_an_answer():
 def test_missing_input_count_still_names_the_spent_output_tokens():
     """Only the output count decides the branch; the input count may be absent."""
     error = _runaway_error(
-        _length_body("", {"completion_tokens": 4096}),
+        _length_body(
+            "", {"completion_tokens": 4096, "completion_tokens_details": {"reasoning_tokens": 4096}}
+        ),
         _runaway_backend(max_tokens=4096),
     )
     message = str(error)
@@ -7873,7 +8005,14 @@ def test_zero_width_next_to_real_text_is_still_an_answer():
     with patch(
         "urllib.request.urlopen",
         return_value=_mock_body(
-            _length_body("\u200b partial", {"prompt_tokens": 900, "completion_tokens": 4096})
+            _length_body(
+                "\u200b partial",
+                {
+                    "prompt_tokens": 900,
+                    "completion_tokens": 4096,
+                    "completion_tokens_details": {"reasoning_tokens": 4096},
+                },
+            )
         ),
     ):
         with pytest.raises(LLMInvokeError) as exc_info:
