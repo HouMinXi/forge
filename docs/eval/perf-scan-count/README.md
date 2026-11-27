@@ -12,9 +12,11 @@ python docs/eval/perf-scan-count/probe.py --source . --check
 ```
 
 The check reports the parser digest and measurements for 20- and 40-file
-inputs. It exits 0 when both stay within one observed traversal and 1 when
-a valid measurement violates that expectation. An import, fixture, or
-parser-output error is not a measured regression or a pass. The script reads
+inputs. It exits 0 when both have exactly one complete observed traversal
+after exactly one split, and 1 only when a valid measurement differs from
+that expectation. Exit 2 is a measurement error (for example, a missing
+source file, fixture mismatch, or invalid child report); no measurement
+result is printed in that case. The script reads
 the supplied checkout, not an installed Forge package, and requires the
 same workload from the pinned `scripts/perf_regression.py` blob. Use it on
 source you trust; it executes the parser locally.
