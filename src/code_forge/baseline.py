@@ -128,21 +128,27 @@ def _resolve_git(
     base_sha = resolve_git_ref(baseline_spec.ref, cwd)  # raises if ref unknown
 
     head = head_spec if head_spec is not None else GitRefBaseline(WORKING)
+    subject_tree = None
     if head.ref == WORKING:
         diff = working_tree_diff(base_sha, paths, cwd)
         head_sha = resolve_git_ref("HEAD", cwd)
     elif head.ref == INDEX:
-        diff = cached_diff(base_sha, paths, cwd)
+        # Freeze the index first, then diff that exact tree: a diff taken from
+        # the live index and a tree taken afterwards can describe two different
+        # subjects.
+        subject_tree = write_tree(cwd)
+        diff = (
+            git_diff(base_sha, subject_tree, paths, cwd)
+            if subject_tree is not None
+            else cached_diff(base_sha, paths, cwd)
+        )
         head_sha = resolve_git_ref("HEAD", cwd)
     else:
         head_sha = resolve_git_ref(head.ref, cwd)
         diff = git_diff(base_sha, head_sha, paths, cwd)
 
     target_kind = head.ref if head.ref in (WORKING, INDEX) else "COMMIT"
-    subject_tree = None
-    if target_kind == INDEX:
-        subject_tree = write_tree(cwd)
-    elif target_kind == "COMMIT":
+    if target_kind == "COMMIT":
         subject_tree = tree_of(head_sha, cwd)
     return ResolvedReview(
         source_files=paths,
@@ -194,20 +200,23 @@ def _resolve_empty(
     if is_git_repo(cwd) and head_spec is not None:
         # Git's universal empty-tree sha (constant, not computed)
         empty_tree_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        subject_tree = None
         if head_spec.ref == WORKING:
             diff = working_tree_diff(empty_tree_sha, paths, cwd)
             head_sha = resolve_git_ref("HEAD", cwd)
         elif head_spec.ref == INDEX:
-            diff = cached_diff(empty_tree_sha, paths, cwd)
+            subject_tree = write_tree(cwd)
+            diff = (
+                git_diff(empty_tree_sha, subject_tree, paths, cwd)
+                if subject_tree is not None
+                else cached_diff(empty_tree_sha, paths, cwd)
+            )
             head_sha = resolve_git_ref("HEAD", cwd)
         else:
             head_sha = resolve_git_ref(head_spec.ref, cwd)
             diff = git_diff(empty_tree_sha, head_sha, paths, cwd)
         target_kind = head_spec.ref if head_spec.ref in (WORKING, INDEX) else "COMMIT"
-        subject_tree = None
-        if target_kind == INDEX:
-            subject_tree = write_tree(cwd)
-        elif target_kind == "COMMIT":
+        if target_kind == "COMMIT":
             subject_tree = tree_of(head_sha, cwd)
         return ResolvedReview(
             source_files=paths,

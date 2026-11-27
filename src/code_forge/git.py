@@ -51,7 +51,7 @@ def machine_diff_command(target: str = "HEAD", *, binary: bool = True) -> list[s
     inflates the prompt several times over.
     """
     options = [opt for opt in _MACHINE_DIFF_OPTIONS if binary or opt != "--binary"]
-    return ["git", "diff", *options, target]
+    return ["git", "--no-replace-objects", "diff", *options, target]
 
 
 # Allowlist regex for diff-spec values.
@@ -201,9 +201,18 @@ def resolve_git_ref(ref: str, cwd: Path) -> str:
 
 
 def write_tree(cwd: Path) -> str | None:
-    """Tree object for the current index, or None when it is not fully merged."""
-    result = subprocess.run(
-        ["git", "--no-replace-objects", "write-tree"],
+    """Tree object for the current index, or None when it is not fully merged.
+
+    ``git write-tree`` refreshes the index cache-tree extension, so it runs
+    against a private copy of the index: a review must never rewrite the file
+    the user is working with.
+    """
+    import os
+    import shutil
+    import tempfile
+
+    resolved = subprocess.run(
+        ["git", "rev-parse", "--git-path", "index"],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -211,6 +220,30 @@ def write_tree(cwd: Path) -> str | None:
         errors="replace",
         check=False,
     )
+    if resolved.returncode != 0:
+        return None
+    index = Path(resolved.stdout.strip())
+    if not index.is_absolute():
+        index = cwd / index
+    if not index.is_file():
+        return None
+    with tempfile.TemporaryDirectory(prefix="forge-index-") as tmp:
+        copy = Path(tmp) / "index"
+        try:
+            shutil.copyfile(index, copy)
+        except OSError:
+            return None
+        env = {**os.environ, "GIT_INDEX_FILE": str(copy)}
+        result = subprocess.run(
+            ["git", "--no-replace-objects", "write-tree"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=env,
+        )
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
@@ -262,7 +295,15 @@ def git_diff(
     """
     from .errors import BaselineResolutionError
 
-    cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, baseline_ref, head_ref, "--"] + [str(p) for p in paths]
+    cmd = [
+        "git",
+        "--no-replace-objects",
+        "diff",
+        *_MACHINE_DIFF_OPTIONS,
+        baseline_ref,
+        head_ref,
+        "--",
+    ] + [str(p) for p in paths]
     result = subprocess.run(
         cmd,
         cwd=repo_root,
@@ -323,9 +364,15 @@ def cached_diff(
     """
     from .errors import BaselineResolutionError
 
-    cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, "--cached", baseline_ref, "--"] + [
-        str(p) for p in paths
-    ]
+    cmd = [
+        "git",
+        "--no-replace-objects",
+        "diff",
+        *_MACHINE_DIFF_OPTIONS,
+        "--cached",
+        baseline_ref,
+        "--",
+    ] + [str(p) for p in paths]
     result = subprocess.run(
         cmd,
         cwd=repo_root,
@@ -361,7 +408,14 @@ def working_tree_diff(
     from .errors import BaselineResolutionError
 
     # Tracked diff (R3-1: must NOT use check=True)
-    tracked_cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, baseline_ref, "--"] + [str(p) for p in paths]
+    tracked_cmd = [
+        "git",
+        "--no-replace-objects",
+        "diff",
+        *_MACHINE_DIFF_OPTIONS,
+        baseline_ref,
+        "--",
+    ] + [str(p) for p in paths]
     tracked_result = subprocess.run(
         tracked_cmd,
         cwd=repo_root,

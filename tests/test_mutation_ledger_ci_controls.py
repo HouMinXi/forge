@@ -2681,6 +2681,103 @@ def test_guardless_docs_need_a_subject_tree(ci_project):
     assert machine._mutation_not_applicable is False
 
 
+def test_index_review_does_not_rewrite_the_index(ci_project):
+    """Freezing the subject must not touch the file the caller is working with."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+    index = p.root / ".git" / "index"
+    before = index.read_bytes()
+
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("INDEX"),
+        [Path(rel)],
+        p.root,
+    )
+
+    assert review.subject_tree is not None
+    assert index.read_bytes() == before
+
+
+def test_index_review_diff_is_the_subject_tree_diff(ci_project):
+    """The diff and the frozen subject must describe the same object: the diff
+    is produced from the tree, not from the live index."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+    base = _git(p.root, "rev-parse", "HEAD")
+
+    review = resolve_baseline(GitRefBaseline(base), GitRefBaseline("INDEX"), [Path(rel)], p.root)
+
+    assert review.subject_tree is not None
+    from_tree = _git(p.root, "diff", base, review.subject_tree, "--", rel)
+    assert review.git_diff.strip() == from_tree.strip()
+
+
+def test_replace_refs_cannot_swap_the_reviewed_subject(ci_project):
+    """The diff and the tree use one replacement-ref policy, so a local replace
+    ref cannot present one subject to the diff and another to the document check."""
+    p = ci_project
+    doc = p.root / "README.md"
+    doc.write_text("# plain\n", encoding="utf-8")
+    _git(p.root, "add", "README.md")
+    _git(
+        p.root,
+        "-c",
+        "user.name=CI Control",
+        "-c",
+        "user.email=ci@example.invalid",
+        "commit",
+        "-qm",
+        "plain",
+    )
+    base = _git(p.root, "rev-parse", "HEAD~1")
+    head = _git(p.root, "rev-parse", "HEAD")
+
+    # a replacement commit whose README is an executable script
+    tree_doc = p.root / "README.md"
+    tree_doc.write_text("#!/bin/sh\nprintf REPLACED\n", encoding="utf-8")
+    tree_doc.chmod(0o755)
+    _git(p.root, "add", "README.md")
+    _git(
+        p.root,
+        "-c",
+        "user.name=CI Control",
+        "-c",
+        "user.email=ci@example.invalid",
+        "commit",
+        "-qm",
+        "replacement",
+    )
+    replacement = _git(p.root, "rev-parse", "HEAD")
+    _git(
+        p.root,
+        "-c",
+        "user.name=CI Control",
+        "-c",
+        "user.email=ci@example.invalid",
+        "reset",
+        "-q",
+        "--hard",
+        head,
+    )
+    _git(p.root, "replace", head, replacement)
+
+    review = resolve_baseline(GitRefBaseline(base), GitRefBaseline(head), [Path("README.md")], p.root)
+
+    assert "100755" not in review.git_diff
+    assert review.subject_tree is not None
+    from_tree = _git(
+        p.root, "--no-replace-objects", "diff", base, review.subject_tree, "--", "README.md"
+    )
+    assert review.git_diff.strip() == from_tree.strip()
+
+
 def test_other_adapter_note_does_not_extend_the_applicability_pair():
     from code_forge.machine import _clean_mutation_skip_kind
 
