@@ -4720,6 +4720,24 @@ def _invoke_api(
             if not exc.retryable or attempt == max_attempts - 1:
                 if attempt > 0 or (exc.retryable and max_attempts == 1):
                     _emit_retry_failed(backend.name, max_attempts, cause)
+                # A later attempt can fail without reporting usage of its own,
+                # like a 401. The tokens the earlier replies spent are still
+                # known, so the error that leaves this call carries them. Only
+                # fields a reply actually reported survive: summing into an
+                # empty Usage would turn an unreported count into a known zero.
+                if runaway_spent is not None and exc.observed_usage is None:
+                    exc.observed_usage = runaway_spent
+                    exc.usage = (
+                        runaway_spent
+                        if {"input_tokens", "output_tokens"} <= runaway_spent.known_fields
+                        else None
+                    )
+                elif runaway_spent is not None and exc.observed_usage is not None:
+                    total = _sum_usage(runaway_spent, exc.observed_usage)
+                    exc.observed_usage = total
+                    exc.usage = (
+                        total if {"input_tokens", "output_tokens"} <= total.known_fields else None
+                    )
                 raise
             delay = _retry_delay_s(attempt, initial_delay_s, exc.retry_after)
             # Carry the cause. Without it this line names a backend and a

@@ -20684,6 +20684,7 @@
     "tests/test_llm_invoke.py::TestVertexInvoke::test_vertex_returns_real_usage",
     "tests/test_llm_invoke.py::TestVertexURLErrorRetryable::test_vertex_urlerror_is_retryable",
     "tests/test_llm_invoke.py::test_attempt_loop_retries_a_runaway_and_returns_the_next_reply",
+    "tests/test_llm_invoke.py::test_auth_failure_on_retry_keeps_the_tokens_already_spent",
     "tests/test_llm_invoke.py::test_boolean_usage_counts_are_not_rendered_as_numbers",
     "tests/test_llm_invoke.py::test_empty_content_message_reports_spent_tokens_not_the_cap",
     "tests/test_llm_invoke.py::test_empty_content_without_a_cap_keeps_the_missing_knob_message",

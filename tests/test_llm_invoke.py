@@ -7853,6 +7853,46 @@ def test_generic_empty_reply_does_not_consume_the_run_breaker(monkeypatch):
     assert breaker.count == 0
 
 
+def test_auth_failure_on_retry_keeps_the_tokens_already_spent(monkeypatch):
+    """A 401 on the retry reports nothing, but the first reply already spent.
+
+    The diagnosis stays the auth failure. The usage recorded is only what the
+    first reply reported: an unreported count is left unknown, not written as
+    zero.
+    """
+    import urllib.error
+
+    monkeypatch.setenv("K", "key")
+    runaway = _mock_body(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        )
+    )
+    denied = urllib.error.HTTPError("http://x", 401, "unauthorized", {}, None)
+    denied.read = Mock(return_value=b"bad credentials")
+    with patch("urllib.request.urlopen", side_effect=[runaway, denied]):
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke(
+                "p",
+                backend=_runaway_backend(max_tokens=4096),
+                max_attempts=3,
+                initial_delay_s=0,
+            )
+    error = exc_info.value
+    assert "401" in str(error) or "unauthorized" in str(error)
+    assert error.retryable is False
+    assert error.observed_usage is not None
+    assert error.observed_usage.input_tokens == 900
+    assert error.observed_usage.output_tokens == 4096
+    assert {"input_tokens", "output_tokens"} <= error.observed_usage.known_fields
+    assert "cached_input_tokens" not in error.observed_usage.known_fields
+
+
 def test_second_runaway_in_one_call_stops_with_the_diagnosis_intact(monkeypatch):
     """One retry is worth it; a second loop means this backend always will.
 
