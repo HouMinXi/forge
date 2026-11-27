@@ -434,8 +434,8 @@ request: unreferenced selection changes do not invalidate it.
 The `ovs-v6` calibration is derived from the
 [public patch](https://lists.openwall.net/netdev/2026/11/07/107) and its
 [declared Linux base](https://lists.openwall.net/netdev/2026/11/07/105),
-`fa5196392691051963726787944db872420dfa75`. The saved reports pin
-the exact inputs. Removing the minimum only leaves userspace output identical
+`fa5196392691051963726787944db872420dfa75`. The saved reports record
+the identities of the inputs used for the earlier run. Removing the minimum only leaves userspace output identical
 for both OVS families. It does not remove the handwritten kernel policy.
 The plausible explanation that the OVS protocol skips the initializer is
 wrong: the spec uses `genetlink-legacy` and the pinned predicate selects
@@ -444,10 +444,17 @@ wrong: the spec uses `genetlink-legacy` and the pinned predicate selects
 The manual test replays four **hand-authored** observations with the same
 conclusion. All four earn the existing root hit. Only the supported mechanism
 passes this calibration's extra assertion; a contradicted, missing, or
-uncertain mechanism does not. Scoring artifacts are introduced after the
-observations are sealed. This is not an automated semantic grader, a live
-quality estimate, or a production gate. The test verifies saved observations;
-it does not itself rerun the Linux generator.
+uncertain mechanism does not. The observations and recorded human
+rulings are separate fixtures. After the observation is sealed, the scorer
+checks the ruling against the frozen observation digest; a reason swap cannot
+inherit the old ruling. The adjudication fixture also pins the YNL evidence
+report by byte digest, and each observation binds the source facts through
+its input digest.
+
+This is not an automated semantic grader, a live quality estimate, or a
+production gate. The report test checks internal consistency only. It does
+not authenticate the upstream inputs, independently verify the generated
+C or headers, or rerun the Linux generator.
 
 ```bash
 PYTHONPATH=src python -m pytest -q docs/eval/review-followup/test_ovs_v6_calibration.py

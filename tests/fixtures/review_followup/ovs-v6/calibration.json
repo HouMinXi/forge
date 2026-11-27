@@ -1,27 +1,4 @@
 {
   "base": "git:fa5196392691051963726787944db872420dfa75",
-  "lineage": "ovs-netlink-v6",
-  "conclusion": "Removing ifindex min: 0 does not change the generated userspace C or header for either OVS family.",
-  "controls": [
-    {
-      "id": "supported-reason",
-      "reason": "The pinned generator emits the same userspace bytes with and without the bound; the pinned kernel implements a separate signed minimum policy.",
-      "ruling": "supported"
-    },
-    {
-      "id": "wrong-reason",
-      "reason": "OVS genetlink-legacy is considered classic by the pinned generator, so TypeScalar skips _init_checks.",
-      "ruling": "unsupported"
-    },
-    {
-      "id": "missing-reason",
-      "reason": null,
-      "ruling": null
-    },
-    {
-      "id": "uncertain-reason",
-      "reason": "The predicate selecting the scalar checks cannot be verified from the stated evidence.",
-      "ruling": "uncertain"
-    }
-  ]
+  "lineage": "ovs-netlink-v6"
 }

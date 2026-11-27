@@ -1,0 +1,30 @@
+{
+  "baseline": {
+    "call_limit": null,
+    "context_limit": null,
+    "failure_policy": "saved-only",
+    "forge_commit": "git:34dbb221d07bdec511edff65a948f2d93f5f853f",
+    "model": null,
+    "prompt": null
+  },
+  "candidate": "synthetic:ovs-v6-overlay",
+  "case": "supported-reason",
+  "diagnostic": null,
+  "findings": [
+    {
+      "blocking": false,
+      "claim": "Removing ifindex min: 0 does not change the generated userspace C or header for either OVS family.",
+      "id": "conclusion"
+    },
+    {
+      "blocking": false,
+      "claim": "The pinned generator emits the same userspace bytes with and without the bound; the pinned kernel implements a separate signed minimum policy.",
+      "id": "reason"
+    }
+  ],
+  "input_sha256": "14a75311db39ca1d51eca8347e56ab4591a9ebadb037c9af345c3469c603692c",
+  "run": "handwritten",
+  "schema": 1,
+  "status": "completed",
+  "usage": null
+}
