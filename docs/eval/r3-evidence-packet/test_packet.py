@@ -781,6 +781,8 @@ def test_a_packet_in_an_unsearchable_directory_is_refused(tmp_path):
             verifier["load"](packet)
     finally:
         hidden.chmod(0o755)
+
+
 def test_a_packet_past_the_size_limit_is_refused_before_it_is_read(tmp_path, monkeypatch):
     verifier = runpy.run_path(str(VERIFY))
     packet = tmp_path / "packet.json"
