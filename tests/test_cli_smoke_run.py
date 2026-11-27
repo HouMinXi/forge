@@ -27,6 +27,16 @@ def _args(command=None):
     )
 
 
+def _git_subcommand(command):
+    """Subcommand of a git call, skipping git-wide options."""
+    if not command or command[0] != "git":
+        return ""
+    rest = list(command[1:])
+    while rest and rest[0] == "--no-replace-objects":
+        rest = rest[1:]
+    return rest[0] if rest else ""
+
+
 @pytest.mark.parametrize("stage", ["root", "diff", "command", "receipt"])
 @pytest.mark.parametrize("error_type", [TypeError, RuntimeError])
 def test_programming_errors_are_not_hidden(isolated_cwd, monkeypatch, stage, error_type):
@@ -34,11 +44,8 @@ def test_programming_errors_are_not_hidden(isolated_cwd, monkeypatch, stage, err
     fault = error_type("injected implementation failure")
 
     def run(command, **kwargs):
-        point = (
-            "root"
-            if command[:2] == ["git", "rev-parse"]
-            else ("diff" if command[:2] == ["git", "diff"] else "command")
-        )
+        subcommand = _git_subcommand(command)
+        point = "root" if subcommand == "rev-parse" else ("diff" if subcommand == "diff" else "command")
         if point == stage:
             raise fault
         return real_run(command, **kwargs)
@@ -60,8 +67,9 @@ def test_git_os_errors_keep_existing_fallback(isolated_cwd, monkeypatch, stage):
     real_run = subprocess.run
 
     def run(command, **kwargs):
-        point = "root" if command[:2] == ["git", "rev-parse"] else "diff"
-        if command[0] == "git" and point == stage:
+        subcommand = _git_subcommand(command)
+        point = "root" if subcommand == "rev-parse" else "diff"
+        if subcommand and point == stage:
             raise OSError("git unavailable")
         return real_run(command, **kwargs)
 

@@ -200,6 +200,85 @@ def resolve_git_ref(ref: str, cwd: Path) -> str:
     return result.stdout.strip()
 
 
+def write_tree(cwd: Path) -> str | None:
+    """Tree object for the current index, or None when it is not fully merged.
+
+    ``git write-tree`` refreshes the index cache-tree extension, so it runs
+    against a private copy of the index: a review must never rewrite the file
+    the user is working with.
+    """
+    import os
+    import shutil
+    import tempfile
+
+    resolved = subprocess.run(
+        ["git", "rev-parse", "--git-path", "index"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if resolved.returncode != 0:
+        return None
+    index = Path(resolved.stdout.strip())
+    if not index.is_absolute():
+        index = cwd / index
+    if not index.is_file():
+        return None
+    with tempfile.TemporaryDirectory(prefix="forge-index-") as tmp:
+        copy = Path(tmp) / "index"
+        try:
+            shutil.copyfile(index, copy)
+        except OSError:
+            return None
+        env = {**os.environ, "GIT_INDEX_FILE": str(copy)}
+        # A split index keeps its shared base in the real object directory, and
+        # write-tree may replace and expire that base: the user's index would
+        # then point at a deleted file. Make the private copy a plain index and
+        # keep split support off for the duration of the capture.
+        subprocess.run(
+            ["git", "-c", "core.splitIndex=false", "update-index", "--no-split-index"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=env,
+        )
+        result = subprocess.run(
+            ["git", "-c", "core.splitIndex=false", "write-tree"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=env,
+        )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def tree_of(ref: str, cwd: Path) -> str | None:
+    """Tree object a commit expression points at, or None."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", ref + "^{tree}"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def _is_likely_binary(path: Path) -> bool:
     """H2 fix: heuristic binary detection via null-byte in first 8KB.
 
@@ -230,7 +309,14 @@ def git_diff(
     """
     from .errors import BaselineResolutionError
 
-    cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, baseline_ref, head_ref, "--"] + [str(p) for p in paths]
+    cmd = [
+        "git",
+        "diff",
+        *_MACHINE_DIFF_OPTIONS,
+        baseline_ref,
+        head_ref,
+        "--",
+    ] + [str(p) for p in paths]
     result = subprocess.run(
         cmd,
         cwd=repo_root,
@@ -291,9 +377,14 @@ def cached_diff(
     """
     from .errors import BaselineResolutionError
 
-    cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, "--cached", baseline_ref, "--"] + [
-        str(p) for p in paths
-    ]
+    cmd = [
+        "git",
+        "diff",
+        *_MACHINE_DIFF_OPTIONS,
+        "--cached",
+        baseline_ref,
+        "--",
+    ] + [str(p) for p in paths]
     result = subprocess.run(
         cmd,
         cwd=repo_root,
@@ -329,7 +420,13 @@ def working_tree_diff(
     from .errors import BaselineResolutionError
 
     # Tracked diff (R3-1: must NOT use check=True)
-    tracked_cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, baseline_ref, "--"] + [str(p) for p in paths]
+    tracked_cmd = [
+        "git",
+        "diff",
+        *_MACHINE_DIFF_OPTIONS,
+        baseline_ref,
+        "--",
+    ] + [str(p) for p in paths]
     tracked_result = subprocess.run(
         tracked_cmd,
         cwd=repo_root,
@@ -372,7 +469,15 @@ def working_tree_diff(
         #   0 = files identical (impossible vs /dev/null with content)
         #   1 = files differ (THE expected case)
         #   2+ = real error
-        cmd = ["git", "diff", *_MACHINE_DIFF_OPTIONS, "--no-index", "--", "/dev/null", rel_path]
+        cmd = [
+            "git",
+            "diff",
+            *_MACHINE_DIFF_OPTIONS,
+            "--no-index",
+            "--",
+            "/dev/null",
+            rel_path,
+        ]
         result = subprocess.run(
             cmd,
             cwd=repo_root,

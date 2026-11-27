@@ -48,6 +48,7 @@ from .disposition import (
 from .errors import CorruptedStateError
 from .falsify import Falsifier
 from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
+from .git import INDEX, WORKING
 from .hold import check_escalated_frozen
 from .ledger import (
     LedgerRow,
@@ -374,12 +375,43 @@ _CYCLE_PRESERVED_LOG = (
 )
 
 
+def _guardless_tests_only(diff_paths) -> bool:
+    """True only if the captured diff itself is a tests-only change.
+
+    Used when a review cannot carry the source guard: the exemption then has to
+    come from the frozen diff, not from a submitted path list, so rename
+    sources, deleted product files and Git pathspec expansions are all included.
+    A backslash in a POSIX path is a literal filename, not a directory
+    separator, and is refused rather than normalized into ``tests/``.
+    """
+    raw_paths = [str(raw) for raw in (diff_paths or ())]
+    if any("\\" in text for text in raw_paths):
+        return False
+    return _default_tests_only(raw_paths)
+
+
+def _guardless_docs_scope(diff_paths) -> bool:
+    """Lexical half of the document exemption: every diff path is allowlisted."""
+    paths = [str(raw) for raw in (diff_paths or ())]
+    if not paths:
+        return False
+    if any("\\" in text for text in paths):
+        return False
+    for text in paths:
+        rel = _normalized_rel(text)
+        if rel is None or not _docs_path_allowed(rel):
+            return False
+    return True
+
+
 def _clean_mutation_skip_kind(
     findings: list,
     infra: list[str],
     evidence: dict,
     *,
-    source_unchanged: bool,
+    source_unchanged: bool | None,
+    diff_paths=None,
+    has_subject_tree: bool = False,
 ) -> str | None:
     """Classify a native carrier that measured nothing, or return None.
 
@@ -393,7 +425,18 @@ def _clean_mutation_skip_kind(
     - ``"host-busy"`` (#282): ``mutation-host-busy`` skips (the host never
       went idle, so no baseline ran), same infra rule.
     - ``"not-applicable"`` (#127): only ``mutation-no-adapter`` /
-      ``mutation-tests-only`` skips and no infra lines at all.
+      ``mutation-tests-only`` skips and no infra lines at all. These skip
+      because the diff has nothing to mutate, not because a measurement was
+      taken. ``source_unchanged`` is tri-state here: ``None`` means an
+      explicit INDEX or COMMIT baseline, the only reviews that cannot carry
+      the WORKING-only source guard, so for this pair the guard cannot
+      invalidate the skip. That exemption is limited to a captured diff that
+      proves its scope and a frozen subject tree: "no adapter covers this" is
+      a claim about product code and still needs a captured guard, because a
+      guardless review cannot prove what the reviewed subject contains. A WORKING review supplies ``True`` or
+      ``False``, and every other subject -- including an empty or snapshot
+      baseline with no git target -- stays ``False`` and fails closed.
+      Measured kinds below require a captured guard in every case.
 
     - ``"other-adapter-only"`` (#133): only a ``mutation-other-adapter`` note
       with exactly its own infra line. Ambiguous (real code in another
@@ -404,12 +447,14 @@ def _clean_mutation_skip_kind(
       results-timeout may carry generated-mutant evidence.
 
     The mixed-language ``mutation-other-adapter`` note (no infra line of its
-    own) may accompany any single skip kind. Anything else -- a changed source,
-    a measurement that claims completion, mutant-phase evidence, survivors,
-    mixed kinds, extra or reordered infra errors, or any cleanup / cancellation
-    / process-failure marker -- returns None and still fails closed.
+    own) may accompany any single skip kind that has its own entry below; it
+    does not extend the applicability pair. Anything else -- a changed source
+    on a measured kind, a measurement that claims completion, mutant-phase
+    evidence, survivors, mixed kinds, extra or reordered infra errors, or any
+    cleanup / cancellation / process-failure marker -- returns None and still
+    fails closed.
     """
-    if not source_unchanged or evidence.get("completed_measurement") is True or not findings:
+    if evidence.get("completed_measurement") is True or not findings:
         return None
     if any(f.id != "MUTATION_SKIPPED" or f.disposition is not Disposition.DISMISSED for f in findings):
         return None
@@ -427,8 +472,21 @@ def _clean_mutation_skip_kind(
     mutant_phase = any(key in evidence for key in _MUTANT_PHASE_KEYS)
     inventory = evidence.get("inventory", {})
     if kinds <= {"mutation-no-adapter", "mutation-tests-only"}:
+        if source_unchanged is False:
+            # Guard unavailable, invalid, or changed: the skip claims no
+            # measurement, but nothing proves it stayed that way.
+            return None
+        if source_unchanged is None and not (
+            has_subject_tree and (_guardless_tests_only(diff_paths) or _guardless_docs_scope(diff_paths))
+        ):
+            # A review that cannot carry the guard may only excuse a captured
+            # diff that proves it holds no product code, or a document-scoped
+            # diff whose frozen subject the policy will verify.
+            return None
         ok = list(infra) == [] and not mutant_phase and inventory == {}
         return "not-applicable" if ok else None
+    if not source_unchanged:
+        return None
     if kinds == {"mutation-other-adapter"}:
         # #133: other-language code with a registered but uninvoked adapter.
         ok = list(infra) == [_OTHER_ADAPTER_INFRA] and not mutant_phase and inventory == {}
@@ -580,9 +638,75 @@ def _diff_paths(git_diff: str) -> set[str]:
     return paths
 
 
-def _docs_only_files(paths: list[str], root, diff_paths=()) -> bool:
+def _tree_entry(root, tree: str, rel: str) -> tuple[int, bytes] | None:
+    """Mode and bytes of ``rel`` in a frozen tree, or None unless exactly one
+    blob matches that literal path."""
+    import subprocess
+    from pathlib import Path
+
+    root_path = Path(root)
+    try:
+        out = subprocess.run(
+            ["git", "ls-tree", "-z", tree, "--", f":(literal){rel}"],
+            cwd=str(root_path),
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        rows = [row for row in out.stdout.split(b"\0") if row.strip()]
+        if out.returncode != 0 or len(rows) != 1:
+            return None
+        fields, _, path = rows[0].partition(b"\t")
+        parts = fields.split()
+        if len(parts) != 3 or parts[1] != b"blob" or path.decode("utf-8", "replace") != rel:
+            return None
+        mode = int(parts[0], 8)
+        blob = subprocess.run(
+            ["git", "cat-file", "blob", parts[2].decode("ascii")],
+            cwd=str(root_path),
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if blob.returncode != 0:
+        return None
+    return mode, blob.stdout
+
+
+def _tree_has_path(root, tree: str, rel: str) -> bool:
+    """True when the frozen tree holds an entry at exactly ``rel``."""
+    import subprocess
+    from pathlib import Path
+
+    try:
+        out = subprocess.run(
+            ["git", "ls-tree", "-z", tree, "--", f":(literal){rel}"],
+            cwd=str(Path(root)),
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    if out.returncode != 0:
+        # An errored query proves nothing about the path. Report it as present
+        # so the caller refuses the exemption instead of assuming absence.
+        return True
+    return bool([r for r in out.stdout.split(b"\0") if r.strip()])
+
+
+def _docs_only_files(paths: list[str], root, diff_paths=(), post_image=None, has_path=None) -> bool:
     """True only if every changed path is on the docs allowlist and every
-    post-image is a regular, non-executable, readable, non-shebang file."""
+    post-image is a regular, non-executable, readable, non-shebang file.
+
+    ``post_image``/``has_path`` read a frozen review subject (INDEX or COMMIT
+    tree). Without them the working tree is the subject, which is only correct
+    for a WORKING review.
+    """
+    if post_image is not None:
+        return _frozen_docs_only(diff_paths, post_image, has_path)
     import os
     import stat
     from pathlib import Path
@@ -624,6 +748,36 @@ def _docs_only_files(paths: list[str], root, diff_paths=()) -> bool:
     return True
 
 
+def _frozen_docs_only(diff_paths, post_image, has_path) -> bool:
+    """Document applicability read from a frozen tree, never the working copy."""
+    import stat
+    from pathlib import PurePosixPath
+
+    concretes: list[str] = []
+    for raw in sorted(diff_paths or ()):
+        rel = _normalized_rel(str(raw))
+        if rel is None or not _docs_path_allowed(rel):
+            return False
+        concretes.append(rel)
+    if not concretes:
+        return False
+    for rel in concretes:
+        image = post_image(rel)
+        if image is None:
+            return False
+        mode, content = image
+        if not stat.S_ISREG(mode):
+            return False
+        if _classified_doc_rule(rel, mode, content) is None:
+            return False
+        parts = PurePosixPath(rel).parts
+        for depth in range(1, len(parts)):
+            marker = "/".join(parts[:depth]) + "/__init__.py"
+            if has_path is not None and has_path(marker):
+                return False
+    return True
+
+
 def _symlinked_files(paths: list[str], root) -> list[str]:
     from pathlib import Path
 
@@ -657,6 +811,24 @@ def _default_tests_only(paths: list[str]) -> bool:
         if not any(p.fullmatch(posix) or p.match(posix) for p in patterns):
             return False
     return True
+
+
+_GUARDLESS_REVIEW_KINDS = (INDEX, "COMMIT")
+
+
+def _source_guard_state(target_kind: str | None, source_before: bool, source_after: bool) -> bool | None:
+    """Tri-state guard verdict for ``_clean_mutation_skip_kind``.
+
+    ``None`` is reserved for the review kinds that cannot carry the
+    WORKING-only guard: an explicit INDEX or COMMIT baseline. A WORKING review
+    reports whether its guard still matches, and any other subject -- an empty
+    or snapshot baseline with no git target -- stays fail-closed.
+    """
+    if target_kind == WORKING:
+        return bool(source_before and source_after)
+    if target_kind in _GUARDLESS_REVIEW_KINDS:
+        return None
+    return False
 
 
 def _is_clean_baseline_timeout_skip(
@@ -3646,7 +3818,11 @@ class StateMachine:
                         l2_findings,
                         l2_infra,
                         evidence,
-                        source_unchanged=bool(source_before and source_after),
+                        source_unchanged=_source_guard_state(
+                            self.resolved_review.target_kind, source_before, source_after
+                        ),
+                        diff_paths=self._review_diff_paths(),
+                        has_subject_tree=self.resolved_review.subject_tree is not None,
                     )
                     if kind is None:
                         self._mutation_bound_failure = True
@@ -3694,11 +3870,10 @@ class StateMachine:
                         # is a clean skip in both modes.
                         self._mutation_bound_failure = True
                         self._state.infra_errors.append(_ci_skip_reason(kind, l2_findings))
-            elif (
-                self.mode == Mode.CI
-                and not needs_baseline
-                and type(self.l2_runner) is _MissingMutmutRunner
-            ):
+            elif self.mode == Mode.CI and type(self.l2_runner) is _MissingMutmutRunner:
+                # A missing mutation engine is not evidence of anything: the
+                # same applicability policy decides, and it needs a frozen
+                # subject for every exemption.
                 self._apply_not_applicable_policy(l2_findings, diff_files)
             elif self.mode == Mode.CI and any(
                 f.id == "MUTATION_SKIPPED"
@@ -3744,11 +3919,34 @@ class StateMachine:
         """#127/#132: decide whether a measured-nothing "does not apply" skip
         is clean. Always leaves a visible infra line naming the files."""
         shown = ", ".join(sorted(diff_files)[:10]) + (" ..." if len(diff_files) > 10 else "")
-        fingerprints = {f.fingerprint for f in findings}
-        linked = _symlinked_files(diff_files, self._source_root())
-        if linked:
+        subject_tree = self.resolved_review.subject_tree
+        root = self._source_root()
+
+        def post_image(rel: str):
+            return _tree_entry(root, subject_tree, rel) if subject_tree else None
+
+        def has_path(rel: str) -> bool:
+            return _tree_has_path(root, subject_tree, rel) if subject_tree else True
+
+        if self.resolved_review.target_kind != WORKING:
+            # A guardless review decides from its frozen subject: the captured
+            # diff for scope, the pinned tree for document content. A tree that
+            # cannot be produced is not an exemption.
+            scope_ok = subject_tree is not None and _guardless_tests_only(self._review_diff_paths())
+            docs_ok = subject_tree is not None and _docs_only_files(
+                diff_files, root, self._review_diff_paths(), post_image=post_image, has_path=has_path
+            )
+            clean = scope_ok or docs_ok
+            why = (
+                "diff is tests-only"
+                if scope_ok
+                else "docs-only diff"
+                if docs_ok
+                else "no mutation adapter covers"
+            )
+        elif linked := _symlinked_files(diff_files, self._source_root()):
             clean, why, shown = False, "symlinked files are not measured", ", ".join(linked)
-        elif fingerprints == {"mutation-tests-only"}:
+        elif {f.fingerprint for f in findings} == {"mutation-tests-only"}:
             clean = _default_tests_only(diff_files)
             why = (
                 "diff is tests-only"

@@ -43,7 +43,7 @@ import pytest
 
 from code_forge import cli, mutation
 from code_forge.autofix import StubAutoFixer
-from code_forge.baseline import GitRefBaseline, resolve_baseline
+from code_forge.baseline import ResolvedReview, GitRefBaseline, resolve_baseline
 from code_forge.disposition import Disposition
 from code_forge.factories import build_l1_provider, build_l2_runner
 from code_forge.falsify import StubFalsifier
@@ -363,7 +363,7 @@ def _discover_mutmut(project):
     marker.chmod(0o700)
 
 
-def _machine(project, *, runner=None, l0=None, review=None, active_l1=False):
+def _machine(project, *, runner=None, l0=None, review=None, active_l1=False, mode=Mode.CI):
     review = _review(project) if review is None else review
     provider = build_l1_provider("auto" if active_l1 else "stub", review, max_attempts=1)
 
@@ -373,7 +373,7 @@ def _machine(project, *, runner=None, l0=None, review=None, active_l1=False):
         return ([], [])
 
     values = dict(
-        mode=Mode.CI,
+        mode=mode,
         falsifier=StubFalsifier(),
         autofixer=StubAutoFixer(),
         revert_fn=lambda _finding: None,
@@ -2125,10 +2125,7 @@ def test_baseline_timeout_reason_text(description, expected):
 
 
 def _local_machine(project, *, runner):
-    machine = _machine(project, runner=runner)
-    machine.mode = Mode.LOCAL
-    machine._state.mode = Mode.LOCAL
-    return machine
+    return _machine(project, runner=runner, mode=Mode.LOCAL)
 
 
 def _injected_timeout_runner(calls):
@@ -2260,6 +2257,724 @@ def test_no_adapter_diff_is_a_clean_skip_in_both_modes(ci_project, monkeypatch, 
     assert machine._mutation_bound_failure is False
 
 
+def _staged_review(project, rel: str):
+    return resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("INDEX"),
+        [Path(rel)],
+        project.root,
+    )
+
+
+def _committed_review(project, rel: str):
+    parent = _git(project.root, "rev-parse", "HEAD")
+    _git(project.root, "add", rel)
+    _git(
+        project.root,
+        "-c",
+        "user.name=CI Control",
+        "-c",
+        "user.email=ci-control@example.invalid",
+        "commit",
+        "-qm",
+        "add the staged test file",
+    )
+    head = _git(project.root, "rev-parse", "HEAD")
+    return resolve_baseline(
+        GitRefBaseline(parent),
+        GitRefBaseline(head),
+        [Path(rel)],
+        project.root,
+    )
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+@pytest.mark.parametrize("review_kind", ["index", "commit"])
+def test_tests_only_diff_is_not_applicable(ci_project, mode, review_kind):
+    """A tests-only diff records no measurement, so a review that cannot capture
+    the WORKING-only source guard -- INDEX or COMMIT -- must still classify the
+    skip as not applicable instead of 'invalid bound mutation measurement'."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    if review_kind == "index":
+        _git(p.root, "add", rel)
+        review = _staged_review(p, rel)
+    else:
+        review = _committed_review(p, rel)
+
+    machine = _machine(p, runner=mutation.run_mutation, review=review, mode=mode)
+    findings = machine._run_l2_phase()
+
+    assert [f.fingerprint for f in findings] == ["mutation-tests-only"]
+    assert all(f.disposition is Disposition.DISMISSED for f in findings)
+    assert machine._mutation_bound_failure is False
+    assert not any(
+        e.startswith("L2: invalid bound mutation measurement") for e in machine._state.infra_errors
+    )
+    assert (
+        machine._state.infra_errors.count(
+            "L2: mutation not applicable (diff is tests-only): tests/test_sample.py"
+        )
+        == 1
+    )
+    assert "baseline" not in p.stages
+
+
+def test_skip_evidence_phase_needs_its_own_evidence():
+    from code_forge.machine import _clean_mutation_skip_kind
+
+    no_mutants = [_skip(fingerprint="mutation-no-mutants", description="no mutants")]
+    results_timeout = [_skip(fingerprint="mutation-results-timeout", description="results timed out")]
+    results_evidence = {"inventory": {}, "results_sha256": "x"}
+
+    # Each phase accepts only its own evidence.
+    assert (
+        _clean_mutation_skip_kind(no_mutants, [], dict(results_evidence), source_unchanged=True)
+        == "no-mutants"
+    )
+    assert _clean_mutation_skip_kind(no_mutants, [], {"inventory": {}}, source_unchanged=True) is None
+    assert (
+        _clean_mutation_skip_kind(results_timeout, [], {"inventory": {}}, source_unchanged=True)
+        == "results-timeout"
+    )
+    assert (
+        _clean_mutation_skip_kind(results_timeout, [], dict(results_evidence), source_unchanged=True)
+        is None
+    )
+
+    # A captured guard that saw the source move blocks both phases, whatever
+    # evidence the carrier holds.
+    for rows, evidence in (
+        (no_mutants, results_evidence),
+        (no_mutants, {"inventory": {}}),
+        (results_timeout, {"inventory": {}}),
+        (results_timeout, results_evidence),
+    ):
+        assert _clean_mutation_skip_kind(rows, [], dict(evidence), source_unchanged=False) is None
+
+    # An uncaptured guard (INDEX/COMMIT) is no licence for a measured phase
+    # either; both kinds must still refuse.
+    assert (
+        _clean_mutation_skip_kind(no_mutants, [], dict(results_evidence), source_unchanged=None) is None
+    )
+    assert (
+        _clean_mutation_skip_kind(results_timeout, [], {"inventory": {}}, source_unchanged=None) is None
+    )
+
+
+def test_working_review_with_a_source_change_rejects_the_skip(ci_project, monkeypatch):
+    """A WORKING review always carries the guard: when it was captured and the
+    source moved, the tests-only skip must not be accepted as applicability."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+
+    from code_forge import machine as machine_mod
+
+    calls = {"n": 0}
+    real = machine_mod.mutation_source_guard_matches
+
+    seen = []
+
+    def first_matches_then_drifts(guard, *, source_root, **kwargs):
+        calls["n"] += 1
+        matched = real(guard, source_root=source_root)
+        seen.append((guard, source_root, matched))
+        assert not kwargs
+        return calls["n"] == 1 and matched
+
+    monkeypatch.setattr(machine_mod, "mutation_source_guard_matches", first_matches_then_drifts)
+
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("WORKING"),
+        [Path(rel)],
+        p.root,
+    )
+    runner = _machine(p, runner=mutation.run_mutation, review=review)
+    runner._run_l2_phase()
+
+    assert calls["n"] >= 2
+    # The first evaluation must really have matched; otherwise the test would
+    # pass without exercising the match-then-drift sequence at all.
+    assert seen[0][2] is True
+    assert seen[0][0] is not None and seen[0][1] == p.root
+    assert runner._state.findings == []
+    assert runner._mutation_bound_failure is True
+    assert any(
+        e.startswith("L2: invalid bound mutation measurement") for e in runner._state.infra_errors
+    )
+
+
+def test_working_review_with_a_matching_guard_accepts_the_skip(ci_project):
+    """The same call site must hand True to the classifier for a WORKING review;
+    the guard matched, so the applicability skip stays clean."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("WORKING"),
+        [Path(rel)],
+        p.root,
+    )
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    findings = machine._run_l2_phase()
+
+    assert [f.fingerprint for f in findings] == ["mutation-tests-only"]
+    assert all(f.disposition is Disposition.DISMISSED for f in findings)
+    assert machine._mutation_bound_failure is False
+    assert (
+        machine._state.infra_errors.count(
+            "L2: mutation not applicable (diff is tests-only): tests/test_sample.py"
+        )
+        == 1
+    )
+
+
+def test_working_review_with_an_uncapturable_guard_fails_closed(ci_project, monkeypatch):
+    """A WORKING review always supplies a bool: if the guard cannot be captured,
+    that is False, not None, so applicability skips still fail closed."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+
+    from code_forge import machine as machine_mod
+
+    monkeypatch.setattr(machine_mod, "capture_mutation_source_guard", lambda **_kwargs: None)
+
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("WORKING"),
+        [Path(rel)],
+        p.root,
+    )
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    machine._run_l2_phase()
+
+    assert machine._mutation_bound_failure is True
+    assert any(
+        e.startswith("L2: invalid bound mutation measurement") for e in machine._state.infra_errors
+    )
+
+
+def test_source_guard_state_only_excuses_explicit_index_or_commit():
+    """Only an explicit INDEX/COMMIT baseline may skip the guard; an empty or
+    snapshot review with no git target stays fail-closed."""
+    from code_forge.machine import _source_guard_state
+
+    assert _source_guard_state("WORKING", True, True) is True
+    assert _source_guard_state("WORKING", True, False) is False
+    assert _source_guard_state("WORKING", False, False) is False
+    assert _source_guard_state("INDEX", False, False) is None
+    assert _source_guard_state("COMMIT", False, False) is None
+    assert _source_guard_state(None, False, False) is False
+    assert _source_guard_state("SNAPSHOT", False, False) is False
+
+
+def test_empty_baseline_review_still_rejects_the_skip(ci_project):
+    """A review with no git target has no guard to excuse it: the applicability
+    skip keeps the bound failure that the permissive branch would drop."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+
+    review = ResolvedReview(
+        source_files=[Path(rel)],
+        baseline_content=None,
+        git_diff=None,
+        mode_hint="non-git",
+    )
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    machine._run_l2_phase()
+
+    assert machine._mutation_bound_failure is True
+    assert any(
+        e.startswith("L2: invalid bound mutation measurement") for e in machine._state.infra_errors
+    )
+
+
+def test_no_adapter_skip_needs_a_captured_guard():
+    """A guardless review cannot prove what its subject contains, so
+    "no adapter covers this" keeps requiring the captured guard while a
+    tests-only diff is excused."""
+    from code_forge.machine import _clean_mutation_skip_kind
+
+    evidence = {"inventory": {}}
+    no_adapter = [_skip(fingerprint="mutation-no-adapter", description="no registered adapter")]
+    tests_only = [_skip(fingerprint="mutation-tests-only", description="diff is tests-only")]
+
+    assert _clean_mutation_skip_kind(no_adapter, [], evidence, source_unchanged=None) is None
+    assert _clean_mutation_skip_kind(no_adapter, [], evidence, source_unchanged=True) == "not-applicable"
+    # A frozen subject lets the document policy decide; product paths still fail.
+    assert (
+        _clean_mutation_skip_kind(
+            no_adapter,
+            [],
+            evidence,
+            source_unchanged=None,
+            diff_paths=["docs/guide.md"],
+            has_subject_tree=True,
+        )
+        == "not-applicable"
+    )
+    assert (
+        _clean_mutation_skip_kind(
+            no_adapter,
+            [],
+            evidence,
+            source_unchanged=None,
+            diff_paths=["src/app.py"],
+            has_subject_tree=True,
+        )
+        is None
+    )
+    proven = ["tests/test_sample.py"]
+    assert (
+        _clean_mutation_skip_kind(
+            tests_only,
+            [],
+            evidence,
+            source_unchanged=None,
+            diff_paths=proven,
+            has_subject_tree=True,
+        )
+        == "not-applicable"
+    )
+    # No frozen subject tree, no exemption.
+    assert (
+        _clean_mutation_skip_kind(tests_only, [], evidence, source_unchanged=None, diff_paths=proven)
+        is None
+    )
+    # The captured diff has to prove the scope; a bare or widened path list does not.
+    assert _clean_mutation_skip_kind(tests_only, [], evidence, source_unchanged=None) is None
+    for widening in (
+        ["tests/*.py", "tests/conftest.py"],
+        ["policy.py", "tests/policy.py"],
+        ["tests\\policy.py"],
+    ):
+        assert (
+            _clean_mutation_skip_kind(
+                tests_only,
+                [],
+                evidence,
+                source_unchanged=None,
+                diff_paths=widening,
+                has_subject_tree=True,
+            )
+            is None
+        )
+
+
+def test_missing_mutmut_factory_applies_the_same_policy(ci_project):
+    """The factory route reaches the same applicability policy as the native
+    runner, so a tests-only review keeps its exemption and never turns into a
+    docs-only claim."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("INDEX"),
+        [Path(rel)],
+        p.root,
+    )
+    from code_forge.factories import _MissingMutmutRunner
+
+    machine = _machine(p, runner=_MissingMutmutRunner(p.root), review=review)
+    machine._run_l2_phase()
+
+    assert machine._mutation_bound_failure is False
+    assert machine._mutation_not_applicable is True
+    assert (
+        machine._state.infra_errors.count(
+            "L2: mutation not applicable (diff is tests-only): tests/test_sample.py"
+        )
+        == 1
+    )
+    assert not any("docs-only" in line for line in machine._state.infra_errors)
+
+
+def _guardless_doc_machine(p, kind, body, mode_bits):
+    doc = p.root / "README.md"
+    doc.write_text(body, encoding="utf-8")
+    doc.chmod(mode_bits)
+    _git(p.root, "add", "README.md")
+    base = _git(p.root, "rev-parse", "HEAD")
+    if kind == "commit":
+        _git(
+            p.root,
+            "-c",
+            "user.name=CI Control",
+            "-c",
+            "user.email=ci-control@example.invalid",
+            "commit",
+            "-qm",
+            "document subject",
+        )
+        head = _git(p.root, "rev-parse", "HEAD")
+    else:
+        head = "INDEX"
+    review = resolve_baseline(GitRefBaseline(base), GitRefBaseline(head), [Path("README.md")], p.root)
+    return review, machine_for(p, review)
+
+
+def machine_for(p, review):
+    return _machine(p, runner=mutation.run_mutation, review=review)
+
+
+@pytest.mark.parametrize("review_kind", ["index", "commit"])
+def test_guardless_docs_read_the_frozen_subject(ci_project, review_kind):
+    """An executable reviewed document is rejected even when its working copy
+    looks harmless: applicability is read from the pinned tree."""
+    p = ci_project
+    review, machine = _guardless_doc_machine(p, review_kind, "#!/bin/sh\nprintf EXECUTABLE\n", 0o755)
+    (p.root / "README.md").write_text("# harmless working copy\n", encoding="utf-8")
+    (p.root / "README.md").chmod(0o644)
+
+    machine._run_l2_phase()
+
+    assert review.subject_tree is not None
+    assert machine._mutation_not_applicable is False
+    assert machine._mutation_bound_failure is True
+
+
+@pytest.mark.parametrize("review_kind", ["index", "commit"])
+def test_guardless_docs_accept_a_plain_document(ci_project, review_kind):
+    p = ci_project
+    review, machine = _guardless_doc_machine(p, review_kind, "# Plain document\n", 0o644)
+
+    machine._run_l2_phase()
+
+    assert machine._mutation_not_applicable is True
+    assert machine._mutation_bound_failure is False
+    assert "L2: mutation not applicable (docs-only diff): README.md" in machine._state.infra_errors
+
+
+def test_guardless_docs_ignore_a_later_index_change(ci_project):
+    """The tree is captured with the diff; rewriting the index afterwards does
+    not change what the review decides about."""
+    p = ci_project
+    review, machine = _guardless_doc_machine(p, "index", "#!/bin/sh\nprintf EXECUTABLE\n", 0o755)
+    (p.root / "README.md").write_text("# harmless\n", encoding="utf-8")
+    _git(p.root, "add", "README.md")
+
+    machine._run_l2_phase()
+
+    assert machine._mutation_bound_failure is True
+    assert machine._mutation_not_applicable is False
+
+
+def test_guardless_docs_need_a_subject_tree(ci_project):
+    """An index that cannot be written as a tree (unmerged entries) is not an
+    exemption."""
+    p = ci_project
+    doc = p.root / "README.md"
+    doc.write_text("# plain\n", encoding="utf-8")
+    _git(p.root, "add", "README.md")
+    blob = _git(p.root, "rev-parse", ":README.md")
+    subprocess.run(
+        ["git", "update-index", "--index-info"],
+        cwd=p.root,
+        input=f"100644 {blob} 2\tREADME.md\n",
+        text=True,
+        check=True,
+    )
+    base = _git(p.root, "rev-parse", "HEAD")
+    review = resolve_baseline(GitRefBaseline(base), GitRefBaseline("INDEX"), [Path("README.md")], p.root)
+    machine = machine_for(p, review)
+
+    machine._run_l2_phase()
+
+    assert review.subject_tree is None
+    assert machine._mutation_bound_failure is True
+    assert machine._mutation_not_applicable is False
+
+
+def test_index_review_does_not_rewrite_the_index(ci_project):
+    """Freezing the subject must not touch the file the caller is working with."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+    index = p.root / ".git" / "index"
+    before = index.read_bytes()
+
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("INDEX"),
+        [Path(rel)],
+        p.root,
+    )
+
+    assert review.subject_tree is not None
+    assert index.read_bytes() == before
+
+
+def test_index_review_diff_is_the_subject_tree_diff(ci_project):
+    """The diff and the frozen subject must describe the same object: the diff
+    is produced from the tree, not from the live index."""
+    p = ci_project
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+    base = _git(p.root, "rev-parse", "HEAD")
+
+    review = resolve_baseline(GitRefBaseline(base), GitRefBaseline("INDEX"), [Path(rel)], p.root)
+
+    assert review.subject_tree is not None
+    from_tree = _git(p.root, "diff", base, review.subject_tree, "--", rel)
+    assert review.git_diff.strip() == from_tree.strip()
+
+
+def test_write_tree_keeps_a_split_index_readable(ci_project):
+    """Freezing the subject must not expire the shared base a split index uses."""
+    p = ci_project
+    _git(p.root, "config", "splitIndex.maxPercentChange", "100")
+    _git(p.root, "update-index", "--split-index")
+    (p.root / "calc.py").write_text("def add(a, b):\n    return a + b + 1\n", encoding="utf-8")
+    _git(p.root, "add", "calc.py")
+    _git(p.root, "config", "splitIndex.maxPercentChange", "0")
+    _git(p.root, "config", "splitIndex.sharedIndexExpire", "now")
+    index = p.root / ".git" / "index"
+    before = index.read_bytes()
+
+    from code_forge.git import write_tree
+
+    tree = write_tree(p.root)
+
+    assert tree
+    listed = subprocess.run(
+        ["git", "ls-files", "-s"], cwd=p.root, capture_output=True, text=True, check=False
+    )
+    assert listed.returncode == 0, listed.stderr
+    assert index.read_bytes() == before
+
+
+def test_replace_refs_are_read_the_same_way_by_diff_and_tree(ci_project):
+    """The repository honours replacement mappings on purpose: the diff, the
+    frozen tree and the document check must all describe the replaced object."""
+    p = ci_project
+    doc = p.root / "README.md"
+    doc.write_text("# plain\n", encoding="utf-8")
+    _git(p.root, "add", "README.md")
+    _git(
+        p.root,
+        "-c",
+        "user.name=CI Control",
+        "-c",
+        "user.email=ci@example.invalid",
+        "commit",
+        "-qm",
+        "plain",
+    )
+    base = _git(p.root, "rev-parse", "HEAD~1")
+    head = _git(p.root, "rev-parse", "HEAD")
+
+    doc.write_text("#!/bin/sh\nprintf REPLACED\n", encoding="utf-8")
+    doc.chmod(0o755)
+    _git(p.root, "add", "README.md")
+    _git(
+        p.root,
+        "-c",
+        "user.name=CI Control",
+        "-c",
+        "user.email=ci@example.invalid",
+        "commit",
+        "-qm",
+        "replacement",
+    )
+    replacement = _git(p.root, "rev-parse", "HEAD")
+    _git(
+        p.root,
+        "-c",
+        "user.name=CI Control",
+        "-c",
+        "user.email=ci@example.invalid",
+        "reset",
+        "-q",
+        "--hard",
+        head,
+    )
+    _git(p.root, "replace", head, replacement)
+
+    review = resolve_baseline(GitRefBaseline(base), GitRefBaseline(head), [Path("README.md")], p.root)
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+    machine._run_l2_phase()
+
+    assert "100755" in review.git_diff
+    from_tree = _git(p.root, "diff", base, review.subject_tree, "--", "README.md")
+    assert review.git_diff.strip() == from_tree.strip()
+    # Both views see the executable replacement, so no document exemption.
+    assert machine._mutation_not_applicable is False
+    assert machine._mutation_bound_failure is True
+
+
+def test_resolve_git_ref_follows_replacement_history(ci_project):
+    """One replacement policy: HEAD^ names what git names, matching the diff."""
+    p = ci_project
+    (p.root / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    _git(p.root, "add", "calc.py")
+    _git(p.root, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "base")
+
+    (p.root / "calc.py").write_text("def add(a, b):\n    return a + b + 1\n", encoding="utf-8")
+    _git(p.root, "add", "calc.py")
+    _git(p.root, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "head")
+    head = _git(p.root, "rev-parse", "HEAD")
+    raw_parent = _git(p.root, "rev-parse", "HEAD^")
+    head_tree = _git(p.root, "rev-parse", "HEAD^{tree}")
+
+    contained = _git(
+        p.root,
+        "-c",
+        "user.name=CI",
+        "-c",
+        "user.email=ci@example.invalid",
+        "commit-tree",
+        head_tree,
+        "-p",
+        raw_parent,
+        "-m",
+        "already contains the change",
+    )
+    replacement = _git(
+        p.root,
+        "-c",
+        "user.name=CI",
+        "-c",
+        "user.email=ci@example.invalid",
+        "commit-tree",
+        head_tree,
+        "-p",
+        contained,
+        "-m",
+        "replacement",
+    )
+    _git(p.root, "replace", head, replacement)
+
+    from code_forge.git import resolve_git_ref
+
+    assert resolve_git_ref("HEAD^", p.root) == contained
+    assert resolve_git_ref("HEAD^", p.root) != raw_parent
+
+
+def test_tree_has_path_fails_closed_when_git_errors(ci_project):
+    """A failing ls-tree is an unknown answer, not proof the path is absent."""
+    from code_forge.machine import _docs_only_files, _tree_has_path
+
+    p = ci_project
+    (p.root / "README.md").write_text("# docs\n", encoding="utf-8")
+    _git(p.root, "add", "README.md")
+    _git(p.root, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "docs")
+    tree = _git(p.root, "rev-parse", "HEAD^{tree}")
+
+    assert _tree_has_path(p.root, tree, "missing/__init__.py") is False
+    assert _tree_has_path(p.root, "0" * 40, "missing/__init__.py") is True
+
+    content = b"# notes\n"
+    docs_ok = _docs_only_files(
+        ["pkg/notes.md"],
+        p.root,
+        diff_paths=["pkg/notes.md"],
+        post_image=lambda rel: (0o100644, content),
+        has_path=lambda rel: _tree_has_path(p.root, "0" * 40, rel),
+    )
+    assert docs_ok is False
+
+
+def _tests_only_review_without_a_tree(p, monkeypatch):
+    rel = "tests/test_sample.py"
+    (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (p.root / rel).write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    _git(p.root, "add", rel)
+    monkeypatch.setattr("code_forge.baseline.write_tree", lambda cwd: None)
+    review = resolve_baseline(
+        GitRefBaseline("HEAD"),
+        GitRefBaseline("INDEX"),
+        [Path(rel)],
+        p.root,
+    )
+    assert review.subject_tree is None
+    return review
+
+
+def test_tests_only_skip_needs_a_frozen_subject_native(ci_project, monkeypatch):
+    """A failed freeze is not an exemption, even for a tests-only diff."""
+    p = ci_project
+    review = _tests_only_review_without_a_tree(p, monkeypatch)
+    machine = _machine(p, runner=mutation.run_mutation, review=review)
+
+    machine._run_l2_phase()
+
+    assert machine._mutation_not_applicable is False
+    assert machine._mutation_bound_failure is True
+
+
+def test_tests_only_skip_needs_a_frozen_subject_factory(ci_project, monkeypatch):
+    """The missing-mutmut route applies the same rule."""
+    p = ci_project
+    review = _tests_only_review_without_a_tree(p, monkeypatch)
+    from code_forge.factories import _MissingMutmutRunner
+
+    machine = _machine(p, runner=_MissingMutmutRunner(p.root), review=review, mode=Mode.CI)
+
+    machine._run_l2_phase()
+
+    assert machine._mutation_not_applicable is False
+    assert machine._mutation_bound_failure is True
+
+
+def test_other_adapter_note_does_not_extend_the_applicability_pair():
+    from code_forge.machine import _clean_mutation_skip_kind
+
+    for fingerprint, description in (
+        ("mutation-tests-only", "diff is tests-only"),
+        ("mutation-no-adapter", "no registered adapter"),
+    ):
+        mixed = [
+            _skip(fingerprint=fingerprint, description=description),
+            _skip(fingerprint="mutation-other-adapter", description="other adapter"),
+        ]
+        for guard in (True, False, None):
+            assert (
+                _clean_mutation_skip_kind(mixed, [], {"inventory": {}}, source_unchanged=guard) is None
+            )
+
+    # A measured kind still accepts the note when its own evidence is present.
+    noted = [
+        _skip(fingerprint="mutation-no-mutants", description="no mutants"),
+        _skip(fingerprint="mutation-other-adapter", description="other adapter"),
+    ]
+    assert (
+        _clean_mutation_skip_kind(
+            noted, [], {"inventory": {}, "results_sha256": "x"}, source_unchanged=True
+        )
+        == "no-mutants"
+    )
+    for guard in (False, None):
+        assert (
+            _clean_mutation_skip_kind(
+                noted, [], {"inventory": {}, "results_sha256": "x"}, source_unchanged=guard
+            )
+            is None
+        )
+
+
 @pytest.mark.parametrize(
     "findings,infra,expected",
     [
@@ -2296,8 +3011,38 @@ def test_clean_mutation_skip_kind(findings, infra, expected):
     objs = [_skip(fingerprint=fp, description=d) for fp, d in findings]
     evidence = {"inventory": {}}
     assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=True) == expected
+    # A review that cannot carry the guard excuses only a tests-only skip: a
+    # "no adapter covers this" claim still needs the captured guard.
+    tests_only = bool(findings) and all(fp == "mutation-tests-only" for fp, _ in findings)
+    proven = ["tests/test_sample.py"] if tests_only else None
+    assert _clean_mutation_skip_kind(
+        objs,
+        infra,
+        evidence,
+        source_unchanged=None,
+        diff_paths=proven,
+        has_subject_tree=True,
+    ) == ("not-applicable" if expected == "not-applicable" and tests_only else None)
     if expected is not None:
+        # A captured guard that saw the source move always fails closed.
         assert _clean_mutation_skip_kind(objs, infra, evidence, source_unchanged=False) is None
+        # An uncaptured guard does not excuse invalid evidence either.
+        assert (
+            _clean_mutation_skip_kind(
+                objs, infra, {**evidence, "cleanup_error": "x"}, source_unchanged=None
+            )
+            is None
+        )
+        assert (
+            _clean_mutation_skip_kind(
+                objs,
+                infra,
+                {"inventory": {"m": "killed"}},
+                source_unchanged=None,
+                diff_paths=proven,
+            )
+            is None
+        )
         assert (
             _clean_mutation_skip_kind(
                 objs, infra, {**evidence, "cleanup_error": "x"}, source_unchanged=True
@@ -2306,6 +3051,12 @@ def test_clean_mutation_skip_kind(findings, infra, expected):
         )
         assert (
             _clean_mutation_skip_kind(objs, infra, {"inventory": {"m": "killed"}}, source_unchanged=True)
+            is None
+        )
+        assert (
+            _clean_mutation_skip_kind(
+                objs, infra, {**evidence, "results_sha256": "x"}, source_unchanged=False
+            )
             is None
         )
 

@@ -16,6 +16,8 @@ from .errors import BaselineResolutionError
 from .git import (
     INDEX,
     WORKING,
+    tree_of,
+    write_tree,
     cached_diff,
     git_diff,
     is_git_repo,
@@ -70,6 +72,7 @@ class ResolvedReview:
     head_sha: Optional[str] = None
     target_kind: Optional[str] = None
     diff_paths: tuple[str, ...] | None = None
+    subject_tree: Optional[str] = None
 
 
 def resolve_baseline(
@@ -125,16 +128,28 @@ def _resolve_git(
     base_sha = resolve_git_ref(baseline_spec.ref, cwd)  # raises if ref unknown
 
     head = head_spec if head_spec is not None else GitRefBaseline(WORKING)
+    subject_tree = None
     if head.ref == WORKING:
         diff = working_tree_diff(base_sha, paths, cwd)
         head_sha = resolve_git_ref("HEAD", cwd)
     elif head.ref == INDEX:
-        diff = cached_diff(base_sha, paths, cwd)
+        # Freeze the index first, then diff that exact tree: a diff taken from
+        # the live index and a tree taken afterwards can describe two different
+        # subjects.
+        subject_tree = write_tree(cwd)
+        diff = (
+            git_diff(base_sha, subject_tree, paths, cwd)
+            if subject_tree is not None
+            else cached_diff(base_sha, paths, cwd)
+        )
         head_sha = resolve_git_ref("HEAD", cwd)
     else:
         head_sha = resolve_git_ref(head.ref, cwd)
         diff = git_diff(base_sha, head_sha, paths, cwd)
 
+    target_kind = head.ref if head.ref in (WORKING, INDEX) else "COMMIT"
+    if target_kind == "COMMIT":
+        subject_tree = tree_of(head_sha, cwd)
     return ResolvedReview(
         source_files=paths,
         baseline_content=None,
@@ -142,8 +157,9 @@ def _resolve_git(
         mode_hint="git",
         base_sha=base_sha,
         head_sha=head_sha,
-        target_kind=head.ref if head.ref in (WORKING, INDEX) else "COMMIT",
+        target_kind=target_kind,
         diff_paths=tuple(str(path) for path in paths),
+        subject_tree=subject_tree,
     )
 
 
@@ -184,15 +200,24 @@ def _resolve_empty(
     if is_git_repo(cwd) and head_spec is not None:
         # Git's universal empty-tree sha (constant, not computed)
         empty_tree_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        subject_tree = None
         if head_spec.ref == WORKING:
             diff = working_tree_diff(empty_tree_sha, paths, cwd)
             head_sha = resolve_git_ref("HEAD", cwd)
         elif head_spec.ref == INDEX:
-            diff = cached_diff(empty_tree_sha, paths, cwd)
+            subject_tree = write_tree(cwd)
+            diff = (
+                git_diff(empty_tree_sha, subject_tree, paths, cwd)
+                if subject_tree is not None
+                else cached_diff(empty_tree_sha, paths, cwd)
+            )
             head_sha = resolve_git_ref("HEAD", cwd)
         else:
             head_sha = resolve_git_ref(head_spec.ref, cwd)
             diff = git_diff(empty_tree_sha, head_sha, paths, cwd)
+        target_kind = head_spec.ref if head_spec.ref in (WORKING, INDEX) else "COMMIT"
+        if target_kind == "COMMIT":
+            subject_tree = tree_of(head_sha, cwd)
         return ResolvedReview(
             source_files=paths,
             baseline_content=None,
@@ -200,8 +225,9 @@ def _resolve_empty(
             mode_hint="git",
             base_sha=empty_tree_sha,
             head_sha=head_sha,
-            target_kind=head_spec.ref if head_spec.ref in (WORKING, INDEX) else "COMMIT",
+            target_kind=target_kind,
             diff_paths=tuple(str(path) for path in paths),
+            subject_tree=subject_tree,
         )
     mode = "git" if is_git_repo(cwd) else "non-git"
     return ResolvedReview(

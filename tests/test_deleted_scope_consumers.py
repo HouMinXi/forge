@@ -2334,7 +2334,10 @@ def test_machine_git_diff_ignores_scope_erasing_drivers(tmp_path, monkeypatch, p
         assert not kwargs.get("shell")
         kwargs.setdefault("timeout", 10)
         result = original_run(argv, **kwargs)
-        if list(argv[:2]) == ["git", "diff"]:
+        head = list(argv[1:])
+        if head and head[0] == "--no-replace-objects":
+            head = head[1:]
+        if list(argv[:1]) == ["git"] and head[:1] == ["diff"]:
             packets.append((list(argv), result.returncode, result.stdout))
         return result
 
