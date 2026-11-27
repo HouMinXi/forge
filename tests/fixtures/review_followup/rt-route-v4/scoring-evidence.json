@@ -1,0 +1,10 @@
+{
+  "evidence": {
+    "path": "evidence.json",
+    "sha256": "ef664572bdae5393a1fc93fe1f7c530f1153900142386cec06f058dc95d082a7"
+  },
+  "score_manifest": {
+    "path": "scores.json",
+    "sha256": "fada619688e7f5b50d647799d3005ed4fc916227ca50004bc6495ea2c4b42a43"
+  }
+}

@@ -459,3 +459,25 @@ C or headers, or rerun the Linux generator.
 ```bash
 PYTHONPATH=src python -m pytest -q docs/eval/review-followup/test_ovs_v6_calibration.py
 ```
+
+### rt-route v4: findings need the right baseline
+
+[Patch 4](https://lists.openwall.net/netdev/2026/10/08/229) is a second
+real calibration lineage, not a holdout. The
+[Sashiko review](https://lists.openwall.net/netdev/2026/10/09/176) correctly
+identified a missing nested flag in the candidate. The directly preceding
+schema misses the flag at the outer options layer instead; the kernel's
+attribute-specific strict policy matters even when the caller uses a
+deprecated parser. The pre-series opaque route data can preserve both flags.
+
+The two handwritten observations share one candidate and one factual root.
+The direct-parent case does not establish a new lost working path; the
+series-base case demonstrates a loss of representability, with blocking
+still undecided. That is not a claim that a complete old request succeeded.
+The test checks the frozen measurement and separate hand-written rulings
+against their bound inputs. It does not run the encoder/generator again,
+send a route request, adjudicate text automatically, or estimate review lift.
+
+```bash
+PYTHONPATH=src python -m pytest -q docs/eval/review-followup/test_rt_route_v4_calibration.py
+```

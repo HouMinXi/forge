@@ -1,0 +1,25 @@
+{
+  "cases": {
+    "patch-scope": {
+      "adjudication": {
+        "path": "adjudications/patch-scope/ruling.json",
+        "sha256": "13df2d2852b26063be30d0b91245d26008f098cd0d0f4e3cfda59df18f1eea74"
+      },
+      "answer": {
+        "path": "answer_keys/patch-scope/key.json",
+        "sha256": "01b4ea27abb8d20ea1fd280cce9166f43a7a3354dc4561846178462cb34395aa"
+      }
+    },
+    "series-scope": {
+      "adjudication": {
+        "path": "adjudications/series-scope/ruling.json",
+        "sha256": "787eafdb1d4bbcd14262a3873252566c42229b6a4306502f082cffba53fe08d1"
+      },
+      "answer": {
+        "path": "answer_keys/series-scope/key.json",
+        "sha256": "567746fdc02a118e8c2402aa78c2b91da919b3103675954c3bb22795e4eba096"
+      }
+    }
+  },
+  "schema": 1
+}

@@ -1,0 +1,35 @@
+{
+  "artifacts": [
+    {
+      "case": "patch-scope",
+      "id": "base",
+      "path": "inputs/patch-scope/base.json",
+      "revision": "git:24d11a55860be75a6b478e4e4ba8adb419c19661",
+      "role": "base",
+      "sha256": "4b4bb031c94df73cdef2f9e8ee8c012cb105b556262bab456479c15a2c99be6e"
+    },
+    {
+      "case": "patch-scope",
+      "id": "candidate",
+      "path": "inputs/patch-scope/candidate.json",
+      "revision": "git:e32b5eb4f237a5ddcf936c53e9ca387bb4cdd31c",
+      "role": "candidate",
+      "sha256": "f290005fa68b7326f33d8f3a4a5567675ac5720e240da193af37fdb6c50d5d37"
+    }
+  ],
+  "base": "git:24d11a55860be75a6b478e4e4ba8adb419c19661",
+  "candidate": "git:e32b5eb4f237a5ddcf936c53e9ca387bb4cdd31c",
+  "case": "patch-scope",
+  "groups": [
+    {
+      "artifacts": [
+        "base",
+        "candidate"
+      ],
+      "id": "rt-route"
+    }
+  ],
+  "prior_findings": [],
+  "schema": 1,
+  "task": "first_review"
+}

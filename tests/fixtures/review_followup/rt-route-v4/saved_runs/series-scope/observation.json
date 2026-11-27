@@ -1,0 +1,25 @@
+{
+  "baseline": {
+    "call_limit": null,
+    "context_limit": null,
+    "failure_policy": "saved-only",
+    "forge_commit": "git:cb413f7eaa32d484888fbe0e5e49ee96a3028be8",
+    "model": null,
+    "prompt": null
+  },
+  "candidate": "git:e32b5eb4f237a5ddcf936c53e9ca387bb4cdd31c",
+  "case": "series-scope",
+  "diagnostic": null,
+  "findings": [
+    {
+      "blocking": true,
+      "claim": "Schema-driven Geneve options omit a required nesting flag.",
+      "id": "geneve"
+    }
+  ],
+  "input_sha256": "0c2a8486e0e70ea30ff4e55efee612a526155122c4b4f3fe6e594accd8bfc03f",
+  "run": "handwritten",
+  "schema": 1,
+  "status": "completed",
+  "usage": null
+}

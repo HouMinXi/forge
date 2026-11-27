@@ -1,0 +1,17 @@
+{
+  "candidate": "git:e32b5eb4f237a5ddcf936c53e9ca387bb4cdd31c",
+  "case": "series-scope",
+  "findings": [
+    {
+      "attribution": "introduced",
+      "blocking": "uncertain",
+      "factual": "supported",
+      "finding": "geneve",
+      "root": "geneve-required-flag"
+    }
+  ],
+  "observation_sha256": "16fc42336b5c4ce45c7a1f97af2a2271ec2bcee328372710d917cc524be166df",
+  "revisions": [],
+  "run": "handwritten",
+  "schema": 1
+}
