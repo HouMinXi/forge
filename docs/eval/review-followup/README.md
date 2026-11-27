@@ -283,6 +283,11 @@ reported model, and provider-reported input, cached input and output token
 counts. Sending a client ID does not prove a provider forwarded or recorded it.
 Absent or invalid counts stay unknown; a real zero remains zero. The journal
 does not contain keys, headers, prompts, reply text, or price estimates.
+A reply is accepted only if its sole choice explicitly reports
+`finish_reason: stop` and passes the plain-text and usage checks. A truncated,
+filtered, tool-use, or missing/unrecognized finish is a received failure, not
+an unknown transport outcome. Its digest and available usage are retained.
+The journal stores only recognized finish reasons, never arbitrary text.
 A non-accepted result stops the run with later slots untouched. If the reply
 cannot be obtained in full because of a timeout or connection failure, the
 reserved attempt stays unknown and the run cannot be resumed.

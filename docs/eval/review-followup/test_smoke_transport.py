@@ -18,7 +18,9 @@ MODEL = "synthetic-model"
 KEY = "test-key-not-real"
 OK = {
     "model": MODEL,
-    "choices": [{"message": {"role": "assistant", "content": "synthetic answer"}}],
+    "choices": [
+        {"finish_reason": "stop", "message": {"role": "assistant", "content": "synthetic answer"}}
+    ],
     "usage": {
         "prompt_tokens": 13,
         "completion_tokens": 2,
@@ -111,7 +113,7 @@ def test_real_http_bytes_and_known_zero_usage(peer, framing):
     body = request()
     result = transport()(body)
     assert observed(servers[0]) == body
-    assert result.outcome == "accepted"
+    assert result.outcome == "accepted" and result.finish_reason == "stop"
     assert result.response_sha256 == digest(json.dumps(OK).encode())
     assert result.reported_model == MODEL
     assert (result.input_tokens, result.cached_input_tokens, result.output_tokens) == (13, 0, 2)
@@ -275,3 +277,44 @@ def test_cached_usage_is_subset_and_reply_id_is_hashed(peer):
     receipt = transport()(request())
     assert (receipt.input_tokens, receipt.cached_input_tokens, receipt.output_tokens) == (10, 4, 2)
     assert receipt.server_request_id_sha256 == digest(b"server-123")
+
+
+@pytest.mark.parametrize(
+    ("reason_fields", "normalized", "content"),
+    [
+        ({"finish_reason": "length"}, "length", "partial answer"),
+        ({"finish_reason": "content_filter"}, "content_filter", "partial answer"),
+        ({"finish_reason": "content_filter"}, "content_filter", None),
+        ({"finish_reason": "tool_calls"}, "tool_calls", "partial answer"),
+        ({"finish_reason": "function_call"}, "function_call", None),
+        ({}, None, "partial answer"),
+        ({"finish_reason": None}, None, "partial answer"),
+        ({"finish_reason": {"unexpected": True}}, None, "partial answer"),
+        ({"finish_reason": KEY}, None, "partial answer"),
+    ],
+)
+def test_nonstop_finish_keeps_wire_evidence_and_stops_pair(
+    tmp_path, peer, reason_fields, normalized, content
+):
+    pending, servers = peer
+    payload = OK | {"choices": [{"message": {"role": "assistant", "content": content}, **reason_fields}]}
+    pending.extend([response(payload, other=b"X-Request-Id: server-123\r\n"), response()])
+    body = request()
+    rows = run(tmp_path, body, transport())
+    assert len(servers) == 1 and observed(servers[0]) == body
+    assert len(pending) == 1
+    assert [row.state for row in rows] == ["failed", *["not_started"] * 5]
+    wire = journal(tmp_path)[-1]["wire"]
+    assert (wire["status"], wire["outcome"], wire["finish_reason"]) == (
+        200,
+        "unfinished_response",
+        normalized,
+    )
+    assert wire["response_sha256"] == digest(json.dumps(payload).encode())
+    assert wire["reported_model"] == MODEL
+    assert wire["server_request_id_sha256"] == digest(b"server-123")
+    assert (wire["input_tokens"], wire["cached_input_tokens"], wire["output_tokens"]) == (13, 0, 2)
+    assert KEY not in repr(wire) and "partial answer" not in repr(wire)
+    with pytest.raises(InputError, match="already-started"):
+        run(tmp_path, body, transport())
+    assert len(servers) == 1

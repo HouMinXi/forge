@@ -13,6 +13,7 @@ _HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", re.ASCII)
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", re.ASCII)
 _REQUEST_ID = re.compile(r"[a-f0-9]{32}", re.ASCII)
 _KEY = re.compile(r"[A-Za-z0-9._~+/=-]{1,512}", re.ASCII)
+_FINISH_REASONS = {"stop", "length", "content_filter", "tool_calls", "function_call"}
 _CAP_FIELDS = {"max_tokens", "max_completion_tokens"}
 _REQUEST_FIELDS = {"model", "messages", "stream", "temperature", "top_p", "seed", "n"} | _CAP_FIELDS
 
@@ -32,6 +33,7 @@ class WireReceipt:
         "malformed_response",
         "model_mismatch",
         "output_over_limit",
+        "unfinished_response",
     ]
     response_sha256: str | None = None
     reported_model: str | None = None
@@ -39,6 +41,7 @@ class WireReceipt:
     cached_input_tokens: int | None = None
     output_tokens: int | None = None
     server_request_id_sha256: str | None = None
+    finish_reason: str | None = None
 
 
 def _count(value: object) -> int | None:
@@ -197,15 +200,9 @@ class DirectSmokeTransport:
         choices = doc.get("choices")
         if type(choices) is not list or len(choices) != 1 or type(choices[0]) is not dict:
             return WireReceipt(status, "malformed_response", response_hash, self.model)
-        message = choices[0].get("message")
-        if (
-            type(message) is not dict
-            or message.get("role") != "assistant"
-            or type(message.get("content")) is not str
-            or "tool_calls" in message
-            or "function_call" in message
-        ):
-            return WireReceipt(status, "malformed_response", response_hash, self.model)
+        choice = choices[0]
+        reason = choice.get("finish_reason")
+        reason = reason if type(reason) is str and reason in _FINISH_REASONS else None
         usage = doc.get("usage")
         usage = usage if type(usage) is dict else {}
         input_tokens = _count(usage.get("prompt_tokens"))
@@ -214,12 +211,28 @@ class DirectSmokeTransport:
         cached = _count(details.get("cached_tokens")) if type(details) is dict else None
         if input_tokens is not None and cached is not None and cached > input_tokens:
             cached = None
+        message = choice.get("message")
+        if reason != "stop":
+            outcome = "unfinished_response"
+        elif (
+            type(message) is not dict
+            or message.get("role") != "assistant"
+            or type(message.get("content")) is not str
+            or "tool_calls" in message
+            or "function_call" in message
+        ):
+            outcome = "malformed_response"
+        elif output_tokens is not None and output_tokens > cap:
+            outcome = "output_over_limit"
+        else:
+            outcome = "accepted"
         return WireReceipt(
             status,
-            "output_over_limit" if output_tokens is not None and output_tokens > cap else "accepted",
+            outcome,
             response_hash,
             self.model,
             input_tokens,
             cached,
             output_tokens,
+            finish_reason=reason,
         )
