@@ -34,6 +34,7 @@ class WireReceipt:
         "model_mismatch",
         "output_over_limit",
         "unfinished_response",
+        "no_usable_reply",
     ]
     response_sha256: str | None = None
     reported_model: str | None = None
@@ -217,11 +218,18 @@ class DirectSmokeTransport:
         elif (
             type(message) is not dict
             or message.get("role") != "assistant"
-            or type(message.get("content")) is not str
             or "tool_calls" in message
             or "function_call" in message
         ):
             outcome = "malformed_response"
+        elif message.get("refusal") is not None:
+            # A refusal is not an answer even if content is present. Do not
+            # persist the provider's refusal text.
+            outcome = "no_usable_reply"
+        elif type(content := message.get("content")) is not str:
+            outcome = "malformed_response"
+        elif not content.strip():
+            outcome = "no_usable_reply"
         elif output_tokens is not None and output_tokens > cap:
             outcome = "output_over_limit"
         else:

@@ -318,3 +318,41 @@ def test_nonstop_finish_keeps_wire_evidence_and_stops_pair(
     with pytest.raises(InputError, match="already-started"):
         run(tmp_path, body, transport())
     assert len(servers) == 1
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"content": ""},
+        {"content": " \t\r\n\u00a0"},
+        {"content": "not a usable answer", "refusal": KEY},
+        {"content": None, "refusal": KEY},
+        {"content": "not a usable answer", "refusal": True},
+    ],
+)
+def test_stop_without_usable_reply_keeps_receipt_and_stops(tmp_path, peer, message):
+    pending, servers = peer
+    payload = OK | {"choices": [{"finish_reason": "stop", "message": {"role": "assistant", **message}}]}
+    pending.extend([response(payload, other=b"X-Request-Id: server-123\r\n"), response()])
+    body = request()
+    rows = run(tmp_path, body, transport())
+    events = journal(tmp_path)
+    assert [row.state for row in rows] == ["failed", *["not_started"] * 5]
+    assert [event["event"] for event in events] == ["started", "reserved", "finished"]
+    assert len(servers) == 1 and observed(servers[0], events[1]["client_request_id"]) == body
+    assert len(pending) == 1
+    wire = events[-1]["wire"]
+    assert (wire["status"], wire["outcome"], wire["finish_reason"]) == (200, "no_usable_reply", "stop")
+    assert wire["response_sha256"] == digest(json.dumps(payload).encode())
+    assert wire["server_request_id_sha256"] == digest(b"server-123")
+    assert (wire["input_tokens"], wire["cached_input_tokens"], wire["output_tokens"]) == (13, 0, 2)
+    assert KEY not in repr(events) and "not a usable answer" not in repr(events)
+    with pytest.raises(InputError, match="already-started"):
+        run(tmp_path, body, transport())
+    assert len(servers) == 1
+
+
+def test_stop_with_text_and_explicit_null_refusal_is_accepted(peer):
+    message = {"role": "assistant", "content": "  a usable answer\n", "refusal": None}
+    peer[0].append(response(OK | {"choices": [{"finish_reason": "stop", "message": message}]}))
+    assert transport()(request()).outcome == "accepted"

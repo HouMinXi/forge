@@ -284,7 +284,9 @@ counts. Sending a client ID does not prove a provider forwarded or recorded it.
 Absent or invalid counts stay unknown; a real zero remains zero. The journal
 does not contain keys, headers, prompts, reply text, or price estimates.
 A reply is accepted only if its sole choice explicitly reports
-`finish_reason: stop` and passes the plain-text and usage checks. A truncated,
+`finish_reason: stop`, contains non-blank assistant text, has no non-null
+refusal field, and passes the usage checks. A blank or refused reply is a
+received failure: its bounded receipt is retained, but the pair stops. A truncated,
 filtered, tool-use, or missing/unrecognized finish is a received failure, not
 an unknown transport outcome. Its digest and available usage are retained.
 The journal stores only recognized finish reasons, never arbitrary text.
