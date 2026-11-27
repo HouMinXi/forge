@@ -7615,8 +7615,8 @@ def test_openai_length_with_empty_content_is_a_retryable_reasoning_runaway():
     assert error.retryable is True
     assert error.exit_code == 0
     message = str(error)
-    assert "spent 65536 output tokens without emitting answer text" in message
-    assert "Lower reasoning_effort or thinking_budget" in message
+    assert "truncated with no answer text" in message and "reasoning_tokens=65536" in message
+    assert "lowering reasoning_effort or thinking_budget is worth trying" in message
     assert "output_ceiling" not in message
     # The burned tokens stay in the books the L1 fold reads.
     assert error.observed_usage is not None
@@ -7662,7 +7662,7 @@ def test_openai_length_with_whitespace_only_content_is_the_same_runaway():
         ),
         _runaway_backend(max_tokens=4096),
     )
-    assert "without emitting answer text" in str(error)
+    assert "truncated with no answer text" in str(error)
     assert "chars=6" in str(error)
     assert error.retryable is True
 
@@ -7682,7 +7682,7 @@ def test_empty_content_message_reports_spent_tokens_not_the_cap():
         _runaway_backend(max_tokens=65536),
     )
     message = str(error)
-    assert "spent 4096 output tokens" in message
+    assert "output=4096" in message
     assert "cap=65536" in message
 
 
@@ -7694,7 +7694,7 @@ def test_empty_content_without_a_cap_keeps_the_missing_knob_message():
     )
     message = str(error)
     assert "no usable output cap is configured" in message
-    assert "without emitting answer" not in message
+    assert "truncated with no answer text" not in message
 
 
 def test_boolean_usage_counts_are_not_rendered_as_numbers():
@@ -7712,7 +7712,7 @@ def test_boolean_usage_counts_are_not_rendered_as_numbers():
     assert "output=?" in message
     assert "input=True" not in message
     assert "input=?" in message
-    assert "without emitting answer" not in message
+    assert "truncated with no answer text" not in message
 
 
 @pytest.mark.parametrize(
@@ -7735,7 +7735,7 @@ def test_unusable_caps_do_not_take_the_runaway_branch(cap, expected):
     )
     message = str(error)
     assert expected in message
-    assert "without emitting answer" not in message
+    assert "truncated with no answer text" not in message
 
 
 def test_fractional_usage_counts_are_accounted_as_whole_tokens():
@@ -7756,7 +7756,7 @@ def test_fractional_usage_counts_are_accounted_as_whole_tokens():
         _runaway_backend(),
     )
     message = str(error)
-    assert "spent 65536 output tokens" in message
+    assert "output=65536" in message and "reasoning_tokens=65536" in message
     assert error.observed_usage is not None
     assert error.observed_usage.output_tokens == 65536
     assert error.observed_usage.input_tokens == 10112
@@ -7778,7 +7778,7 @@ def test_infinite_usage_counts_do_not_take_the_runaway_branch():
         _runaway_backend(max_tokens=4096),
     )
     message = str(error)
-    assert "without emitting answer" not in message
+    assert "truncated with no answer text" not in message
     assert "output capacity" in message
 
 
@@ -7851,6 +7851,83 @@ def test_generic_empty_reply_does_not_consume_the_run_breaker(monkeypatch):
     assert result.content == {"ok": 1}
     assert opened.call_count == 3
     assert breaker.count == 0
+
+
+def _capped_json(content, prompt_tokens, completion_tokens):
+    return _length_body(
+        content, {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}
+    )
+
+
+def _stop_json(content, prompt_tokens, completion_tokens):
+    return {
+        "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+    }
+
+
+def test_runaway_then_truncation_then_continuation_keeps_every_reply(monkeypatch):
+    """A runaway before a recovered truncation still counts.
+
+    The continuation returns only its own replies. The runaway that sent the
+    call there spent tokens too, and the result has to include them.
+    """
+    monkeypatch.setenv("K", "key")
+    runaway = _mock_body(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        )
+    )
+    truncated = _mock_body(_capped_json(_PARTIAL, 800, 4096))
+    continued = _mock_body(_stop_json(_TAIL, 5, 20))
+    with patch("urllib.request.urlopen", side_effect=[runaway, truncated, continued]) as opened:
+        result = llm_invoke(
+            "p",
+            backend=_runaway_backend(max_tokens=4096),
+            max_attempts=4,
+            initial_delay_s=0,
+        )
+    assert opened.call_count == 3
+    assert result.usage.input_tokens == 900 + 800 + 5
+    assert result.usage.output_tokens == 4096 + 4096 + 20
+
+
+def test_runaway_during_continuation_stops_the_call(monkeypatch):
+    """A second runaway inside the continuation sends nothing further.
+
+    The cap is per call, not per loop: runaway, then a truncation, then a
+    runaway while continuing is two runaways, so the fourth request must not
+    go out.
+    """
+    monkeypatch.setenv("K", "key")
+    runaway = _mock_body(
+        _length_body(
+            "",
+            {
+                "prompt_tokens": 900,
+                "completion_tokens": 4096,
+                "completion_tokens_details": {"reasoning_tokens": 4096},
+            },
+        )
+    )
+    truncated = _mock_body(_capped_json(_PARTIAL, 800, 4096))
+    with patch("urllib.request.urlopen", side_effect=[runaway, truncated, runaway, runaway]) as opened:
+        with pytest.raises(LLMInvokeError) as exc_info:
+            llm_invoke(
+                "p",
+                backend=_runaway_backend(max_tokens=4096),
+                max_attempts=5,
+                initial_delay_s=0,
+            )
+    assert opened.call_count == 3
+    error = exc_info.value
+    assert getattr(error, "reasoning_runaway", False)
+    assert error.observed_usage.output_tokens == 4096 + 4096 + 4096
 
 
 def test_single_attempt_runaway_counts_its_tokens_once(monkeypatch):
@@ -7955,7 +8032,7 @@ def test_second_runaway_in_one_call_stops_with_the_diagnosis_intact(monkeypatch)
     assert error.kind == "empty"
     assert error.retryable is False
     assert "output_ceiling" not in str(error)
-    assert "Lower reasoning_effort" in str(error)
+    assert "worth trying" in str(error)
     assert error.observed_usage is not None
     assert error.observed_usage.output_tokens == 4096 + 4096
     assert error.usage is not None
@@ -8034,7 +8111,7 @@ def test_zero_width_only_content_is_not_an_answer():
         ),
         _runaway_backend(max_tokens=4096),
     )
-    assert "without emitting answer text" in str(error)
+    assert "truncated with no answer text" in str(error)
 
 
 def test_missing_input_count_still_names_the_spent_output_tokens():
@@ -8046,7 +8123,7 @@ def test_missing_input_count_still_names_the_spent_output_tokens():
         _runaway_backend(max_tokens=4096),
     )
     message = str(error)
-    assert "spent 4096 output tokens" in message
+    assert "output=4096" in message
     assert "input=?" in message
 
 

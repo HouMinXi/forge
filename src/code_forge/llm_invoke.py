@@ -353,6 +353,28 @@ def _whole_usage_counts(usage_data: dict) -> dict:
     return normalized
 
 
+def _with_recorded_usage(error, recorded):
+    """Carry usage recorded earlier in this call onto an error that leaves it.
+
+    A reply already folded into ``recorded`` is not added again: summing an
+    error into a total that contains it counts that reply twice. A count no
+    reply reported stays unknown, because summing into an empty Usage turns it
+    into a known zero. The error's class, message and retry flag are kept.
+    """
+    if recorded is None:
+        return error
+    current = error.observed_usage
+    if current is None or getattr(error, "reasoning_runaway", False):
+        # A runaway reply was recorded into ``recorded`` before this settle,
+        # and the error carries that same reply. Adding it again doubles it.
+        total = recorded
+    else:
+        total = _sum_usage(recorded, current)
+    error.observed_usage = total
+    error.usage = total if {"input_tokens", "output_tokens"} <= total.known_fields else None
+    return error
+
+
 def _response_error_usage(usage_data: dict, api_format: str) -> Usage | None:
     """A partial primary report cannot stand in for a complete error Usage."""
     usage = _observed_usage(usage_data, api_format)
@@ -3988,6 +4010,8 @@ def _continue_truncated(
     strict_response: bool = False,
     *,
     _audit_scope=None,
+    runaway_seen: int = 0,
+    recorded_usage=None,
 ):
     """Recover a truncated reply with a bounded continuation.
 
@@ -4077,22 +4101,48 @@ def _continue_truncated(
                     raise
                 exc._add_prior_usage(observed)
                 raise
-            except _TruncatedResponse as exc:
-                if _strict_send_audit_failed(_audit_scope):
-                    raise
-                observed = _sum_usage(observed, _observed_usage(exc.usage_data, backend.format))
-                # A truncated continuation is a failed attempt, and the
-                # event still counts. A trip raised here leaves the
-                # inner try and reaches the outer clauses below.
-                last_failure = " ".join(str(exc).split())[:400]
-                if breaker is not None:
-                    breaker.record_truncation()
-                continue
             except (AuditPersistenceError, SendDeadlineError):
                 raise
             except LLMInvokeError as exc:
                 if _strict_send_audit_failed(_audit_scope):
                     raise
+                # A reasoning runaway is a _TruncatedResponse, so it has to be
+                # counted here, before the truncation branch treats it as one
+                # more cut reply and sends another continuation.
+                if getattr(exc, "reasoning_runaway", False):
+                    observed = _sum_usage(
+                        observed,
+                        exc.observed_usage
+                        if exc.observed_usage is not None
+                        else Usage(known_fields=frozenset()),
+                    )
+                    # The same call-wide cap as the outer retry: one runaway
+                    # may be followed, a second one stops.
+                    runaway_seen += 1
+                    if runaway_seen >= 2:
+                        # Fold the caller's recorded total in here and raise
+                        # unchanged, so the outer handler lets it through
+                        # instead of wrapping it as an exhausted continuation.
+                        carry = observed
+                        if recorded_usage is not None:
+                            carry = _sum_usage(recorded_usage, observed)
+                        exc.observed_usage = carry
+                        exc.usage = (
+                            carry if {"input_tokens", "output_tokens"} <= carry.known_fields else None
+                        )
+                        # Tells the caller's retry loop the total is already
+                        # folded in, so it must not record this reply again.
+                        exc.usage_complete = True
+                        raise
+                if isinstance(exc, _TruncatedResponse):
+                    observed = _sum_usage(observed, _observed_usage(exc.usage_data, backend.format))
+                    # A truncated continuation is a failed attempt, and the
+                    # event still counts. A trip raised here leaves the
+                    # inner try and reaches the outer clauses below.
+                    last_failure = " ".join(str(exc).split())[:400]
+                    if breaker is not None:
+                        breaker.record_truncation()
+                    continue
                 observed = _sum_usage(
                     observed,
                     exc.observed_usage
@@ -4133,6 +4183,10 @@ def _continue_truncated(
         raise
     except LLMInvokeError as exc:
         if _strict_send_audit_failed(_audit_scope):
+            raise
+        # A second reasoning runaway is a decision, not a failed attempt: the
+        # per-attempt handler already counted it and attached the usage.
+        if getattr(exc, "reasoning_runaway", False):
             raise
         # Defensive: per-attempt handling above covers every invoke
         # error a continuation request can raise. Anything that still
@@ -4210,6 +4264,7 @@ def _retry_with_more_headroom(
     *,
     on_failure_usage: Callable[[Usage], None] | None = None,
     _audit_scope=None,
+    runaway_seen: int = 0,
 ):
     """Re-ask for the whole answer with a wider output cap.
 
@@ -4274,6 +4329,12 @@ def _retry_with_more_headroom(
             raise
         if isinstance(exc, ProviderRefusalError):
             raise
+        if getattr(exc, "reasoning_runaway", False) and runaway_seen + 1 >= 2:
+            # A second runaway in this call. Report the tokens and stop
+            # instead of letting the caller treat it as one more failed try.
+            if on_failure_usage is not None and exc.observed_usage is not None:
+                on_failure_usage(exc.observed_usage)
+            raise exc
         if on_failure_usage is not None:
             observed = (
                 _observed_usage(exc.usage_data, backend.format)
@@ -4555,8 +4616,11 @@ def _invoke_api(
                 correction_usage = exc.observed_usage
                 if isinstance(exc, _TruncatedResponse):
                     correction_usage = _observed_usage(exc.usage_data, backend.format)
+                base = initial_syntax_usage
+                if runaway_spent is not None:
+                    base = _sum_usage(runaway_spent, base)
                 observed = _sum_usage(
-                    initial_syntax_usage,
+                    base,
                     correction_usage
                     if correction_usage is not None
                     else Usage(known_fields=frozenset()),
@@ -4595,9 +4659,11 @@ def _invoke_api(
                         reply_keys=reply_keys,
                         strict_response=strict_response,
                         **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
+                        runaway_seen=runaway_attempts,
+                        recorded_usage=runaway_spent,
                     )
-                except TruncationBreakerError:
-                    raise
+                except TruncationBreakerError as tripped:
+                    raise _with_recorded_usage(tripped, runaway_spent) from None
                 except ProviderRefusalError as refused:
                     if _strict_send_audit_failed(_audit_scope):
                         raise
@@ -4608,10 +4674,18 @@ def _invoke_api(
                 except LLMInvokeError as spent:
                     if _strict_send_audit_failed(_audit_scope):
                         raise
+                    # A second runaway raised by the continuation already
+                    # carries the call's recorded total. Settling it again
+                    # below would replace that total with the first reply.
+                    if getattr(spent, "usage_complete", False):
+                        spent.retryable = False
+                        raise
                     recovered = None
                     spent_error = spent
                 if recovered is not None:
                     parsed, usage = recovered
+                    if runaway_spent is not None:
+                        usage = _sum_usage(runaway_spent, usage)
                     return LLMResult(
                         content=parsed,
                         usage=usage,
@@ -4655,6 +4729,7 @@ def _invoke_api(
                             strict_response=strict_response,
                             on_failure_usage=retain_wider_failure_usage,
                             **({"_audit_scope": _audit_scope} if _audit_scope is not None else {}),
+                            runaway_seen=runaway_attempts,
                         )
                     except ProviderRefusalError as refused:
                         if _strict_send_audit_failed(_audit_scope):
@@ -4664,6 +4739,11 @@ def _invoke_api(
                             if spent_error is not None
                             else _observed_usage(exc.usage_data, backend.format)
                         )
+                        if runaway_spent is not None:
+                            prior = _sum_usage(
+                                runaway_spent,
+                                prior if prior is not None else Usage(known_fields=frozenset()),
+                            )
                         refused._add_prior_usage(
                             prior if prior is not None else Usage(known_fields=frozenset())
                         )
@@ -4674,6 +4754,8 @@ def _invoke_api(
                     if spent_error is not None and spent_error.observed_usage is not None:
                         # The spent budget already includes the initial cut reply.
                         usage = _sum_usage(spent_error.observed_usage, usage)
+                    if runaway_spent is not None:
+                        usage = _sum_usage(runaway_spent, usage)
                     return LLMResult(
                         content=parsed,
                         usage=usage,
@@ -4684,7 +4766,7 @@ def _invoke_api(
                     # Report the spent budget, not the last cut-off
                     # reply: the exhaustion message names every attempt
                     # and the reason each failed.
-                    raise spent_error from None
+                    raise _with_recorded_usage(spent_error, runaway_spent) from None
             cause = _retry_cause(exc, audited=_audit_scope is not None)
             # One fresh reply after a reasoning loop is worth its cost: the
             # same prompt that looped once answered on the next call. A second
@@ -4693,10 +4775,16 @@ def _invoke_api(
             # alone: it counts provider-cap truncations, and a reasoning loop
             # is a different failure whose class must not become capacity.
             if isinstance(exc, LLMInvokeError) and getattr(exc, "reasoning_runaway", False):
+                # The continuation folds this call's recorded total into the
+                # error before raising it, so the total is already complete.
+                # Recording it again would add the whole of it a second time.
+                if getattr(exc, "usage_complete", False):
+                    exc.retryable = False
+                    raise exc from None
                 runaway_attempts += 1
-                # Start from the first reply that reported usage. Summing into
-                # an empty Usage drops every known field, since the sum keeps
-                # only fields both sides reported.
+                # Record before any exit below. The settle adds an error's own
+                # usage only when it is not already in this total, so a reply
+                # recorded here is not counted a second time.
                 if exc.observed_usage is not None:
                     runaway_spent = (
                         exc.observed_usage
@@ -4704,49 +4792,22 @@ def _invoke_api(
                         else _sum_usage(runaway_spent, exc.observed_usage)
                     )
                 if runaway_attempts >= 2:
-                    raise LLMInvokeError(
-                        "%s No further attempt: %d replies in this call spent "
-                        "their whole output budget on reasoning without writing "
-                        "an answer." % (exc, runaway_attempts),
-                        exit_code=exc.exit_code,
-                        duration_s=exc.duration_s,
-                        kind=exc.kind,
-                        retryable=False,
-                        usage=runaway_spent
-                        if {"input_tokens", "output_tokens"} <= runaway_spent.known_fields
-                        else None,
-                        observed_usage=runaway_spent,
-                    ) from None
+                    # Two runaways end the call. The reply stays retryable on
+                    # its own; the call that observed two of them is not.
+                    exc.retryable = False
+                    raise _with_recorded_usage(exc, runaway_spent) from None
             if not exc.retryable or attempt == max_attempts - 1:
                 if attempt > 0 or (exc.retryable and max_attempts == 1):
                     _emit_retry_failed(backend.name, max_attempts, cause)
                 # A later attempt can fail without reporting usage of its own,
                 # like a 401. The tokens the earlier replies spent are still
-                # known, so the error that leaves this call carries them. Only
-                # fields a reply actually reported survive: summing into an
-                # empty Usage would turn an unreported count into a known zero.
-                if runaway_spent is not None and exc.observed_usage is None:
-                    exc.observed_usage = runaway_spent
-                    exc.usage = (
-                        runaway_spent
-                        if {"input_tokens", "output_tokens"} <= runaway_spent.known_fields
-                        else None
-                    )
-                elif (
-                    runaway_spent is not None
-                    and exc.observed_usage is not None
-                    and not getattr(exc, "reasoning_runaway", False)
-                ):
-                    # A reasoning runaway was recorded into runaway_spent a few
-                    # lines above, so adding its own observed_usage again would
-                    # count the same reply twice. Only a later reply that
-                    # reported usage of its own still needs merging.
-                    total = _sum_usage(runaway_spent, exc.observed_usage)
-                    exc.observed_usage = total
-                    exc.usage = (
-                        total if {"input_tokens", "output_tokens"} <= total.known_fields else None
-                    )
-                raise
+                # known, so the error that leaves this call carries them. A
+                # runaway raised inside the continuation already folded that
+                # total in, and this loop has not recorded the reply, so it
+                # passes through unchanged.
+                if runaway_spent is not None:
+                    exc = _with_recorded_usage(exc, runaway_spent)
+                raise exc from None
             delay = _retry_delay_s(attempt, initial_delay_s, exc.retry_after)
             # Carry the cause. Without it this line names a backend and a
             # delay and nothing else, so a run that retries forever gives the
@@ -5087,17 +5148,18 @@ def _invoke_openai_impl(
             # diagnosis, and this failure is precisely the case where raising
             # the cap does not help.
             runaway = LLMInvokeError(
-                "%s backend spent %s output tokens without emitting answer text "
-                "(finish_reason=length, input=%s, output=%s, cap=%s, chars=%d). "
-                "Lower reasoning_effort or thinking_budget on this backend; "
-                "raising the cap only buys more reasoning."
+                "%s backend response truncated with no answer text "
+                "(finish_reason=length, input=%s, output=%s, cap=%s, chars=%d, "
+                "reasoning_tokens=%s). The response reports reasoning tokens "
+                "but not that they caused the empty reply; lowering "
+                "reasoning_effort or thinking_budget is worth trying."
                 % (
                     backend.name,
-                    spent_out,
                     spent_in if spent_in is not None else "?",
                     spent_out,
                     resolved_cap,
                     chars,
+                    _reported_reasoning_tokens(usage_data),
                 ),
                 exit_code=0,
                 kind="empty",
