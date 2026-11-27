@@ -51,6 +51,7 @@ class ItemScore:
     ruling_digest: str | None = None
     proposal_id: str | None = None
     proposal_digest: str | None = None
+    adopts_current_basis: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +80,10 @@ class RevisionScorecard:
 
     @property
     def coverage(self) -> tuple[int, int]:
-        return sum(row.conclusion in _DETERMINATE for row in self.items), len(self.items)
+        return (
+            sum(row.conclusion in _DETERMINATE and row.adopts_current_basis for row in self.items),
+            len(self.items),
+        )
 
     @property
     def closure_type_errors(self) -> int:
@@ -155,7 +159,14 @@ def _consume_projection(item, decision, proposals):
             and states[p.record_id] == "pending_human"
         ):
             return ItemScore(
-                item, decision.state, decision.conclusion, r.record_id, r.sha256, p.record_id, p.sha256
+                item,
+                decision.state,
+                decision.conclusion,
+                r.record_id,
+                r.sha256,
+                p.record_id,
+                p.sha256,
+                adopts_current_basis=decision.adopts_current_basis,
             ), states
     elif (
         r is None
