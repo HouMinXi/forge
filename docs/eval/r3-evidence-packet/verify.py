@@ -111,7 +111,7 @@ def check_identity(body: dict, args: argparse.Namespace) -> None:
         raise Refused("node does not name a node in the traced test file")
 
 
-def check_execution(body: dict, args: argparse.Namespace) -> None:
+def check_execution(body: dict, args: argparse.Namespace) -> int:
     node = args.expect_node
     collected = body.get("collected", [])
     if type(collected) is not list or node not in collected:
@@ -156,8 +156,9 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
         # a positive hit claim without being a count at all. A JSON float is a
         # number but not a count, so the text names an integer.
         raise Refused("target hits are not an integer")
-    if count != args.expect_hits:
+    if args.expect_hits is not None and count != args.expect_hits:
         raise Refused("target hits do not match")
+    return count
 
 
 def main() -> int:

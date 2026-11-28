@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import secrets
@@ -239,3 +240,20 @@ def test_missing_promisor_blob_fails_without_fetch(pair):
     events = [json.loads(line) for line in trace.read_text().splitlines()]
     assert any(e.get("event") == "start" and "diff" in e.get("argv", []) for e in events)
     assert not any("fetch" in e.get("argv", []) for e in events)
+
+
+def test_a_non_integer_hit_count_is_named_the_same_way_by_both_entries(pair):
+    check = run_case(pair, "test_hits_the_line")
+    root, _, _ = pair
+    packet = next(root.parent.glob("*.packet.json"))
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    node = next(iter(body["hits"]))
+    body["hits"][node] = 1.0
+    spec = importlib.util.spec_from_file_location("verify", PACKET.parent / "verify.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    body["packet_sha256"] = module.digest_of(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    code, report = check("--expect-packet-sha256", body["packet_sha256"])
+    assert code == 1
+    assert report["reason"] == "target hits are not an integer"
