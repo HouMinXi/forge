@@ -226,16 +226,24 @@ def test_a_packet_edited_after_the_run_is_refused(project):
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
     assert check.returncode == 1
-    assert "packet digest" in check.stderr
+    edited = json.loads(packet.read_text(encoding="utf-8"))
+    actual = _verifier().digest_of(edited)
+    assert check.stderr == (
+        f"packet refused: packet digest is {actual[:12]}, caller recorded {announced['sha256'][:12]}\n"
+    )
 
 
-def _rehashed(body: dict) -> None:
+def _verifier():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("verify", VERIFY)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    body["packet_sha256"] = module.digest_of(body)
+    return module
+
+
+def _rehashed(body: dict) -> None:
+    body["packet_sha256"] = _verifier().digest_of(body)
 
 
 def _assign(body: dict, path: tuple[str, ...], value: object) -> None:
@@ -255,7 +263,7 @@ def test_a_test_record_for_another_file_is_refused_even_when_the_digest_holds(pr
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "node does not name a node in the traced test file" in check.stderr
+    assert check.stderr == ("packet refused: node does not name a node in the traced test file\n")
     assert "verified" not in check.stdout
 
 
@@ -269,7 +277,7 @@ def test_a_node_from_another_file_is_refused_even_when_the_digest_holds(project)
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "node does not name a node in the traced test file" in check.stderr
+    assert check.stderr == ("packet refused: node does not name a node in the traced test file\n")
     assert "verified" not in check.stdout
 
 
@@ -401,7 +409,7 @@ def test_a_source_that_differs_from_the_target_is_refused_by_the_verifier(projec
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "does not describe the traced target" in check.stderr
+    assert check.stderr == "packet refused: source digest does not describe the traced target\n"
     assert "verified" not in check.stdout
 
 
@@ -461,7 +469,7 @@ def test_a_green_run_that_missed_the_target_is_refused(project):
         _expectations(project, node, announced["run_id"], announced["sha256"]),
     )
     assert check.returncode == 1
-    assert "target hits do not match" in check.stderr
+    assert check.stderr == "packet refused: target hits do not match\n"
 
 
 def test_a_collected_node_that_never_ran_is_refused(project):
@@ -471,7 +479,7 @@ def test_a_collected_node_that_never_ran_is_refused(project):
     announced = _announced(result)
     check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
     assert check.returncode == 1
-    assert "no call phase" in check.stderr
+    assert check.stderr == "packet refused: node has no call phase: collected but not executed\n"
 
 
 def test_another_commit_is_refused(project):
@@ -517,7 +525,7 @@ def test_a_passing_call_beside_a_failing_node_is_refused(project):
         ),
     )
     assert check.returncode == 1
-    assert "collected nodes do not all belong to the traced test file" in check.stderr
+    assert check.stderr == "packet refused: collected nodes do not all belong to the traced test file\n"
     assert "verified" not in check.stdout
 
 
@@ -569,7 +577,7 @@ def test_an_xpass_does_not_count_as_a_plain_pass(project):
     announced = _announced(result)
     check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
     assert check.returncode == 1
-    assert "node call outcome does not match" in check.stderr
+    assert check.stderr == "packet refused: node call outcome does not match\n"
 
 
 def test_a_tree_that_changes_during_the_run_is_refused(project):
@@ -625,7 +633,7 @@ def test_a_strict_xpass_is_not_a_plain_failure(project):
         ),
     )
     assert check.returncode == 1
-    assert "node call outcome does not match" in check.stderr
+    assert check.stderr == "packet refused: node call outcome does not match\n"
 
 
 INACTIVE_XFAIL = """\
@@ -719,7 +727,7 @@ def test_the_verifier_refuses_ambiguous_target_identity(project, repeat):
         _expectations(project, node, body["identity"]["run_id"], body["packet_sha256"]),
     )
     assert check.returncode == 1, check.stdout + check.stderr
-    assert reason in check.stderr
+    assert check.stderr == f"packet refused: {reason}\n"
     assert "verified" not in check.stdout
 
 
@@ -827,7 +835,7 @@ def test_a_different_node_in_the_same_file_is_refused(project):
     announced = _announced(result)
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "node does not name a node in the traced test file" in check.stderr
+    assert check.stderr == ("packet refused: node does not name a node in the traced test file\n")
 
 
 def test_a_node_mismatch_does_not_echo_the_test_path(project):
@@ -874,3 +882,52 @@ def test_a_negative_hit_count_is_refused(project):
     )
     assert check.returncode == 1
     assert check.stderr == "packet refused: target hits are negative\n"
+
+
+@pytest.mark.parametrize(
+    ("flag", "sentence"),
+    [
+        ("--expect-source-sha256", "source digest does not match"),
+        ("--expect-test-sha256", "test digest does not match"),
+        ("--expect-observer-sha256", "observer digest does not match"),
+    ],
+)
+def test_a_different_identity_digest_is_refused(project, flag, sentence):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    announced = _announced(result)
+    args = _expectations(project, node, announced["run_id"], announced["sha256"])
+    args[args.index(flag) + 1] = "0" * 64
+    check = _verify(packet, args)
+    assert check.returncode == 1
+    assert check.stderr == f"packet refused: {sentence}\n"
+    assert "0" * 12 not in check.stderr
+
+
+def test_a_different_target_line_is_refused(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    announced = _announced(result)
+    args = _expectations(project, node, announced["run_id"], announced["sha256"])
+    line_at = args.index("--expect-line") + 1
+    args[line_at] = str(int(args[line_at]) + 1)
+    check = _verify(packet, args)
+    assert check.returncode == 1
+    assert check.stderr == "packet refused: target does not match\n"
+
+
+@pytest.mark.parametrize("key", ["source", "test", "observer"])
+def test_an_identity_record_without_a_digest_is_refused(project, key):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    del body["identity"][key]["sha256"]
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    announced = _announced(result)
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
+    assert check.returncode == 1
+    assert check.stderr == f"packet refused: {key} digest does not match\n"
