@@ -257,3 +257,22 @@ def test_a_non_integer_hit_count_is_named_the_same_way_by_both_entries(pair):
     code, report = check("--expect-packet-sha256", body["packet_sha256"])
     assert code == 1
     assert report["reason"] == "target hits are not an integer"
+
+
+def test_a_negative_hit_count_is_refused_before_it_is_reported(pair):
+    check = run_case(pair, "test_hits_the_line")
+    root, _, _ = pair
+    packet = next(root.parent.glob("*.packet.json"))
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    node = next(iter(body["hits"]))
+    body["hits"][node] = -1
+    spec = importlib.util.spec_from_file_location("verify", PACKET.parent / "verify.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    body["packet_sha256"] = module.digest_of(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    code, report = check("--expect-packet-sha256", body["packet_sha256"])
+    assert code == 1
+    assert report["reason"] == "target hits are negative"
+    assert report["changed_line"] == "unproven"
+    assert report["execution"] == "unproven"
