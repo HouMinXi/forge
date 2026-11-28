@@ -903,3 +903,31 @@ def test_a_different_identity_digest_is_refused(project, flag, sentence):
     assert check.returncode == 1
     assert check.stderr == f"packet refused: {sentence}\n"
     assert "0" * 12 not in check.stderr
+
+
+def test_a_different_target_line_is_refused(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    announced = _announced(result)
+    args = _expectations(project, node, announced["run_id"], announced["sha256"])
+    line_at = args.index("--expect-line") + 1
+    args[line_at] = str(int(args[line_at]) + 1)
+    check = _verify(packet, args)
+    assert check.returncode == 1
+    assert check.stderr == "packet refused: target does not match\n"
+
+
+@pytest.mark.parametrize("key", ["source", "test", "observer"])
+def test_an_identity_record_without_a_digest_is_refused(project, key):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    del body["identity"][key]["sha256"]
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    announced = _announced(result)
+    check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
+    assert check.returncode == 1
+    assert check.stderr == f"packet refused: {key} digest does not match\n"
