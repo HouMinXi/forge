@@ -882,3 +882,24 @@ def test_a_negative_hit_count_is_refused(project):
     )
     assert check.returncode == 1
     assert check.stderr == "packet refused: target hits are negative\n"
+
+
+@pytest.mark.parametrize(
+    ("flag", "sentence"),
+    [
+        ("--expect-source-sha256", "source digest does not match"),
+        ("--expect-test-sha256", "test digest does not match"),
+        ("--expect-observer-sha256", "observer digest does not match"),
+    ],
+)
+def test_a_different_identity_digest_is_refused(project, flag, sentence):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    announced = _announced(result)
+    args = _expectations(project, node, announced["run_id"], announced["sha256"])
+    args[args.index(flag) + 1] = "0" * 64
+    check = _verify(packet, args)
+    assert check.returncode == 1
+    assert check.stderr == f"packet refused: {sentence}\n"
+    assert "0" * 12 not in check.stderr
