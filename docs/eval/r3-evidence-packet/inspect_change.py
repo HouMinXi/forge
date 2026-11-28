@@ -13,7 +13,7 @@ from pathlib import Path
 from code_forge.e2e_evidence import MAX_RECORD_BYTES
 from code_forge.e2e_evidence import verify as verify_record
 
-from verify import Refused, check_digest, check_execution, check_identity, load
+from verify import Refused, check_digest, check_execution, check_identity, compare_hits, load
 
 _HUNK = re.compile(rb"^@@ -[0-9]+(?:,[0-9]+)? \+([0-9]+)(?:,[0-9]+)? @@")
 _MAX_FILE_BYTES = 16 * 1024 * 1024
@@ -181,17 +181,20 @@ def inspect(args: argparse.Namespace) -> dict:
         body = load(args.packet)
         check_digest(body, args.expect_packet_sha256)
         check_identity(body, args)
-        hits = body.get("hits")
-        count = hits.get(args.expect_node) if type(hits) is dict else None
-        if type(count) is not int or count < 0:
-            raise Refused("target hit count is invalid")
-        check_execution(body, argparse.Namespace(**(vars(args) | {"expect_hits": count})))
+        # Ask the shared check for the recorded count without comparing it, so a
+        # count that disagrees with the claim still reports the line as hit or
+        # not hit. The comparison below is the one place that names the mismatch.
+        claimed = args.expect_hits
+        args.expect_hits = None
+        try:
+            count = check_execution(body, args)
+        finally:
+            args.expect_hits = claimed
         if not _clean(args.root, args.candidate):
             raise Refused("candidate changed during inspection")
         report["execution"] = "bound"
         report["changed_line"] = "hit" if count > 0 else "not_hit"
-        if count != args.expect_hits:
-            raise Refused(f"target hits are {count}, expected {args.expect_hits}")
+        compare_hits(count, claimed)
     except Refused as exc:
         report["reason"] = str(exc)
     except (OSError, ValueError, subprocess.SubprocessError):

@@ -87,7 +87,7 @@ this one may have failed in teardown.
 The verifier refuses a different run identity, a different commit or digest, a
 node that was never collected, a node collected without a call phase, a call
 outcome that disagrees with the claim, a hit count that disagrees with the
-target claim, a source digest that does not describe the traced target, and a
+target claim, a hit count that is negative, a source digest that does not describe the traced target, and a
 packet whose recorded digest no longer matches its
 body.
 
