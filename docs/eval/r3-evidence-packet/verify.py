@@ -156,9 +156,18 @@ def check_execution(body: dict, args: argparse.Namespace) -> int:
         # a positive hit claim without being a count at all. A JSON float is a
         # number but not a count, so the text names an integer.
         raise Refused("target hits are not an integer")
-    if args.expect_hits is not None and count != args.expect_hits:
-        raise Refused("target hits do not match")
+    if count < 0:
+        # A negative count is not zero hits. Reporting it as "not hit" would
+        # state something the packet does not say.
+        raise Refused("target hits are negative")
+    compare_hits(count, args.expect_hits)
     return count
+
+
+def compare_hits(count: int, claimed) -> None:
+    """Refuse when a claim is present and disagrees. Both entries share this."""
+    if claimed is not None and count != claimed:
+        raise Refused("target hits do not match")
 
 
 def main() -> int:

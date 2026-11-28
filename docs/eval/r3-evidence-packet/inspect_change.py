@@ -13,7 +13,7 @@ from pathlib import Path
 from code_forge.e2e_evidence import MAX_RECORD_BYTES
 from code_forge.e2e_evidence import verify as verify_record
 
-from verify import Refused, check_digest, check_execution, check_identity, load
+from verify import Refused, check_digest, check_execution, check_identity, compare_hits, load
 
 _HUNK = re.compile(rb"^@@ -[0-9]+(?:,[0-9]+)? \+([0-9]+)(?:,[0-9]+)? @@")
 _MAX_FILE_BYTES = 16 * 1024 * 1024
@@ -194,8 +194,7 @@ def inspect(args: argparse.Namespace) -> dict:
             raise Refused("candidate changed during inspection")
         report["execution"] = "bound"
         report["changed_line"] = "hit" if count > 0 else "not_hit"
-        if count != claimed:
-            raise Refused("target hits do not match")
+        compare_hits(count, claimed)
     except Refused as exc:
         report["reason"] = str(exc)
     except (OSError, ValueError, subprocess.SubprocessError):

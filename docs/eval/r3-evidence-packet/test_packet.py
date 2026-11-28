@@ -857,3 +857,20 @@ def test_a_recorded_exit_that_differs_is_refused(project):
     )
     assert check.returncode == 1
     assert check.stderr == "packet refused: pytest exit does not match\n"
+
+
+def test_a_negative_hit_count_is_refused(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    body = json.loads(packet.read_text(encoding="utf-8"))
+    body["hits"][node] = -1
+    _rehashed(body)
+    packet.write_text(json.dumps(body), encoding="utf-8")
+    announced = _announced(result)
+    check = _verify(
+        packet,
+        _expectations(project, node, announced["run_id"], body["packet_sha256"], hits=-1),
+    )
+    assert check.returncode == 1
+    assert check.stderr == "packet refused: target hits are negative\n"
