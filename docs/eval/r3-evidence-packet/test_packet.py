@@ -213,7 +213,8 @@ def test_a_run_identity_from_another_execution_is_refused(project):
     first_digest = _announced(first)["sha256"]
     check = _verify(packet, _expectations(project, node, other_run, first_digest))
     assert check.returncode == 1
-    assert "run identity" in check.stderr
+    assert check.stderr == "packet refused: run identity does not match\n"
+    assert other_run not in check.stderr
 
 
 def test_a_packet_edited_after_the_run_is_refused(project):
@@ -353,17 +354,17 @@ def test_a_malformed_execution_record_is_refused_without_a_traceback(project, ma
         pytest.param(
             ("hits", "test_mod.py::test_hits_the_line"),
             True,
-            "target hits are not a number",
+            "target hits are not an integer",
             id="hit-count",
         ),
         pytest.param(
             ("hits", "test_mod.py::test_hits_the_line"),
             1.0,
-            "target hits are not a number",
+            "target hits are not an integer",
             id="hit-count-float",
         ),
-        pytest.param(("pytest_exit",), False, "pytest exit is not a number", id="pytest-exit"),
-        pytest.param(("pytest_exit",), 0.0, "pytest exit is not a number", id="pytest-exit-float"),
+        pytest.param(("pytest_exit",), False, "pytest exit is not an integer", id="pytest-exit"),
+        pytest.param(("pytest_exit",), 0.0, "pytest exit is not an integer", id="pytest-exit-float"),
         pytest.param(
             ("identity", "target", "line"), 5.0, "target does not match", id="target-line-float"
         ),
@@ -446,7 +447,7 @@ def test_a_missing_node_hit_count_is_refused_when_zero_is_expected(project, hits
         _expectations(project, node, announced["run_id"], body["packet_sha256"], hits=0),
     )
     assert check.returncode == 1
-    assert check.stderr == "packet refused: target hits are not a number\n"
+    assert check.stderr == "packet refused: no hit count recorded for the node\n"
     assert check.stdout == ""
 
 
@@ -478,10 +479,12 @@ def test_another_commit_is_refused(project):
     result, packet = _run(project, node)
     announced = _announced(result)
     args = _expectations(project, node, announced["run_id"], announced["sha256"])
-    args[args.index("--expect-commit") + 1] = "0" * 40
+    wrong = "0" * 40
+    args[args.index("--expect-commit") + 1] = wrong
     check = _verify(packet, args)
     assert check.returncode == 1
-    assert "commit" in check.stderr
+    assert check.stderr == "packet refused: commit does not match\n"
+    assert wrong not in check.stderr
 
 
 def test_a_source_that_is_not_the_traced_file_is_refused(project):
@@ -841,3 +844,16 @@ def test_a_node_mismatch_does_not_echo_the_test_path(project):
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
     assert leaked not in check.stderr
+
+
+def test_a_recorded_exit_that_differs_is_refused(project):
+    node = "test_mod.py::test_hits_the_line"
+    result, packet = _run(project, node)
+    assert result.returncode == 0, result.stderr
+    announced = _announced(result)
+    check = _verify(
+        packet,
+        _expectations(project, node, announced["run_id"], announced["sha256"], exit_code=1),
+    )
+    assert check.returncode == 1
+    assert check.stderr == "packet refused: pytest exit does not match\n"

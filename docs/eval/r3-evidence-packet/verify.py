@@ -142,17 +142,20 @@ def check_execution(body: dict, args: argparse.Namespace) -> None:
     if type(exit_status) is not int:
         # A JSON `false` equals an expected 0 in Python, so a boolean could
         # stand in for the producer's recorded exit status of a clean run.
-        raise Refused("pytest exit is not a number")
+        raise Refused("pytest exit is not an integer")
     if exit_status != args.expect_exit:
         raise Refused("pytest exit does not match")
     hits = body.get("hits", {})
     if type(hits) is not dict:
         raise Refused("hits is not a record")
-    count = hits.get(node)
+    if node not in hits:
+        raise Refused("no hit count recorded for the node")
+    count = hits[node]
     if type(count) is not int:
         # `true` equals an expected hit count of 1, so a boolean would satisfy
-        # a positive hit claim without being a count at all.
-        raise Refused("target hits are not a number")
+        # a positive hit claim without being a count at all. A JSON float is a
+        # number but not a count, so the text names an integer.
+        raise Refused("target hits are not an integer")
     if count != args.expect_hits:
         raise Refused("target hits do not match")
 

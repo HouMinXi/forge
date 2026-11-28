@@ -191,7 +191,7 @@ def inspect(args: argparse.Namespace) -> dict:
         report["execution"] = "bound"
         report["changed_line"] = "hit" if count > 0 else "not_hit"
         if count != args.expect_hits:
-            raise Refused(f"target hits are {count}, expected {args.expect_hits}")
+            raise Refused("target hits do not match")
     except Refused as exc:
         report["reason"] = str(exc)
     except (OSError, ValueError, subprocess.SubprocessError):
