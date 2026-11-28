@@ -255,7 +255,7 @@ def test_a_test_record_for_another_file_is_refused_even_when_the_digest_holds(pr
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "node does not name a node in the traced test file" in check.stderr
+    assert check.stderr == ("packet refused: node does not name a node in the traced test file\n")
     assert "verified" not in check.stdout
 
 
@@ -269,7 +269,7 @@ def test_a_node_from_another_file_is_refused_even_when_the_digest_holds(project)
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "node does not name a node in the traced test file" in check.stderr
+    assert check.stderr == ("packet refused: node does not name a node in the traced test file\n")
     assert "verified" not in check.stdout
 
 
@@ -461,7 +461,7 @@ def test_a_green_run_that_missed_the_target_is_refused(project):
         _expectations(project, node, announced["run_id"], announced["sha256"]),
     )
     assert check.returncode == 1
-    assert "target hits do not match" in check.stderr
+    assert check.stderr == "packet refused: target hits do not match\n"
 
 
 def test_a_collected_node_that_never_ran_is_refused(project):
@@ -569,7 +569,7 @@ def test_an_xpass_does_not_count_as_a_plain_pass(project):
     announced = _announced(result)
     check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
     assert check.returncode == 1
-    assert "node call outcome does not match" in check.stderr
+    assert check.stderr == "packet refused: node call outcome does not match\n"
 
 
 def test_a_tree_that_changes_during_the_run_is_refused(project):
@@ -625,7 +625,7 @@ def test_a_strict_xpass_is_not_a_plain_failure(project):
         ),
     )
     assert check.returncode == 1
-    assert "node call outcome does not match" in check.stderr
+    assert check.stderr == "packet refused: node call outcome does not match\n"
 
 
 INACTIVE_XFAIL = """\
@@ -827,7 +827,7 @@ def test_a_different_node_in_the_same_file_is_refused(project):
     announced = _announced(result)
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "node does not name a node in the traced test file" in check.stderr
+    assert check.stderr == ("packet refused: node does not name a node in the traced test file\n")
 
 
 def test_a_node_mismatch_does_not_echo_the_test_path(project):
