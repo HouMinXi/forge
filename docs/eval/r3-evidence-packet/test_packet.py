@@ -226,16 +226,24 @@ def test_a_packet_edited_after_the_run_is_refused(project):
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
     assert check.returncode == 1
-    assert "packet digest" in check.stderr
+    edited = json.loads(packet.read_text(encoding="utf-8"))
+    actual = _verifier().digest_of(edited)
+    assert check.stderr == (
+        f"packet refused: packet digest is {actual[:12]}, caller recorded {announced['sha256'][:12]}\n"
+    )
 
 
-def _rehashed(body: dict) -> None:
+def _verifier():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("verify", VERIFY)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    body["packet_sha256"] = module.digest_of(body)
+    return module
+
+
+def _rehashed(body: dict) -> None:
+    body["packet_sha256"] = _verifier().digest_of(body)
 
 
 def _assign(body: dict, path: tuple[str, ...], value: object) -> None:
@@ -401,7 +409,7 @@ def test_a_source_that_differs_from_the_target_is_refused_by_the_verifier(projec
     packet.write_text(json.dumps(body), encoding="utf-8")
     check = _verify(packet, _expectations(project, node, announced["run_id"], body["packet_sha256"]))
     assert check.returncode == 1
-    assert "does not describe the traced target" in check.stderr
+    assert check.stderr == "packet refused: source digest does not describe the traced target\n"
     assert "verified" not in check.stdout
 
 
@@ -471,7 +479,7 @@ def test_a_collected_node_that_never_ran_is_refused(project):
     announced = _announced(result)
     check = _verify(packet, _expectations(project, node, announced["run_id"], announced["sha256"]))
     assert check.returncode == 1
-    assert "no call phase" in check.stderr
+    assert check.stderr == "packet refused: node has no call phase: collected but not executed\n"
 
 
 def test_another_commit_is_refused(project):
@@ -517,7 +525,7 @@ def test_a_passing_call_beside_a_failing_node_is_refused(project):
         ),
     )
     assert check.returncode == 1
-    assert "collected nodes do not all belong to the traced test file" in check.stderr
+    assert check.stderr == "packet refused: collected nodes do not all belong to the traced test file\n"
     assert "verified" not in check.stdout
 
 
@@ -719,7 +727,7 @@ def test_the_verifier_refuses_ambiguous_target_identity(project, repeat):
         _expectations(project, node, body["identity"]["run_id"], body["packet_sha256"]),
     )
     assert check.returncode == 1, check.stdout + check.stderr
-    assert reason in check.stderr
+    assert check.stderr == f"packet refused: {reason}\n"
     assert "verified" not in check.stdout
 
 
